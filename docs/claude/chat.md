@@ -2,22 +2,35 @@
 
 The Chat button (fifth in `ViewShortcutButtons`) opens a pane beside the
 reading pane (`HomeView.chat`, `ChatPanel`) — a one-on-one with the selected
-email's sender, or any other colleague on it from the dropdown. Double-clicking it
+email's sender, or anyone else on it
+the account can chat with, from the dropdown. Double-clicking it
 opens the chat window (`'chat'` sub-window, `ChatWindowApp`): every chat and
 channel on the left, grouped (Chats; Teams › channels) and newest first; the
 open one's history on the right, channel threads beside it; search on top.
 
-## Only colleagues are offered
+## Colleagues, and outsiders you already chat with
 
-The dropdown lists the people on the email who are in the account's
-organisation (`ChatRepository.colleagues`): an address on one of the
-account's own domains (aliases included; never a personal domain like
-`gmail.com`/`outlook.com`, the same rule as compose's internal-reply
-signature), or one the daily address-book sync cached as
+The dropdown lists the people on the email the account can chat with
+(`ChatRepository.reachable`). First the colleagues (`colleagues`): an
+address on one of the account's own domains (aliases included; never a
+personal domain like `gmail.com`/`outlook.com`, the same rule as compose's
+internal-reply signature), or one the daily address-book sync cached as
 `ContactSource.directory` for that account — which covers a tenant with
-several domains. Local only: SQL on the cache's primary key, never a lookup
-per selected email. Neither Teams nor Google Chat starts a chat with an
-outsider, so offering one only fails on send.
+several domains. Local only: SQL on the cache's primary key.
+
+Then anyone else with an existing one-on-one (`findOneOnOne`, at most 8 per
+email): an existing chat has already passed both tenants' external-access
+rules. Nothing lets a user ask whether a *new* chat with an outsider would be
+allowed — Teams federation and Google's external-chat settings are admin
+policy, and the only test is creating the chat — so an outsider with no chat
+is left out rather than offered to fail on send. On Graph the lookup scans the
+cached chat list (refreshed at most every 2 minutes); on Google it is one
+`findDirectMessage` per outsider.
+
+Teams often lists a federated (external) member with no `email`, so
+`findOneOnOne` falls back to the email's display name for a member without an
+address — only when exactly one one-on-one matches, never guessing between
+two people who share a name.
 
 ## Providers behind one interface
 

@@ -182,7 +182,8 @@ class ChatConversationCubit extends Cubit<ChatConversationState> {
       person: person,
       loading: true,
     ));
-    final found = await _repo.findOneOnOne(accountId, person.email);
+    final found =
+        await _repo.findOneOnOne(accountId, person.email, name: person.name);
     if (gen != _generation || isClosed) return;
     found.match(
       (f) => _fail(f),

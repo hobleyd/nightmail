@@ -52,10 +52,15 @@ abstract interface class ChatRepository {
 
   /// The one-on-one chat with [email], or null when there has never been one.
   /// Never creates one — that happens on the first [sendMessage] to a person.
+  ///
+  /// [name] finds a one-on-one whose other member has no address: Teams often
+  /// leaves it off a federated (external) user. Only when exactly one such
+  /// chat carries that name.
   Future<Either<Failure, ChatConversation?>> findOneOnOne(
     String accountId,
-    String email,
-  );
+    String email, {
+    String name = '',
+  });
 
   /// Newest first. [nextLink] continues an earlier page.
   Future<Either<Failure, ChatMessagePage>> messages(
@@ -92,6 +97,16 @@ abstract interface class ChatRepository {
   /// the only people a chat can be started with. Local: the account's own
   /// domains and its cached directory, never a lookup per email.
   Future<Set<String>> colleagues(String accountId, Iterable<String> addresses);
+
+  /// Which of [people] the Chat pane may offer: [colleagues], plus anyone
+  /// outside the organisation the account already has a one-on-one with —
+  /// a chat that exists has already passed the tenants' external-access
+  /// rules, which no API lets a user check beforehand. Addresses come back
+  /// lower-cased.
+  Future<Set<String>> reachable(
+    String accountId,
+    List<({String email, String name})> people,
+  );
 
   /// Messages matching [query] across every chat and channel the account can
   /// read, newest first.

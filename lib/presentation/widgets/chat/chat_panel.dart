@@ -20,8 +20,10 @@ import 'chat_conversation_view.dart';
 
 /// The Chat pane beside the reading pane: a one-on-one with the selected
 /// email's sender, or — from the dropdown — with anyone else on it who is in
-/// the account's organisation. Outsiders are left out: neither Teams nor
-/// Google Chat lets a chat be started with them ([ChatRepository.colleagues]).
+/// the account's organisation or already has a one-on-one with the account.
+/// Other outsiders are left out: whether Teams or Google Chat would let a chat
+/// be started with them can't be known without trying
+/// ([ChatRepository.reachable]).
 ///
 /// Follows the selection: a new email points the pane at its sender, unless
 /// the person already chosen is on that email too. Never creates a chat by
@@ -73,8 +75,8 @@ class _ChatPanelBodyState extends State<_ChatPanelBody> {
   /// What the conversation cubit was last pointed at: `account|address`.
   String? _openedKey;
 
-  /// Which of the current email's people are colleagues, for `account|email`
-  /// [_colleaguesKey]; null while that is being looked up.
+  /// Which of the current email's people can be chatted with, for
+  /// `account|email` [_colleaguesKey]; null while that is being looked up.
   Set<String>? _colleagues;
   String? _colleaguesKey;
 
@@ -82,7 +84,9 @@ class _ChatPanelBodyState extends State<_ChatPanelBody> {
     _colleaguesKey = key;
     _colleagues = null;
     unawaited(sl<ChatRepository>()
-        .colleagues(accountId, all.map((p) => p.email))
+        .reachable(accountId, [
+          for (final p in all) (email: p.email, name: p.name),
+        ])
         .then((found) {
       if (mounted && _colleaguesKey == key) {
         setState(() => _colleagues = found);
@@ -228,7 +232,8 @@ class _ChatPanelBodyState extends State<_ChatPanelBody> {
       body = _PaneNotice(
           text: everyone.isEmpty
               ? 'Select an email to chat with the people on it.'
-              : 'Nobody on this email is in your organisation.');
+              : 'Nobody on this email is in your organisation or has '
+                  'chatted with you.');
     } else {
       body = const ChatConversationView();
     }

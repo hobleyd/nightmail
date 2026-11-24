@@ -126,8 +126,9 @@ class ChatRepositoryImpl implements ChatRepository {
   @override
   Future<Either<Failure, ChatConversation?>> findOneOnOne(
     String accountId,
-    String email,
-  ) async {
+    String email, {
+    String name = '',
+  }) async {
     final direct = _accounts.chatDatasourceForAccount(accountId);
     if (direct != null && direct.findsOneOnOneDirectly) {
       return _guard(accountId, (ds) => ds.findOneOnOne(email));
@@ -138,11 +139,22 @@ class ChatRepositoryImpl implements ChatRepository {
     final listed = await conversations(accountId, refresh: stale);
     return listed.map((all) {
       final wanted = email.trim().toLowerCase();
-      for (final c in all) {
-        if (c.kind != ChatKind.oneOnOne) continue;
+      final oneOnOnes = all.where((c) => c.kind == ChatKind.oneOnOne);
+      for (final c in oneOnOnes) {
         if (c.members.any((m) => m.email == wanted)) return c;
       }
-      return null;
+      // Teams lists a federated user without an address; fall back to their
+      // name, but never guess between two people who share it.
+      final wantedName = name.trim().toLowerCase();
+      if (wantedName.isEmpty) return null;
+      final byName = [
+        for (final c in oneOnOnes)
+          if (c.members.any((m) =>
+              (m.email == null || m.email!.isEmpty) &&
+              m.displayName.trim().toLowerCase() == wantedName))
+            c,
+      ];
+      return byName.length == 1 ? byName.single : null;
     });
   }
 
@@ -269,6 +281,31 @@ class ChatRepositoryImpl implements ChatRepository {
     }
     return out;
   }
+
+  @override
+  Future<Set<String>> reachable(
+    String accountId,
+    List<({String email, String name})> people,
+  ) async {
+    final out = await colleagues(accountId, people.map((p) => p.email));
+    final outsiders = [
+      for (final p in people)
+        if (!out.contains(p.email.trim().toLowerCase())) p,
+    ].take(_reachableLookups);
+    final found = await Future.wait(outsiders.map((p) async {
+      final chat = await findOneOnOne(accountId, p.email, name: p.name);
+      return chat.match((_) => null, (c) => c == null ? null : p.email);
+    }));
+    return {
+      ...out,
+      for (final e in found)
+        if (e != null) e.trim().toLowerCase(),
+    };
+  }
+
+  /// How many outsiders on one email [reachable] looks up. On Graph each is a
+  /// scan of the cached chat list; on Google a `findDirectMessage` call each.
+  static const _reachableLookups = 8;
 
   /// Names each hit's conversation from the cached list.
   List<ChatSearchHit> _titled(String accountId, List<ChatSearchHit> hits) {

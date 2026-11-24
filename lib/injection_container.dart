@@ -865,7 +865,7 @@ Future<void> configureDependencies() async {
     ),
   );
 
-  // Folder agent loop (§3): builds its four read-only AgentTools internally,
+  // Folder agent loop (§3): builds its read-only AgentTools internally,
   // so they are not registered separately.
   sl.registerLazySingleton(
     () => RunFolderAgent(
@@ -876,6 +876,8 @@ Future<void> configureDependencies() async {
       getEmail: sl<GetEmail>(),
       searchEmails: sl<SearchEmails>(),
       getMailFolders: sl<GetMailFolders>(),
+      getRawEmailBytes: sl<GetRawEmailBytes>(),
+      checkSenderAnomaly: sl<CheckSenderAnomaly>(),
     ),
   );
 

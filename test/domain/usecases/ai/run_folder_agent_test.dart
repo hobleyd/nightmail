@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:fpdart/fpdart.dart';
@@ -18,9 +19,11 @@ import 'package:nightmail/domain/entities/email_folder.dart';
 import 'package:nightmail/domain/repositories/ai/ai_catalog_repository.dart';
 import 'package:nightmail/domain/repositories/ai/ai_inference_repository.dart';
 import 'package:nightmail/domain/repositories/ai/ai_settings_repository.dart';
+import 'package:nightmail/domain/usecases/check_sender_anomaly.dart';
 import 'package:nightmail/domain/usecases/get_email.dart';
 import 'package:nightmail/domain/usecases/get_emails.dart';
 import 'package:nightmail/domain/usecases/get_mail_folders.dart';
+import 'package:nightmail/domain/usecases/get_raw_email_bytes.dart';
 import 'package:nightmail/domain/usecases/search_emails.dart';
 import 'package:nightmail/domain/usecases/ai/agent/email_agent_tools.dart';
 import 'package:nightmail/domain/usecases/ai/run_folder_agent.dart';
@@ -40,6 +43,8 @@ import 'run_folder_agent_test.mocks.dart';
   GetEmail,
   SearchEmails,
   GetMailFolders,
+  GetRawEmailBytes,
+  CheckSenderAnomaly,
 ])
 void main() {
   late RunFolderAgent useCase;
@@ -50,6 +55,8 @@ void main() {
   late MockGetEmail mockGetEmail;
   late MockSearchEmails mockSearchEmails;
   late MockGetMailFolders mockGetMailFolders;
+  late MockGetRawEmailBytes mockGetRawEmailBytes;
+  late MockCheckSenderAnomaly mockCheckSenderAnomaly;
 
   const tRouting = (providerId: 'openai', modelId: 'gpt-4o');
 
@@ -161,6 +168,8 @@ void main() {
     provideDummy<Either<Failure, List<Email>>>(const Right([]));
     provideDummy<Either<Failure, Email>>(Right(email()));
     provideDummy<Either<Failure, List<EmailFolder>>>(const Right([]));
+    provideDummy<Either<Failure, Uint8List>>(Right(Uint8List(0)));
+    provideDummy<Either<Failure, SenderAnomalyResult?>>(const Right(null));
     provideDummy<Stream<Either<Failure, AiChunk>>>(
       const Stream<Either<Failure, AiChunk>>.empty(),
     );
@@ -172,6 +181,8 @@ void main() {
     mockGetEmail = MockGetEmail();
     mockSearchEmails = MockSearchEmails();
     mockGetMailFolders = MockGetMailFolders();
+    mockGetRawEmailBytes = MockGetRawEmailBytes();
+    mockCheckSenderAnomaly = MockCheckSenderAnomaly();
 
     useCase = RunFolderAgent(
       settingsRepository: mockSettings,
@@ -181,6 +192,8 @@ void main() {
       getEmail: mockGetEmail,
       searchEmails: mockSearchEmails,
       getMailFolders: mockGetMailFolders,
+      getRawEmailBytes: mockGetRawEmailBytes,
+      checkSenderAnomaly: mockCheckSenderAnomaly,
     );
 
     // Sensible defaults; individual tests override what they care about.
@@ -208,6 +221,10 @@ void main() {
     when(mockSearchEmails.call(any)).thenAnswer((_) async => const Right([]));
     when(mockGetMailFolders.call(any))
         .thenAnswer((_) async => const Right([]));
+    when(mockGetRawEmailBytes.call(any))
+        .thenAnswer((_) async => const Left(ServerFailure(message: 'x')));
+    when(mockCheckSenderAnomaly.call(any))
+        .thenAnswer((_) async => const Right(null));
 
     // `stream()` dequeues the next scripted round; empty when exhausted.
     scriptedRounds = [];
@@ -707,6 +724,126 @@ void main() {
           .firstWhere((m) => m.role == AiRole.tool && m.name == 'get_email');
       final decoded = jsonDecode(toolMsg.content) as Map<String, dynamic>;
       expect(decoded['body'], 'ALLOWED-BODY');
+    });
+  });
+  group('RunFolderAgent — the open email', () {
+    String systemPrompt() => capturedRequests()
+        .first
+        .messages
+        .firstWhere((m) => m.role == AiRole.system)
+        .content;
+
+    test(
+        'local provider: the open email is named in the system prompt with '
+        'its text, so "this email" needs no search', () async {
+      when(mockCatalog.getProvider('openai'))
+          .thenAnswer((_) async => Right(provider(AiProviderKind.local)));
+      when(mockGetEmail.call(any)).thenAnswer(
+        (_) async => Right(email(id: 'open1', body: 'OPEN-BODY')),
+      );
+      scriptedRounds = [textRound(const ['ok'])];
+
+      await useCase
+          .call(
+            history: const [],
+            userInstruction: 'Is this email malicious?',
+            selectedEmailId: 'open1',
+          )
+          .toList();
+
+      final prompt = systemPrompt();
+      expect(prompt, contains('id: open1'));
+      expect(prompt, contains('Subject: Subject open1'));
+      expect(prompt, contains('OPEN-BODY'));
+      expect(prompt, contains('check_email_safety'));
+      verify(mockGetEmail.call(const GetEmailParams(id: 'open1'))).called(1);
+    });
+
+    test('cloud provider without the opt-in: preview only, never the body',
+        () async {
+      when(mockGetEmail.call(any)).thenAnswer(
+        (_) async => Right(email(
+          id: 'open1',
+          body: 'TOP-SECRET-BODY',
+          preview: 'harmless preview',
+        )),
+      );
+      scriptedRounds = [textRound(const ['ok'])];
+
+      await useCase
+          .call(
+            history: const [],
+            userInstruction: 'Summarise this',
+            selectedEmailId: 'open1',
+          )
+          .toList();
+
+      final prompt = systemPrompt();
+      expect(prompt, contains('id: open1'));
+      expect(prompt, contains('harmless preview'));
+      expect(prompt, isNot(contains('TOP-SECRET-BODY')));
+    });
+
+    test('a long body is cut, and an unreadable open email is left out',
+        () async {
+      when(mockCatalog.getProvider('openai'))
+          .thenAnswer((_) async => Right(provider(AiProviderKind.local)));
+      when(mockGetEmail.call(any)).thenAnswer((_) async =>
+          Right(email(id: 'big', body: 'x' * (RunFolderAgent.maxOpenEmailChars + 500))));
+      scriptedRounds = [textRound(const ['ok'])];
+      await useCase
+          .call(history: const [], userInstruction: 'q', selectedEmailId: 'big')
+          .toList();
+      final cut = systemPrompt();
+      expect(cut, contains('truncated'));
+      expect(cut.length, lessThan(RunFolderAgent.maxOpenEmailChars + 2000));
+
+      clearInteractions(mockInference);
+      when(mockGetEmail.call(any))
+          .thenAnswer((_) async => const Left(ServerFailure(message: 'gone')));
+      scriptedRounds = [textRound(const ['ok'])];
+      final emitted = await useCase
+          .call(history: const [], userInstruction: 'q', selectedEmailId: 'gone')
+          .toList();
+      expect(emitted.every((e) => e.isRight()), isTrue);
+      expect(systemPrompt(), isNot(contains('reading pane')));
+    });
+
+    test('check_email_safety is offered and runs against the turn account',
+        () async {
+      when(mockGetEmail.call(any)).thenAnswer((_) async => Right(email()));
+      scriptedRounds = [
+        toolCallRound(const [
+          AiToolCall(
+            id: 'c1',
+            name: 'check_email_safety',
+            arguments: {'id': 'msg1'},
+          ),
+        ]),
+        textRound(const ['done']),
+      ];
+
+      await useCase
+          .call(history: const [], userInstruction: 'Safe?', accountId: 'acct')
+          .toList();
+
+      final requests = capturedRequests();
+      expect(
+        requests.first.tools!.map((t) => t.name),
+        contains('check_email_safety'),
+      );
+      verify(mockGetRawEmailBytes.call('msg1')).called(1);
+      verify(mockCheckSenderAnomaly.call(const CheckSenderAnomalyParams(
+        accountId: 'acct',
+        fromAddress: 'sender@example.com',
+        fromName: 'Sender',
+      ))).called(1);
+      final toolMsg = requests[1].messages.firstWhere(
+          (m) => m.role == AiRole.tool && m.name == 'check_email_safety');
+      final decoded = jsonDecode(toolMsg.content) as Map<String, dynamic>;
+      // The raw source failed, which is reported rather than fatal.
+      expect(decoded['authentication'], contains('unavailable'));
+      expect(decoded['links'], isA<Map<String, dynamic>>());
     });
   });
   group('ShowEmailsTool', () {

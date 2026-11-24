@@ -53,6 +53,42 @@ tool picked out of a search), and that replay needs both — see
 "An AI Search Shows in the List" in
 [`lib/presentation/blocs/email_list/CLAUDE.md`](../../lib/presentation/blocs/email_list/CLAUDE.md).
 
+### The folder agent knows which email is open
+
+"Is this email malicious?" used to send the folder agent to `list_emails`,
+and it answered about whichever message it found: nothing told it what was
+open. The pane now passes `HomeState.selectedEmailId` with every turn, and
+`RunFolderAgent` names that message in the **system prompt, rebuilt per
+turn** — the user moves between messages with the pane open, so it cannot
+live in history (the same reasoning as the compose pane's draft). For a
+local provider the message's text goes in too (cut at
+`maxOpenEmailChars`), so a small Ollama model need not decide to call
+`get_email` first; a cloud provider without the cloud-bodies opt-in gets the
+preview, as `get_email` would give it. A message that can no longer be read
+is left out, not an error. Only the open message is passed — a Shift/Cmd
+multi-selection lives in `EmailListPanel`'s widget state, not a bloc.
+
+No MCP server: the agent's tools are in-process use cases, and Ollama does
+not speak MCP, so an MCP hop would be NightMail calling itself over a socket.
+If outside agents (Claude Desktop, Claude Code) ever need the inbox, the
+`AgentTool` shape (name, description, JSON schema, `invoke`) wraps one to one.
+
+**`check_email_safety`** (`CheckEmailSafetyTool`, signals in
+`email_safety_signals.dart`) is what the model must call before calling a
+message safe or not. It reads only the **header block** of the raw source
+(`GetRawEmailBytes`; the body and attachments are never decoded) for the
+topmost `Authentication-Results` (the user's own provider wrote it; lower ones
+came from relays and can be forged), Reply-To and Return-Path against the
+sender's registrable domain; plus a display name carrying another address,
+the reading pane's lookalike-sender check (`CheckSenderAnomaly`, skipped
+without a display name, as the banner is), links whose visible text names a
+different domain, raw-IP / punycode / plain-http hosts, and risky or
+double-extension attachments. Everything is evidence, not a verdict. It is not
+behind the cloud-bodies guard because none of it is the body — and **links are
+reported as hosts only**, since a URL's query string can carry a sign-in or
+unsubscribe token. A failed raw fetch reports the header evidence as
+unavailable rather than failing the tool.
+
 ### System One (typed decision) providers speak a non-chat wire
 
 `AiWireProtocol.systemOne` is TypeSafe's Jev API: `POST {base}/v1/systemone`

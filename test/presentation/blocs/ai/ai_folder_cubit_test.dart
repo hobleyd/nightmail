@@ -55,6 +55,8 @@ void main() {
       history: anyNamed('history'),
       userInstruction: anyNamed('userInstruction'),
       currentFolderId: anyNamed('currentFolderId'),
+      selectedEmailId: anyNamed('selectedEmailId'),
+      accountId: anyNamed('accountId'),
       fallbackEmailsContext: anyNamed('fallbackEmailsContext'),
     )).thenAnswer((_) {
       final controller = StreamController<Either<Failure, AiChunk>>();

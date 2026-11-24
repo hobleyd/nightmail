@@ -14,6 +14,7 @@ class AiDayPanel extends StatelessWidget {
     required this.onClose,
     this.folderIdProvider,
     this.accountIdProvider,
+    this.selectedEmailIdProvider,
     this.contextProvider,
     this.onShowInList,
     this.useBackNavigation = false,
@@ -32,6 +33,10 @@ class AiDayPanel extends StatelessWidget {
 
   /// Called alongside [folderIdProvider]: the account that folder belongs to.
   final String? Function()? accountIdProvider;
+
+  /// Called alongside [folderIdProvider]: the message open in the reading
+  /// pane, which "this email" in the user's question refers to.
+  final String? Function()? selectedEmailIdProvider;
 
   /// Shows a search card's results in the email list; null hides the action.
   final ValueChanged<EmailListResultSet>? onShowInList;
@@ -54,6 +59,7 @@ class AiDayPanel extends StatelessWidget {
         instruction,
         currentFolderId: folderIdProvider?.call(),
         accountId: accountIdProvider?.call(),
+        selectedEmailId: selectedEmailIdProvider?.call(),
         fallbackEmailsContext: contextProvider?.call(),
       ),
       toolCardBuilder: (item) =>

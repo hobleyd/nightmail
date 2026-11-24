@@ -826,6 +826,7 @@ class _MobileLayoutState extends State<_MobileLayout> {
     final aiFolderCubit = context.read<AiFolderCubit>();
     final emailListBloc = context.read<EmailListBloc>();
     final accountCubit = context.read<AccountCubit>();
+    final homeCubit = context.read<HomeCubit>();
     _nav?.push<void>(
       MaterialPageRoute(
         fullscreenDialog: true,
@@ -841,6 +842,8 @@ class _MobileLayoutState extends State<_MobileLayout> {
                   return s is EmailListLoaded ? s.currentFolderId : null;
                 },
                 accountIdProvider: () => _activeAccountId(accountCubit),
+                selectedEmailIdProvider: () =>
+                    homeCubit.state.selectedEmailId,
                 onShowInList: (results) {
                   Navigator.of(ctx).pop();
                   // The list is not necessarily under this route — the AI
@@ -1484,6 +1487,8 @@ class _ThreePanelLayoutState extends State<_ThreePanelLayout> {
                       },
                       accountIdProvider: () =>
                           _activeAccountId(context.read<AccountCubit>()),
+                      selectedEmailIdProvider: () =>
+                          context.read<HomeCubit>().state.selectedEmailId,
                       onShowInList: (results) => context
                           .read<EmailListBloc>()
                           .add(EmailListResultsFocusRequested(

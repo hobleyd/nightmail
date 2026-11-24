@@ -7,11 +7,14 @@ import '../../../../core/usecases/usecase.dart';
 import '../../../entities/email.dart';
 import '../../../entities/email_address.dart';
 import '../../../entities/email_folder.dart';
+import '../../check_sender_anomaly.dart';
 import '../../get_email.dart';
 import '../../get_emails.dart';
 import '../../get_mail_folders.dart';
+import '../../get_raw_email_bytes.dart';
 import '../../search_emails.dart';
 import 'agent_tool.dart';
+import 'email_safety_signals.dart';
 
 /// `list_emails` — lists the emails in a folder (defaults to the current
 /// folder), returning an indexed list of metadata + preview.
@@ -298,6 +301,90 @@ class ShowEmailsTool implements AgentTool {
       ...listing,
       if (missing.isNotEmpty) 'notFound': missing,
     }));
+  }
+}
+
+/// `check_email_safety` — the evidence for judging whether a message is
+/// phishing, spoofed or dangerous: SPF/DKIM/DMARC from its raw headers,
+/// Reply-To and Return-Path against the sender, a display name imitating a
+/// known sender, links whose text names a different domain, and risky
+/// attachment types. See [emailSafetySignals].
+///
+/// Asking "is this malicious?" with only `get_email` left the model judging
+/// tone and spelling. Headers and link hosts are not the body, so this is
+/// not behind the cloud-bodies guard; links go out as hosts only.
+class CheckEmailSafetyTool implements AgentTool {
+  const CheckEmailSafetyTool(
+    this._getEmail,
+    this._getRawEmailBytes,
+    this._checkSenderAnomaly, {
+    required this.accountId,
+  });
+
+  final GetEmail _getEmail;
+  final GetRawEmailBytes _getRawEmailBytes;
+  final CheckSenderAnomaly _checkSenderAnomaly;
+
+  /// The account whose known senders a lookalike is checked against; null
+  /// skips that check.
+  final String? accountId;
+
+  @override
+  String get name => 'check_email_safety';
+
+  @override
+  String get description =>
+      'Gather security evidence about one email to judge whether it is '
+      'phishing, spoofed, spam or malicious: SPF/DKIM/DMARC results, Reply-To '
+      'and Return-Path versus the sender, a display name imitating someone the '
+      'user knows, links whose visible text names a different domain, and '
+      'risky attachment types. Always call this before saying whether an '
+      'email is safe.';
+
+  @override
+  Map<String, dynamic> get parametersSchema => {
+        'type': 'object',
+        'properties': {
+          'id': {
+            'type': 'string',
+            'description': 'The id of the email to check.',
+          },
+        },
+        'required': ['id'],
+      };
+
+  @override
+  Future<Either<Failure, String>> invoke(
+    Map<String, dynamic> args, {
+    String? currentFolderId,
+  }) async {
+    final id = _asString(args['id']);
+    if (id == null) {
+      return Right(jsonEncode({'error': "Missing required argument 'id'."}));
+    }
+    final emailResult = await _getEmail(GetEmailParams(id: id));
+    final email = emailResult.toNullable();
+    if (email == null) return emailResult.map((_) => '');
+
+    // Either extra can fail on its own (offline, a provider without raw
+    // source); the rest of the evidence is still worth having.
+    final raw = (await _getRawEmailBytes(id)).toNullable();
+    // As the reading pane's banner: no display name, nothing to imitate.
+    final account = accountId;
+    final fromName = email.from.name ?? '';
+    final anomaly = account == null || fromName.isEmpty
+        ? null
+        : (await _checkSenderAnomaly(CheckSenderAnomalyParams(
+            accountId: account,
+            fromAddress: email.from.address,
+            fromName: fromName,
+          )))
+            .fold((_) => null, (r) => r);
+    return Right(jsonEncode(emailSafetySignals(
+      email: email,
+      rawSource: raw,
+      senderAnomaly: anomaly,
+    )));
   }
 }
 

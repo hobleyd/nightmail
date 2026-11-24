@@ -141,6 +141,8 @@ class _ToolCallCardState extends State<ToolCallCard> {
         return running ? 'Reading…' : 'Read email';
       case 'list_folders':
         return running ? 'Listing…' : 'Listed folders';
+      case 'check_email_safety':
+        return running ? 'Checking…' : 'Checked security signals';
       case 'show_emails':
         return running ? 'Picking out…' : 'Picked out emails';
       default:
@@ -158,6 +160,8 @@ class _ToolCallCardState extends State<ToolCallCard> {
         return Icons.mail_outline;
       case 'list_folders':
         return Icons.folder_outlined;
+      case 'check_email_safety':
+        return Icons.shield_outlined;
       case 'show_emails':
         return Icons.checklist_rtl;
       default:

@@ -1,18 +1,23 @@
+import 'package:flutter/foundation.dart';
 import 'package:fpdart/fpdart.dart';
 
 import '../../../core/error/failures.dart';
+import '../../../core/utils/latest_reply.dart' show htmlToPlainText;
 import '../../entities/ai/ai_capability.dart';
 import '../../entities/ai/ai_chunk.dart';
 import '../../entities/ai/ai_message.dart';
 import '../../entities/ai/ai_provider.dart';
 import '../../entities/ai/ai_request.dart';
 import '../../entities/ai/ai_tool_call.dart';
+import '../../entities/email.dart';
 import '../../repositories/ai/ai_catalog_repository.dart';
 import '../../repositories/ai/ai_inference_repository.dart';
 import '../../repositories/ai/ai_settings_repository.dart';
+import '../check_sender_anomaly.dart';
 import '../get_email.dart';
 import '../get_emails.dart';
 import '../get_mail_folders.dart';
+import '../get_raw_email_bytes.dart';
 import '../search_emails.dart';
 import 'agent/agent_loop.dart';
 import 'agent/agent_tool.dart';
@@ -24,9 +29,18 @@ import 'agent/email_agent_tools.dart';
 /// Replaces the single-shot [QueryEmailFolder] for tool-capable models: instead
 /// of pre-stuffing folder emails into the prompt, the model is given read-only
 /// tools ([ListEmailsTool], [GetEmailTool], [SearchEmailsTool],
-/// [ListFoldersTool], and [ShowEmailsTool] to name its pick) to read/search
-/// mail on demand. Multi-turn threading is
+/// [ListFoldersTool], [CheckEmailSafetyTool], and [ShowEmailsTool] to name its
+/// pick) to read/search mail on demand. Multi-turn threading is
 /// the caller's responsibility — it passes the accumulated [history] each turn.
+///
+/// ## The open email
+///
+/// The message open in the reading pane is named in the system prompt, which
+/// is rebuilt every turn (the user moves between messages while the pane
+/// stays open, so it cannot live in history). Without it, "is this email
+/// malicious?" sent the model off to `list_emails`, and it answered about
+/// whichever message it found. For a local provider the open message's text
+/// goes in too, so a small model need not think to call `get_email` first.
 ///
 /// Routing reuses [AiCapability.compose]. When the routed model does not
 /// support tool calling (`AiModel.toolCall == false`), this falls back to the
@@ -55,6 +69,8 @@ class RunFolderAgent {
     required this.getEmail,
     required this.searchEmails,
     required this.getMailFolders,
+    required this.getRawEmailBytes,
+    required this.checkSenderAnomaly,
   });
 
   final AiSettingsRepository settingsRepository;
@@ -64,6 +80,12 @@ class RunFolderAgent {
   final GetEmail getEmail;
   final SearchEmails searchEmails;
   final GetMailFolders getMailFolders;
+  final GetRawEmailBytes getRawEmailBytes;
+  final CheckSenderAnomaly checkSenderAnomaly;
+
+  /// Most characters of the open email's text put in the system prompt; the
+  /// model can still `get_email` the whole of a longer one.
+  static const int maxOpenEmailChars = 8000;
 
   /// Default maximum streamed rounds per turn (one round = one model stream
   /// that may end in tool calls). Bounds runaway tool loops. Used when the
@@ -103,6 +125,9 @@ class RunFolderAgent {
       'the user asks you to find emails and you narrow what a search or '
       'listing found down to the ones that match, finish by calling '
       'show_emails with their ids so the user can open them in their list. '
+      'When asked whether an email is safe, phishing, spam, a scam or '
+      'malicious, call check_email_safety on it and base the answer on that '
+      'evidence. '
       'Cite specific senders, subjects, and dates. Be concise and specific.';
 
   /// Fallback system prompt (no tools) — mirrors [QueryEmailFolder].
@@ -117,12 +142,17 @@ class RunFolderAgent {
   ///
   /// [history] is the prior conversation (user/assistant/tool turns) excluding
   /// the system prompt; [userInstruction] is the new user turn. [currentFolderId]
-  /// is the panel's current folder (tool default). [fallbackEmailsContext] is
-  /// the pre-formatted folder excerpt used only on the no-tools fallback path.
+  /// is the panel's current folder (tool default). [selectedEmailId] is the
+  /// message open in the reading pane, if any, and [accountId] the account
+  /// the panel is on (for the lookalike-sender check). [fallbackEmailsContext]
+  /// is the pre-formatted folder excerpt used only on the no-tools fallback
+  /// path.
   Stream<Either<Failure, AiChunk>> call({
     required List<AiMessage> history,
     required String userInstruction,
     String? currentFolderId,
+    String? selectedEmailId,
+    String? accountId,
     String? fallbackEmailsContext,
   }) async* {
     // Resolve which provider + model handles the folder agent.
@@ -174,6 +204,23 @@ class RunFolderAgent {
         .fold((_) => null, (value) => value);
     final toolCapable = isCloud ? (model?.toolCall ?? false) : true;
 
+    // A message that can no longer be read (deleted, another account's) is
+    // left out rather than failing the turn.
+    final selected = selectedEmailId == null
+        ? null
+        : (await getEmail(GetEmailParams(id: selectedEmailId))).fold(
+            (failure) {
+              // Otherwise indistinguishable from the agent not knowing.
+              debugPrint('[AI] open email $selectedEmailId left out of the '
+                  'prompt: ${failure.message}');
+              return null;
+            },
+            (email) => email,
+          );
+    final openEmail = selected == null
+        ? ''
+        : '\n\n${_openEmailSection(selected, includeBodies)}';
+
     // --- Fallback: no-tools, pre-stuffed context (mirrors QueryEmailFolder) --
     if (!toolCapable) {
       final request = AiRequest(
@@ -181,7 +228,10 @@ class RunFolderAgent {
         modelId: routing.modelId,
         stream: true,
         messages: [
-          const AiMessage(role: AiRole.system, content: _fallbackSystemPrompt),
+          AiMessage(
+            role: AiRole.system,
+            content: '$_fallbackSystemPrompt$openEmail',
+          ),
           ...history,
           AiMessage(
             role: AiRole.user,
@@ -202,12 +252,18 @@ class RunFolderAgent {
       GetEmailTool(getEmail, includeBodies: includeBodies),
       SearchEmailsTool(searchEmails),
       ListFoldersTool(getMailFolders),
+      CheckEmailSafetyTool(
+        getEmail,
+        getRawEmailBytes,
+        checkSenderAnomaly,
+        accountId: accountId,
+      ),
       ShowEmailsTool(getEmail),
     ];
     // The loop itself is shared with the commitments agent — see AgentLoop.
     yield* AgentLoop(inferenceRepository).run(
       routing: routing,
-      systemPrompt: _agentSystemPrompt,
+      systemPrompt: '$_agentSystemPrompt$openEmail',
       tools: tools,
       history: history,
       userInstruction: userInstruction,
@@ -216,6 +272,40 @@ class RunFolderAgent {
       maxToolCallsPerRound: maxToolCallsPerRound,
       activityLabel: _activityLabel,
     );
+  }
+
+  /// The system-prompt paragraph naming the message open in the reading pane.
+  /// Its text is included only when bodies may go to this provider, cut to
+  /// [maxOpenEmailChars]; otherwise the preview stands in, as `get_email`.
+  String _openEmailSection(Email email, bool includeBodies) {
+    final from = email.from.name == null || email.from.name!.isEmpty
+        ? email.from.address
+        : '${email.from.name} <${email.from.address}>';
+    final buffer = StringBuffer()
+      ..writeln('The user has this email open in the reading pane. When they '
+          'say "this email", "this message", "the selected email" or ask about '
+          'an email without saying which, they mean this one — do not search '
+          'for another.')
+      ..writeln('id: ${email.id}')
+      ..writeln('From: $from')
+      ..writeln('Subject: ${email.subject}')
+      ..writeln('Date: ${email.receivedDateTime.toIso8601String()}');
+    if (includeBodies) {
+      final text = (email.bodyType == EmailBodyType.html
+              ? htmlToPlainText(email.body)
+              : email.body)
+          .trim();
+      final cut = text.length > maxOpenEmailChars
+          ? '${text.substring(0, maxOpenEmailChars)}\n[… truncated — call '
+              'get_email for the rest]'
+          : text;
+      buffer
+        ..writeln('Body:')
+        ..write(cut);
+    } else {
+      buffer.write('Preview: ${email.bodyPreview}');
+    }
+    return buffer.toString();
   }
 
   /// Combines the user's [instruction] with any [emailsContext] into a single
@@ -244,6 +334,8 @@ class RunFolderAgent {
         return 'Reading an email…';
       case 'list_folders':
         return 'Listing folders…';
+      case 'check_email_safety':
+        return 'Checking the email\'s security signals…';
       case 'show_emails':
         return 'Picking out the matching emails…';
       default:

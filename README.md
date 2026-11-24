@@ -26,6 +26,7 @@ The app provides a desktop based three-pane layout (folders, message list, readi
 - Search operators on every provider: free text matches message bodies as well as headers, plus `from:`, `to:`, `cc:`, `subject:`, `body:`, `has:attachment` and "quoted phrases"
 - An AI assistant's email search shows in the message list from its result card ("Show N emails in list"), under a banner that closes back to the folder
 - When the AI assistant narrows a search down to the emails that answer the question, just those emails can be shown in the message list too
+- The AI assistant knows which email is open, and can judge whether it is phishing or malicious from its SPF/DKIM/DMARC results, Reply-To, lookalike senders, mismatched links and risky attachments
 - AI writing assistant in the compose window: a chat beside the message (the bottom half of the screen on a phone) that drafts, reviews and revises only what you wrote above the quoted reply, leaving the signature alone; proposed versions apply with one click and undo just as easily
 - Sender anomaly and spam detection
 - Spam filter synced across IMAP clients via a dedicated server-side folder

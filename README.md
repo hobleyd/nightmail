@@ -165,6 +165,12 @@ Settings → Accounts.
 - A gap a cancelled meeting leaves in today is flagged as just freed, paired with the most pressing unscheduled commitment, and filled with one click
 - Natural-language control: tell the assistant what to change ("Move everything non-urgent to Friday and give me 2 hours for the AWS work") and it books, moves and closes through the same actions, showing each step and reporting what changed
 
+### Chat
+- Chat pane beside Calendar and Tasks: chat with the selected email's sender, or pick anyone else on the email from a dropdown — only people in your organisation are offered
+- Microsoft Teams chats and channels on Microsoft 365 and NightMail Server, and Google Chat direct messages, group chats and spaces on Google Workspace accounts
+- Double-click the Chat button for a chat window: chats, spaces and Teams channels sorted by latest activity, message history with threads and replies, and search across old messages
+- A one-on-one is only created when you send the first message
+
 ### Contacts
 - Typeahead in the compose window drawing from three sources:
   - Previously known senders (local database)

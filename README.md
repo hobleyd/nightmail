@@ -171,6 +171,8 @@ Settings → Accounts.
 - Double-click the Chat button for a chat window: chats, spaces and Teams channels sorted by latest activity, message history with threads and replies, and search across old messages
 - A one-on-one is only created when you send the first message
 - People outside your organisation are offered too when you already have a one-on-one chat with them
+- Pictures show in the conversation (Teams pasted images, GIFs and stickers; Google Chat uploads) and open full size on click
+- Each sender has an avatar (directory photo, or initials) and their own pastel colour, so who is talking stands out at a glance
 
 ### Contacts
 - Typeahead in the compose window drawing from three sources:

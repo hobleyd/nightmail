@@ -1,8 +1,11 @@
+import 'dart:typed_data';
+
 import 'package:dio/dio.dart';
 
 import '../../../core/error/exceptions.dart';
 import '../../../domain/entities/chat.dart';
 import 'chat_remote_datasource.dart';
+import 'chat_images.dart';
 
 /// Google Chat (`chat.googleapis.com/v1`) as the signed-in Workspace user.
 ///
@@ -266,7 +269,8 @@ class GoogleChatDatasource implements ChatRemoteDatasource {
       senderName:
           (sender is Map ? sender['displayName'] as String? : null) ?? '',
       senderUserId: sender is Map ? sender['name'] as String? : null,
-      bodyHtml: chatTextToHtml(raw['text'] as String? ?? ''),
+      bodyHtml: chatTextToHtml(raw['text'] as String? ?? '') +
+          _imagesHtml(raw['attachment']),
       editedAt: _date(raw['lastUpdateTime']),
       isDeleted: raw['deleteTime'] != null,
       threadId: thread is Map ? thread['name'] as String? : null,
@@ -281,10 +285,43 @@ class GoogleChatDatasource implements ChatRemoteDatasource {
       ],
       attachmentNames: [
         for (final a in _list(raw['attachment']))
-          if ((a['contentName'] as String?)?.isNotEmpty == true)
+          if ((a['contentName'] as String?)?.isNotEmpty == true &&
+              _mediaRef(a) == null)
             a['contentName'] as String,
       ],
     );
+  }
+
+  /// The scheme of an `<img src>` this datasource writes for an uploaded
+  /// picture: the attachment's `attachmentDataRef.resourceName`, which only
+  /// `media/{resourceName}?alt=media` downloads, with the user's token.
+  static const mediaScheme = 'gchat-media';
+
+  /// An uploaded image attachment's resource name; null for anything else,
+  /// including a Drive file (which stays a named attachment).
+  static String? _mediaRef(Map<String, dynamic> a) {
+    final type = a['contentType'] as String? ?? '';
+    final ref = a['attachmentDataRef'];
+    if (!type.startsWith('image/') || ref is! Map) return null;
+    final name = ref['resourceName'] as String?;
+    return name == null || name.isEmpty ? null : name;
+  }
+
+  /// Uploaded pictures, after the text, as images the renderer loads through
+  /// [image].
+  static String _imagesHtml(Object? attachments) {
+    final out = StringBuffer();
+    for (final a in _list(attachments)) {
+      final ref = _mediaRef(a);
+      if (ref == null) continue;
+      final alt = (a['contentName'] as String? ?? '')
+          .replaceAll('&', '&amp;')
+          .replaceAll('"', '&quot;')
+          .replaceAll('<', '&lt;');
+      out.write('<p><img src="$mediaScheme:${Uri.encodeComponent(ref)}" '
+          'alt="$alt"></p>');
+    }
+    return out.toString();
   }
 
   static ChatMessage _withReplies(ChatMessage m, List<ChatMessage> replies) =>
@@ -301,6 +338,48 @@ class GoogleChatDatasource implements ChatRemoteDatasource {
         threadId: m.threadId,
         replies: replies,
       );
+
+  @override
+  Future<Uint8List?> image(String src) async {
+    if (src.startsWith('$mediaScheme:')) {
+      final ref = Uri.decodeComponent(src.substring(mediaScheme.length + 1));
+      return fetchImageBytes(_dio, '/media/$ref', query: {'alt': 'media'});
+    }
+    final uri = Uri.tryParse(src);
+    if (uri == null || uri.scheme != 'https') return null;
+    return fetchImageBytes(publicImageClient, src);
+  }
+
+  /// A Chat user's `users/{id}` is their People API id, so the photo comes
+  /// from `people/{id}` (the Workspace directory, `directory.readonly`) —
+  /// asked with the same token, then fetched from Google's image host with
+  /// none. Google's generated letter avatar (`default`) is skipped: the
+  /// pane draws its own initials.
+  @override
+  Future<Uint8List?> photo(String userId) async {
+    final id = userId.startsWith('users/') ? userId.substring(6) : userId;
+    if (id.isEmpty || id == 'app') return null;
+    try {
+      final r = await _dio.get<Map<String, dynamic>>(
+        'https://people.googleapis.com/v1/people/${Uri.encodeComponent(id)}',
+        queryParameters: {'personFields': 'photos'},
+      );
+      final photos = _list(r.data?['photos']);
+      final chosen = photos.where((p) => p['default'] != true).firstOrNull;
+      final url = chosen?['url'] as String?;
+      final uri = url == null ? null : Uri.tryParse(url);
+      if (uri == null ||
+          uri.scheme != 'https' ||
+          !uri.host.endsWith('.googleusercontent.com')) {
+        return null;
+      }
+      // Google's photo URLs end in a size directive; ask for 64 pixels.
+      final sized = url!.replaceFirst(RegExp(r'=s\d+(-c)?$'), '=s64-c');
+      return await fetchImageBytes(publicImageClient, sized);
+    } catch (_) {
+      return null;
+    }
+  }
 
   /// Google Chat's plain `text` as the HTML the chat renderer reads: escaped,
   /// line breaks kept, and Chat's own markup — `*bold*`, `_italic_`,

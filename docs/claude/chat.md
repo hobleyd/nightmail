@@ -125,9 +125,53 @@ one.
 ## Rendering
 
 Bodies are HTML on both providers, rendered by `ChatMessageBody` as styled
-text — no webview per message. Images are never fetched (emoji keep their
-`alt`, anything else reads "[image]"), `<script>`/`<style>` content is
-dropped, and only `http(s)`/`mailto` links are tappable.
+text — no webview per message. `<script>`/`<style>` content is dropped, and
+only `http(s)`/`mailto` links are tappable.
+
+### Images
+
+An emoji `<img>` keeps its `alt`. Any other `<img>` becomes a `ChatImage`
+(a `WidgetSpan`, tap to open full size) whose bytes come through
+`ChatRepository.image` → the datasource's `image(src)`; the renderer never
+fetches anything itself, and without a loader an image reads "[image]".
+
+- **Teams** keeps a pasted picture as hosted content and links it from the
+  body on the account's own Graph root
+  (`…/messages/{id}/hostedContents/{id}/$value`): fetched with the account's
+  token (`Chat.ReadWrite`/`ChannelMessage.Read.All` cover it). Same
+  scheme/host/port rule as nextLinks — the token goes nowhere else.
+- **Elsewhere** (a Teams GIF or sticker on a public CDN): `https` only,
+  through `publicImageClient` — no base URL, no interceptors, so never the
+  token. Unlike mail, remote chat images load without asking: a chat already
+  tells its sender you read it, so a tracking pixel learns nothing new.
+- **Google** has no images in `text`; an uploaded picture is an `attachment`
+  with `attachmentDataRef.resourceName`. `GoogleChatDatasource` writes it into
+  the body as `<img src="gchat-media:{resourceName}">` (an opaque ref, like a
+  nextLink cursor) and `image` downloads it from `media/{resourceName}
+  ?alt=media` with the token. A Drive attachment stays a named attachment.
+- `fetchImageBytes` (`chat_images.dart`) returns null for anything that is
+  not an `image/*` answer under 15 MB — chat images are decoration, never an
+  error. The repository remembers results (misses too) per `account|src`,
+  300 deep, so polling never re-fetches.
+
+### Who is talking
+
+Each run of one sender's messages starts with a `ChatAvatar` and their name
+in their colour; their messages sit in a pastel bubble of the same hue (a
+channel post's card takes it too). Colours come from `ChatPersonStyle.hues`,
+ten hues ordered for contrast, dealt out per conversation by
+`ChatPeopleColors` in an order fixed by each person's hash — so the same
+people always get the same colours and a one-on-one is always blue and
+orange. Hashing each person straight to a hue was tried: two of four people
+landed in one colour, or 30° apart, which is the same colour in pastel.
+
+Avatars are initials on the person's colour until `photo(userId)` answers:
+Microsoft `/users/{id}/photos/64x64/$value` (`User.Read.All`, already
+granted), a NightMail Server `/users/{id}/photo/$value`, Google
+`people/{id}?personFields=photos` (a Chat user id is their People id;
+`directory.readonly`) then the photo from `*.googleusercontent.com` with no
+token — Google's generated letter avatar (`default: true`) is skipped. An
+outside person has no photo in your directory and keeps their initials.
 
 ## Google Chat (Workspace accounts)
 

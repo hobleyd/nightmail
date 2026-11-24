@@ -1,3 +1,5 @@
+import 'dart:typed_data';
+
 import 'package:flutter/foundation.dart' show debugPrint;
 import 'package:fpdart/fpdart.dart';
 
@@ -280,6 +282,41 @@ class ChatRepositoryImpl implements ChatRepository {
       debugPrint('[Chat] directory lookup failed: $e');
     }
     return out;
+  }
+
+  /// Images and photos by `account|src`, as futures so a picture on screen
+  /// in the pane and the window, or repeated down a history, is fetched
+  /// once. Oldest dropped past [_imageCacheSize]; a miss stays a miss until
+  /// it is dropped, so a 404 photo is not asked for on every poll.
+  final _images = <String, Future<Uint8List?>>{};
+  static const _imageCacheSize = 300;
+
+  Future<Uint8List?> _cachedImage(
+    String key,
+    Future<Uint8List?> Function() fetch,
+  ) {
+    final hit = _images.remove(key);
+    if (hit != null) return _images[key] = hit;
+    final future = fetch();
+    _images[key] = future;
+    while (_images.length > _imageCacheSize) {
+      _images.remove(_images.keys.first);
+    }
+    return future;
+  }
+
+  @override
+  Future<Uint8List?> image(String accountId, String src) {
+    final ds = _accounts.chatDatasourceForAccount(accountId);
+    if (ds == null) return Future.value();
+    return _cachedImage('$accountId|img|$src', () => ds.image(src));
+  }
+
+  @override
+  Future<Uint8List?> photo(String accountId, String userId) {
+    final ds = _accounts.chatDatasourceForAccount(accountId);
+    if (ds == null || userId.isEmpty) return Future.value();
+    return _cachedImage('$accountId|photo|$userId', () => ds.photo(userId));
   }
 
   @override

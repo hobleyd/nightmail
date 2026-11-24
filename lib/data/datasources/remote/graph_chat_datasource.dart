@@ -1,8 +1,11 @@
+import 'dart:typed_data';
+
 import 'package:dio/dio.dart';
 
 import '../../../core/error/exceptions.dart';
 import '../../../core/utils/latest_reply.dart' show htmlToPlainText;
 import '../../../domain/entities/chat.dart';
+import 'chat_images.dart';
 import 'chat_remote_datasource.dart';
 
 /// Graph's chat and Teams-channel API, as Microsoft 365 and a NightMail
@@ -503,6 +506,39 @@ class GraphChatDatasource implements ChatRemoteDatasource {
 
   static List<Map<String, dynamic>> _values(Map<String, dynamic> data) =>
       _list(data['value']);
+
+  // ---- images ---------------------------------------------------------------
+
+  /// Teams keeps a pasted picture as the message's hosted content, linked
+  /// from the body as `…/chats/{id}/messages/{id}/hostedContents/{id}/$value`
+  /// on the account's own Graph root — fetched with its token. A GIF or
+  /// sticker points at a public CDN and goes without it.
+  @override
+  Future<Uint8List?> image(String src) async {
+    final uri = Uri.tryParse(src);
+    if (uri == null) return null;
+    final root = Uri.tryParse(_root());
+    final own = root != null &&
+        uri.scheme == root.scheme &&
+        uri.host == root.host &&
+        uri.port == root.port;
+    if (own) return fetchImageBytes(_dio, src);
+    if (uri.scheme != 'https') return null;
+    return fetchImageBytes(publicImageClient, src);
+  }
+
+  /// Microsoft serves a 64-pixel rendition; a NightMail Server only the
+  /// photo itself (`/users/{id}/photo/$value`, nightware's directory routes).
+  @override
+  Future<Uint8List?> photo(String userId) {
+    final id = Uri.encodeComponent(userId);
+    return fetchImageBytes(
+      _dio,
+      isNightmailServer
+          ? '/users/$id/photo/\$value'
+          : '/users/$id/photos/64x64/\$value',
+    );
+  }
 
   // ---- transport ----------------------------------------------------------
 

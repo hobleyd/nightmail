@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:typed_data';
 
 import 'package:equatable/equatable.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
@@ -359,6 +360,22 @@ class ChatConversationCubit extends Cubit<ChatConversationState> {
         return true;
       },
     );
+  }
+
+  /// An `<img src>` in the open conversation, for the message renderer.
+  Future<Uint8List?> image(String src) {
+    final accountId = state.accountId;
+    return accountId == null
+        ? Future.value()
+        : _repo.image(accountId, src);
+  }
+
+  /// A sender's photo, for their avatar.
+  Future<Uint8List?> photo(String userId) {
+    final accountId = state.accountId;
+    return accountId == null
+        ? Future.value()
+        : _repo.photo(accountId, userId);
   }
 
   /// Opens a channel post's replies.

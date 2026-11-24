@@ -1,3 +1,5 @@
+import 'dart:typed_data';
+
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -9,13 +11,20 @@ import 'package:url_launcher/url_launcher.dart';
 /// lists, `<blockquote>` and `<img>` (emoji, inline images); Nightware's
 /// rendering of Talk's Markdown is the same subset (ADR 0009 D4). One
 /// webview per message would not scale to a scrolling history, and a text
-/// rendering cannot run script or fetch anything: images are never loaded —
-/// an emoji keeps its `alt`, anything else reads "[image]".
+/// rendering cannot run script. An emoji keeps its `alt`; any other image is
+/// fetched through [loadImage] — the datasource decides what may be fetched
+/// and with which credentials — and reads "[image]" without one.
 class ChatMessageBody extends StatefulWidget {
-  const ChatMessageBody({super.key, required this.html, required this.style});
+  const ChatMessageBody({
+    super.key,
+    required this.html,
+    required this.style,
+    this.loadImage,
+  });
 
   final String html;
   final TextStyle style;
+  final Future<Uint8List?> Function(String src)? loadImage;
 
   @override
   State<ChatMessageBody> createState() => _ChatMessageBodyState();
@@ -50,6 +59,7 @@ class _ChatMessageBodyState extends State<ChatMessageBody> {
         accent: Theme.of(context).colorScheme.primary,
         codeBg: Theme.of(context).colorScheme.onSurface.withAlpha(20),
         onRecognizer: _recognizers.add,
+        loadImage: widget.loadImage,
       ).render(widget.html);
       _builtFor = widget.html;
       _builtBrightness = brightness;
@@ -66,12 +76,14 @@ class _ChatHtml {
     required this.accent,
     required this.codeBg,
     required this.onRecognizer,
+    this.loadImage,
   });
 
   final TextStyle base;
   final Color accent;
   final Color codeBg;
   final void Function(TapGestureRecognizer) onRecognizer;
+  final Future<Uint8List?> Function(String src)? loadImage;
 
   static final _token = RegExp(r'<(/?)([a-zA-Z0-9]+)([^>]*)>|([^<]+)');
   static final _attr = RegExp(r'''([a-zA-Z-]+)\s*=\s*("([^"]*)"|'([^']*)')''');
@@ -190,7 +202,25 @@ class _ChatHtml {
           final alt = attrs['alt'] ?? '';
           final isEmoji = (attrs['itemtype'] ?? '').contains('Emoji') ||
               (alt.isNotEmpty && alt.runes.length <= 3);
-          text(isEmoji ? alt : '[image]');
+          final src = attrs['src'] ?? '';
+          final load = loadImage;
+          if (isEmoji) {
+            text(alt);
+          } else if (load == null || src.isEmpty) {
+            text('[image]');
+          } else {
+            out.add(WidgetSpan(
+              alignment: PlaceholderAlignment.bottom,
+              child: ChatImage(
+                src: src,
+                load: load,
+                alt: alt,
+                width: double.tryParse(attrs['width'] ?? ''),
+                height: double.tryParse(attrs['height'] ?? ''),
+              ),
+            ));
+            atLineStart = false;
+          }
         case 'emoji':
           text(attrs['alt'] ?? '');
       }
@@ -243,4 +273,133 @@ class _ChatHtml {
       .replaceAllMapped(RegExp(r'&#x([0-9a-fA-F]+);'),
           (m) => String.fromCharCode(int.parse(m.group(1)!, radix: 16)))
       .replaceAll('&amp;', '&');
+}
+
+/// A picture in a message, at most [maxWidth] × [maxHeight]; tapping it opens
+/// it full size. Sized from the tag's own width and height while it loads, so
+/// the history does not jump; "[image]" when it cannot be fetched.
+class ChatImage extends StatefulWidget {
+  const ChatImage({
+    super.key,
+    required this.src,
+    required this.load,
+    this.alt = '',
+    this.width,
+    this.height,
+  });
+
+  final String src;
+  final Future<Uint8List?> Function(String src) load;
+  final String alt;
+  final double? width;
+  final double? height;
+
+  static const maxWidth = 320.0;
+  static const maxHeight = 260.0;
+
+  @override
+  State<ChatImage> createState() => _ChatImageState();
+}
+
+class _ChatImageState extends State<ChatImage> {
+  late Future<Uint8List?> _bytes = widget.load(widget.src);
+
+  @override
+  void didUpdateWidget(ChatImage old) {
+    super.didUpdateWidget(old);
+    if (old.src != widget.src) _bytes = widget.load(widget.src);
+  }
+
+  /// The tag's size scaled into the bounds, or a modest box when it has none.
+  Size get _placeholder {
+    final w = widget.width, h = widget.height;
+    if (w == null || h == null || w <= 0 || h <= 0) return const Size(160, 120);
+    final scale = [1.0, ChatImage.maxWidth / w, ChatImage.maxHeight / h]
+        .reduce((a, b) => a < b ? a : b);
+    return Size(w * scale, h * scale);
+  }
+
+  void _open(Uint8List bytes) {
+    showDialog<void>(
+      context: context,
+      builder: (context) => Dialog(
+        clipBehavior: Clip.antiAlias,
+        child: Stack(
+          children: [
+            InteractiveViewer(
+              maxScale: 6,
+              child: Image.memory(bytes, fit: BoxFit.contain),
+            ),
+            Positioned(
+              top: 4,
+              right: 4,
+              child: IconButton.filledTonal(
+                icon: const Icon(Icons.close, size: 18),
+                tooltip: 'Close',
+                onPressed: () => Navigator.of(context).pop(),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 3),
+      child: FutureBuilder<Uint8List?>(
+        future: _bytes,
+        builder: (context, snap) {
+          if (snap.connectionState != ConnectionState.done) {
+            final size = _placeholder;
+            return Container(
+              width: size.width,
+              height: size.height,
+              decoration: BoxDecoration(
+                color: scheme.onSurface.withAlpha(15),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: const Center(
+                child: SizedBox(
+                  width: 16,
+                  height: 16,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                ),
+              ),
+            );
+          }
+          final bytes = snap.data;
+          final missing = Text(
+            widget.alt.isNotEmpty ? '[image: ${widget.alt}]' : '[image]',
+            style: TextStyle(fontSize: 12, color: scheme.onSurface.withAlpha(140)),
+          );
+          if (bytes == null) return missing;
+          return MouseRegion(
+            cursor: SystemMouseCursors.zoomIn,
+            child: GestureDetector(
+              onTap: () => _open(bytes),
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(
+                  maxWidth: ChatImage.maxWidth,
+                  maxHeight: ChatImage.maxHeight,
+                ),
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(8),
+                  child: Image.memory(
+                    bytes,
+                    fit: BoxFit.contain,
+                    gaplessPlayback: true,
+                    errorBuilder: (_, _, _) => missing,
+                  ),
+                ),
+              ),
+            ),
+          );
+        },
+      ),
+    );
+  }
 }

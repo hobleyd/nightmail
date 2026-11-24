@@ -8,6 +8,7 @@ import '../../../core/theme/app_colors.dart';
 import '../../../domain/entities/chat.dart';
 import '../../blocs/chat/chat_conversation_cubit.dart';
 import 'chat_message_body.dart';
+import 'chat_person_style.dart';
 
 /// A conversation's history and the box to write in, for the pane and the
 /// window alike. In a channel, posts show their reply count and open a
@@ -90,7 +91,14 @@ class ChatConversationView extends StatelessWidget {
           ],
         );
 
-        if (!threadOpen) return history;
+        Widget colored(Widget child) => ChatPeopleColors(
+              messages: [
+                for (final m in state.messages) ...[m, ...m.replies],
+                ...state.threadReplies,
+              ],
+              child: child,
+            );
+        if (!threadOpen) return colored(history);
         final thread = _ThreadPanel(
           post: state.threadPost,
           replies: state.threadReplies,
@@ -98,14 +106,14 @@ class ChatConversationView extends StatelessWidget {
           sending: state.sending,
           showBack: !wideThreads,
         );
-        if (!wideThreads) return thread;
-        return Row(
+        if (!wideThreads) return colored(thread);
+        return colored(Row(
           children: [
             Expanded(flex: 3, child: history),
             VerticalDivider(width: 1, color: c.separatorStrong),
             Expanded(flex: 2, child: thread),
           ],
-        );
+        ));
       },
     );
   }
@@ -282,40 +290,44 @@ class _MessageTile extends StatelessWidget {
         : ChatMessageBody(
             html: m.bodyHtml,
             style: TextStyle(fontSize: 13, height: 1.35, color: c.textBody),
+            loadImage: context.read<ChatConversationCubit>().image,
           );
+    final person = ChatPersonStyle.of(context, m);
 
-    final content = Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        if (showHeader)
-          Padding(
-            padding: const EdgeInsets.only(bottom: 2),
-            child: Row(
-              children: [
-                Flexible(
-                  child: Text(
-                    m.senderName.isEmpty ? 'Unknown' : m.senderName,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      fontSize: 12.5,
-                      fontWeight: FontWeight.w600,
-                      color: c.textPrimary,
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 8),
-                Text(
-                  DateFormat.jm().format(m.createdAt),
-                  style: TextStyle(fontSize: 11, color: c.textMuted),
-                ),
-                if (m.editedAt != null && !m.isDeleted) ...[
-                  const SizedBox(width: 6),
-                  Text('Edited',
-                      style: TextStyle(fontSize: 11, color: c.textMuted)),
-                ],
-              ],
+    final header = Padding(
+      padding: const EdgeInsets.only(bottom: 3),
+      child: Row(
+        children: [
+          Flexible(
+            child: Text(
+              m.senderName.isEmpty ? 'Unknown' : m.senderName,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                fontSize: 12.5,
+                fontWeight: FontWeight.w700,
+                color: person.name,
+              ),
             ),
           ),
+          const SizedBox(width: 8),
+          Text(
+            DateFormat.jm().format(m.createdAt),
+            style: TextStyle(fontSize: 11, color: c.textMuted),
+          ),
+          if (m.editedAt != null && !m.isDeleted) ...[
+            const SizedBox(width: 6),
+            Text('Edited',
+                style: TextStyle(fontSize: 11, color: c.textMuted)),
+          ],
+        ],
+      ),
+    );
+
+    // What sits in the sender's bubble (a chat) or card (a channel post).
+    final bubbleContent = Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: [
         if (m.subject != null)
           Padding(
             padding: const EdgeInsets.only(bottom: 2),
@@ -365,6 +377,24 @@ class _MessageTile extends StatelessWidget {
               ],
             ),
           ),
+      ],
+    );
+
+    final content = Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        if (showHeader) header,
+        if (isPost)
+          bubbleContent
+        else
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+            decoration: BoxDecoration(
+              color: person.bubble,
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: bubbleContent,
+          ),
         if (isPost)
           Padding(
             padding: const EdgeInsets.only(top: 4),
@@ -399,20 +429,39 @@ class _MessageTile extends StatelessWidget {
       ],
     );
 
+    // The avatar heads a run of one sender's messages; the rest of the run
+    // keeps its column so the bubbles line up under the first.
+    const avatarSize = 30.0;
+    final row = Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        SizedBox(
+          width: avatarSize,
+          child: showHeader
+              ? ChatAvatar(message: m, size: avatarSize)
+              : null,
+        ),
+        const SizedBox(width: 8),
+        Expanded(child: content),
+      ],
+    );
+
     return Container(
       margin: isPost
           ? const EdgeInsets.symmetric(horizontal: 8, vertical: 4)
           : EdgeInsets.zero,
-      padding: EdgeInsets.fromLTRB(12, showHeader ? 6 : 1, 12, isPost ? 8 : 2),
+      padding: EdgeInsets.fromLTRB(
+          isPost ? 10 : 12, showHeader ? 8 : 2, 12, isPost ? 8 : 1),
       decoration: isPost
           ? BoxDecoration(
-              color: selected ? c.selectionBg : c.surfaceReading,
+              // A post wears its author's colour like a chat bubble does.
+              color: selected ? c.selectionBg : person.bubble,
               border: Border.all(
                   color: selected ? c.selectionBorder : c.separator),
               borderRadius: BorderRadius.circular(8),
             )
           : null,
-      child: content,
+      child: row,
     );
   }
 }

@@ -1,3 +1,5 @@
+import 'dart:typed_data';
+
 import '../../../domain/entities/chat.dart';
 
 /// One provider's chat: Graph (Microsoft 365 and NightMail Server,
@@ -58,4 +60,14 @@ abstract interface class ChatRemoteDatasource {
 
   /// Only when [searchesOnServer].
   Future<List<ChatSearchHit>> search(String query);
+
+  /// The bytes of an `<img src>` in a message body this datasource built or
+  /// the server sent, or null when there is nothing to show. An image on the
+  /// account's own server goes with its token; anywhere else only over https
+  /// and with no credentials.
+  Future<Uint8List?> image(String src);
+
+  /// The photo of the user a [ChatMessage.senderUserId] names, or null when
+  /// they have none (or are outside the directory). Best effort: never throws.
+  Future<Uint8List?> photo(String userId);
 }

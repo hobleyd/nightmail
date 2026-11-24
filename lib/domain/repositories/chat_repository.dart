@@ -1,3 +1,5 @@
+import 'dart:typed_data';
+
 import 'package:fpdart/fpdart.dart';
 
 import '../../core/error/failures.dart';
@@ -97,6 +99,14 @@ abstract interface class ChatRepository {
   /// the only people a chat can be started with. Local: the account's own
   /// domains and its cached directory, never a lookup per email.
   Future<Set<String>> colleagues(String accountId, Iterable<String> addresses);
+
+  /// The bytes of an `<img src>` in a message body, or null when it cannot
+  /// be shown. Remembered for the session, misses included.
+  Future<Uint8List?> image(String accountId, String src);
+
+  /// The photo of [userId] (a [ChatMessage.senderUserId]), or null when they
+  /// have none. Remembered for the session, misses included.
+  Future<Uint8List?> photo(String accountId, String userId);
 
   /// Which of [people] the Chat pane may offer: [colleagues], plus anyone
   /// outside the organisation the account already has a one-on-one with —

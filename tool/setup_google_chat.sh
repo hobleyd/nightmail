@@ -11,7 +11,8 @@
 # Run once per Cloud project, signed in to gcloud as an owner or editor.
 #
 # The chat scopes (chat.spaces.readonly, chat.spaces.create, chat.messages,
-# chat.memberships.readonly — GmailAuthService.chatScopes) are sensitive. On a
+# chat.memberships.readonly, chat.users.readstate —
+# GmailAuthService.chatScopes) are sensitive. On a
 # project whose consent screen is published and verified, add them under
 # Google Auth Platform > Data Access before shipping; until then Workspace
 # users see the unverified-app warning on the chat consent.

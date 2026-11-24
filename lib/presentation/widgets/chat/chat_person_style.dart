@@ -10,11 +10,12 @@ import '../../blocs/chat/chat_conversation_cubit.dart';
 /// and a readable name, all from one hue.
 ///
 /// The hues are a fixed list ordered for contrast — each far from the ones
-/// before it — and [ChatPeopleColors] deals them out in that order to the
-/// conversation's people, so a one-on-one is always blue and orange and a
-/// group of five never has two neighbours on the colour wheel. Hashing each
-/// person to a hue instead collides (two people in one colour) or lands
-/// 30° apart, which reads as the same colour in pastel.
+/// before it. The first is the user's own, in every conversation; the rest
+/// [ChatPeopleColors] deals out in order to everyone else, so a one-on-one
+/// is always blue (you) and orange and a group of five never has two
+/// neighbours on the colour wheel. Hashing each person to a hue instead
+/// collides (two people in one colour) or lands 30° apart, which reads as
+/// the same colour in pastel.
 class ChatPersonStyle {
   const ChatPersonStyle._(this._hue, this._dark);
 
@@ -35,17 +36,23 @@ class ChatPersonStyle {
   /// Blue, orange, green, purple, teal, pink, yellow, indigo, lime, red.
   static const hues = <double>[210, 25, 135, 280, 175, 335, 50, 245, 95, 0];
 
-  /// A slot in [hues] for each of [keys]: dealt in an order fixed by the
-  /// people themselves (their hash), so the same people always get the same
-  /// colours, and distinct until there are more people than hues.
-  static Map<String, int> assign(Iterable<String> keys) {
-    final people = keys.toSet().toList()
+  /// The user's own slot in [hues], whoever else is in the conversation.
+  static const ownSlot = 0;
+
+  /// A slot in [hues] for each of [keys]: [own] gets [ownSlot]; everyone
+  /// else is dealt the rest in an order fixed by the people themselves
+  /// (their hash), so the same people always get the same colours, and
+  /// distinct until there are more people than hues.
+  static Map<String, int> assign(Iterable<String> keys, {String? own}) {
+    final people = keys.where((k) => k != own).toSet().toList()
       ..sort((a, b) {
         final byHash = _hash(a).compareTo(_hash(b));
         return byHash != 0 ? byHash : a.compareTo(b);
       });
+    final others = hues.length - 1;
     return {
-      for (var i = 0; i < people.length; i++) people[i]: i % hues.length,
+      if (own != null && keys.contains(own)) own: ownSlot,
+      for (var i = 0; i < people.length; i++) people[i]: 1 + i % others,
     };
   }
 
@@ -89,9 +96,11 @@ class ChatPeopleColors extends InheritedWidget {
   ChatPeopleColors({
     super.key,
     required Iterable<ChatMessage> messages,
+    String? ownUserId,
     required super.child,
   }) : slots = ChatPersonStyle.assign(
-            messages.where((m) => !m.isSystem).map(ChatPersonStyle.personKey));
+            messages.where((m) => !m.isSystem).map(ChatPersonStyle.personKey),
+            own: ownUserId);
 
   final Map<String, int> slots;
 

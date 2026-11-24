@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:typed_data';
 
 import 'package:equatable/equatable.dart';
+import 'package:flutter/widgets.dart' show AppLifecycleState, WidgetsBinding;
 import 'package:flutter_bloc/flutter_bloc.dart';
 
 import '../../../core/error/failures.dart';
@@ -39,6 +40,7 @@ class ChatConversationState extends Equatable {
     this.threadPostId,
     this.threadReplies = const [],
     this.threadLoading = false,
+    this.ownUserId,
   });
 
   final String? accountId;
@@ -69,6 +71,10 @@ class ChatConversationState extends Equatable {
   final List<ChatMessage> threadReplies;
   final bool threadLoading;
 
+  /// The user's own [ChatMessage.senderUserId], once known — their messages
+  /// wear one colour in every conversation.
+  final String? ownUserId;
+
   ChatMessage? get threadPost => threadPostId == null
       ? null
       : messages.where((m) => m.id == threadPostId).firstOrNull;
@@ -88,6 +94,7 @@ class ChatConversationState extends Equatable {
     String? Function()? threadPostId,
     List<ChatMessage>? threadReplies,
     bool? threadLoading,
+    String? ownUserId,
   }) =>
       ChatConversationState(
         accountId: accountId ?? this.accountId,
@@ -104,6 +111,7 @@ class ChatConversationState extends Equatable {
         threadPostId: threadPostId != null ? threadPostId() : this.threadPostId,
         threadReplies: threadReplies ?? this.threadReplies,
         threadLoading: threadLoading ?? this.threadLoading,
+        ownUserId: ownUserId ?? this.ownUserId,
       );
 
   @override
@@ -122,6 +130,7 @@ class ChatConversationState extends Equatable {
         threadPostId,
         threadReplies,
         threadLoading,
+        ownUserId,
       ];
 }
 
@@ -133,12 +142,33 @@ class ChatConversationState extends Equatable {
 /// open conversation is re-read every [pollInterval]. Every result is checked
 /// against [_generation]: a reply for a conversation (or account) the user
 /// has since moved off is dropped, never shown in the new one.
+///
+/// A chat on screen is read: when its newest message is someone else's, the
+/// server is told ([ChatRepository.markRead]) — once per newest message, and
+/// only while the app is in the foreground, or a message that lands while
+/// the user is away would be marked read in Teams too.
 class ChatConversationCubit extends Cubit<ChatConversationState> {
-  ChatConversationCubit({required ChatRepository repository})
-      : _repo = repository,
+  ChatConversationCubit({
+    required ChatRepository repository,
+    bool Function()? isForeground,
+  })  : _repo = repository,
+        _isForeground = isForeground ?? _appInForeground,
         super(const ChatConversationState());
 
   final ChatRepository _repo;
+  final bool Function() _isForeground;
+
+  /// Null is foreground: every engine, a chat sub-window's too, hears the
+  /// app's resign/become-active (macOS registers each with
+  /// `FlutterAppDelegate`), so the state is only null before the first
+  /// change — and a window is only opened while the user is in the app.
+  static bool _appInForeground() {
+    final s = WidgetsBinding.instance.lifecycleState;
+    return s == null || s == AppLifecycleState.resumed;
+  }
+
+  /// The newest message each conversation was marked read up to, by key.
+  final _markedUpTo = <String, String>{};
 
   static const pollInterval = Duration(seconds: 10);
 
@@ -180,6 +210,7 @@ class ChatConversationCubit extends Cubit<ChatConversationState> {
     emit(ChatConversationState(
       accountId: accountId,
       access: state.accountId == accountId ? state.access : null,
+      ownUserId: state.accountId == accountId ? state.ownUserId : null,
       person: person,
       loading: true,
     ));
@@ -204,6 +235,7 @@ class ChatConversationCubit extends Cubit<ChatConversationState> {
     emit(ChatConversationState(
       accountId: accountId,
       access: state.accountId == accountId ? state.access : null,
+      ownUserId: state.accountId == accountId ? state.ownUserId : null,
       conversation: conversation,
       loading: true,
     ));
@@ -214,12 +246,15 @@ class ChatConversationCubit extends Cubit<ChatConversationState> {
     ++_generation;
     _poll?.cancel();
     emit(ChatConversationState(
-        accountId: state.accountId, access: state.access));
+        accountId: state.accountId,
+        access: state.access,
+        ownUserId: state.ownUserId));
   }
 
   Future<void> _load(
       String accountId, ChatConversation conversation, int gen) async {
     emit(state.copyWith(conversation: () => conversation, loading: true));
+    final own = _learnOwnId(accountId, conversation, gen);
     final page = await _repo.messages(accountId, conversation);
     if (gen != _generation || isClosed) return;
     page.match(
@@ -234,6 +269,41 @@ class ChatConversationCubit extends Cubit<ChatConversationState> {
         _startPolling(gen);
       },
     );
+    await own;
+    _markReadIfSeen();
+  }
+
+  /// Google names the user per space, so this asks with the conversation;
+  /// Graph answers from a cache after the first time.
+  Future<void> _learnOwnId(
+      String accountId, ChatConversation conversation, int gen) async {
+    if (state.ownUserId != null) return;
+    final id = await _repo.ownUserId(accountId, conversation: conversation);
+    if (id != null && gen == _generation && !isClosed) {
+      emit(state.copyWith(ownUserId: id));
+    }
+  }
+
+  void _markReadIfSeen() {
+    final accountId = state.accountId;
+    final conversation = state.conversation;
+    final own = state.ownUserId;
+    if (accountId == null ||
+        conversation == null ||
+        conversation.isChannel ||
+        own == null ||
+        isClosed) {
+      return;
+    }
+    final newest = state.messages.where((m) => !m.isSystem).firstOrNull;
+    if (newest == null || _markedUpTo[conversation.key] == newest.id) return;
+    if (newest.senderUserId == own) {
+      _markedUpTo[conversation.key] = newest.id;
+      return;
+    }
+    if (!_isForeground()) return;
+    _markedUpTo[conversation.key] = newest.id;
+    unawaited(_repo.markRead(accountId, conversation));
   }
 
   void _startPolling(int gen) {
@@ -263,6 +333,7 @@ class ChatConversationCubit extends Cubit<ChatConversationState> {
           !_sameList(merged, state.messages)) {
         emit(state.copyWith(messages: merged));
       }
+      _markReadIfSeen();
     });
     if (state.threadPostId != null) unawaited(_reloadThread(gen));
   }
@@ -336,6 +407,7 @@ class ChatConversationCubit extends Cubit<ChatConversationState> {
             conversation: () => chat,
             messages: [sent],
           ));
+          unawaited(_learnOwnId(accountId, chat, gen));
           _startPolling(gen);
           return true;
         },

@@ -48,6 +48,84 @@ void main() {
   setUp(() {
     requests = [];
     routes = {};
+    GoogleChatDatasource.forgetIdentities();
+  });
+
+  group('unread', () {
+    Map<String, dynamic> space(String id, String active) => {
+          'name': 'spaces/$id',
+          'spaceType': 'SPACE',
+          'displayName': id,
+          'lastActiveTime': active,
+        };
+
+    void serve({required String newestSender}) {
+      routes['/spaces'] = (_) => {
+            'spaces': [
+              space('read', '2026-11-25T09:00:00Z'),
+              space('fresh', '2026-11-25T10:00:00Z'),
+            ],
+          };
+      routes['/members/me@example.com'] = (_) => {
+            'member': {'name': 'users/me'},
+          };
+      routes['/spaces/read/spaceReadState'] =
+          (_) => {'lastReadTime': '2026-11-25T09:00:00Z'};
+      routes['/spaces/fresh/spaceReadState'] =
+          (_) => {'lastReadTime': '2026-11-25T08:00:00Z'};
+      routes['/spaces/fresh/messages'] = (_) => {
+            'messages': [
+              {
+                'name': 'spaces/fresh/messages/m',
+                'sender': {'name': newestSender},
+              },
+            ],
+          };
+    }
+
+    test('a space someone wrote in after the read time is unread', () async {
+      serve(newestSender: 'users/ann');
+      final chats = await datasource().listRecentChats();
+      expect(chats.where((c) => c.unread).map((c) => c.id), ['spaces/fresh']);
+      expect(
+          requests.where((r) => r.uri.path.endsWith('/spaces/read/messages')),
+          isEmpty,
+          reason: 'read up to its last activity: no message lookup');
+    });
+
+    test('the user\'s own last message is not unread', () async {
+      serve(newestSender: 'users/me');
+      final chats = await datasource().listRecentChats();
+      expect(chats.where((c) => c.unread), isEmpty);
+    });
+
+    test('a quiet poll is the one listing', () async {
+      serve(newestSender: 'users/ann');
+      final ds = datasource();
+      await ds.listRecentChats();
+      requests.clear();
+      final again = await ds.listRecentChats();
+      expect(requests.map((r) => r.uri.path), [endsWith('/spaces')]);
+      expect(again.where((c) => c.unread).map((c) => c.id), ['spaces/fresh']);
+    });
+
+    test('mark read sets the read time to now, and the cache follows',
+        () async {
+      serve(newestSender: 'users/ann');
+      final ds = datasource();
+      await ds.listRecentChats();
+      routes['/spaces/fresh/spaceReadState'] = (_) => <String, dynamic>{};
+      await ds.markRead(const ChatConversation(
+          id: 'spaces/fresh', kind: ChatKind.space, title: 'fresh'));
+      final patch = requests.last;
+      expect(patch.method, 'PATCH');
+      expect(patch.uri.path, endsWith('/users/me/spaces/fresh/spaceReadState'));
+      expect(patch.uri.queryParameters['updateMask'], 'lastReadTime');
+      expect((patch.data as Map)['lastReadTime'], isA<String>());
+
+      final after = await ds.listRecentChats();
+      expect(after.where((c) => c.unread), isEmpty);
+    });
   });
 
   test('spaces become chats, newest first; DMs are titled by the other person',

@@ -79,6 +79,7 @@ import 'domain/usecases/commitments/run_commitments_agent.dart';
 import 'domain/usecases/commitments/schedule_commitment.dart';
 import 'domain/usecases/commitments/track_commitment.dart';
 import 'presentation/blocs/chat/chat_conversation_cubit.dart';
+import 'presentation/blocs/chat/chat_unread_cubit.dart';
 import 'presentation/blocs/chat/chat_list_cubit.dart';
 import 'presentation/blocs/commitments/commitments_cubit.dart';
 import 'presentation/blocs/out_of_office/meeting_sweep_cubit.dart';
@@ -641,6 +642,12 @@ Future<void> configureDependencies() async {
       accountManager: sl<AccountManager>(),
       database: sl<TaskReminderScheduleLocalDatasource>(),
       reminders: sl<TaskReminderService>(),
+    ),
+  );
+  sl.registerLazySingleton(
+    () => ChatUnreadCubit(
+      accountManager: sl<AccountManager>(),
+      repository: sl<ChatRepository>(),
     ),
   );
 

@@ -1,6 +1,7 @@
 import 'dart:typed_data';
 
 import 'package:dio/dio.dart';
+import 'package:flutter/foundation.dart' show visibleForTesting;
 
 import '../../../core/error/exceptions.dart';
 import '../../../core/utils/latest_reply.dart' show htmlToPlainText;
@@ -48,12 +49,37 @@ class GraphChatDatasource implements ChatRemoteDatasource {
   /// expandable but shows them only one at a time; Nightware takes both.
   static final _splitExpandRoots = <String>{};
 
+  /// The signed-in user's directory id, by [_identity]: `/me` once per
+  /// session. Nightware names users by Keycloak id in `/me` and in a
+  /// message's `from.user.id` alike (ADR 0009 D2), as Microsoft does by
+  /// object id.
+  static final _ownIds = <String, String>{};
+
+  /// Microsoft's tenant id, by [_identity], for `markChatReadForUser`.
+  static final _tenantIds = <String, String>{};
+
+  /// Who this datasource acts as. Not the root alone: every Microsoft 365
+  /// account shares Microsoft's Graph root, and every account on one
+  /// NightMail Server shares its root — one account's id must never stand
+  /// for another's.
+  String get _identity => '${_root()}|${(_own.toList()..sort()).join(',')}';
+
+  @visibleForTesting
+  static void forgetIdentities() {
+    _ownIds.clear();
+    _tenantIds.clear();
+  }
+
+  /// Unread is marked only once the user's id is known ([listRecentChats]
+  /// learns it); the full listing never asks `/me` for it.
   @override
   Future<List<ChatConversation>> listChats() async {
+    final own = _ownIds[_identity];
     if (!_splitExpandRoots.contains(_root())) {
       try {
         return _parseChats(
-            await _listChatPages('members,lastMessagePreview', ordered: true));
+            await _listChatPages('members,lastMessagePreview', ordered: true),
+            own);
       } on ServerException catch (e) {
         if (e.statusCode != 400) rethrow;
         _splitExpandRoots.add(_root());
@@ -70,12 +96,68 @@ class GraphChatDatasource implements ChatRemoteDatasource {
     return _parseChats([
       for (final raw in previews)
         {...raw, if (members.containsKey(raw['id'])) 'members': members[raw['id']]},
-    ]);
+    ], own);
   }
 
-  List<ChatConversation> _parseChats(List<Map<String, dynamic>> raws) => [
-        for (final raw in raws) ?_parseChat(raw),
+  List<ChatConversation> _parseChats(
+    List<Map<String, dynamic>> raws,
+    String? ownId,
+  ) =>
+      [
+        for (final raw in raws) ?_parseChat(raw, ownId),
       ];
+
+  /// One page of `/me/chats` with the preview alone — accepted on its own by
+  /// both servers, so never the 400 split. Titles are rough without members;
+  /// only [ChatConversation.unread] is read from it.
+  @override
+  Future<List<ChatConversation>> listRecentChats() async {
+    final own = await ownUserId(null);
+    if (own == null) return const [];
+    final data = await _get('/me/chats', query: {
+      r'$expand': 'lastMessagePreview',
+      r'$orderby': 'lastMessagePreview/createdDateTime desc',
+      r'$top': 50,
+    });
+    return _parseChats(_values(data), own);
+  }
+
+  /// Microsoft wants the reader as `{id, tenantId}`; Nightware takes the id
+  /// alone (its contract, `chats.mark-read`).
+  @override
+  Future<void> markRead(ChatConversation chat) async {
+    if (chat.isChannel) return;
+    final own = await ownUserId(null);
+    if (own == null) return;
+    final tenant = isNightmailServer ? null : await _tenantId();
+    await _post('/chats/${chat.id}/markChatReadForUser', {
+      'user': {'id': own, 'tenantId': ?tenant},
+    });
+  }
+
+  @override
+  Future<String?> ownUserId(ChatConversation? conversation) async {
+    final cached = _ownIds[_identity];
+    if (cached != null) return cached;
+    try {
+      return _ownIds[_identity] = await _ownUserId();
+    } on ServerException {
+      return null;
+    }
+  }
+
+  Future<String?> _tenantId() async {
+    final cached = _tenantIds[_identity];
+    if (cached != null) return cached;
+    try {
+      final orgs = _values(
+          await _get('/organization', query: {r'$select': 'id'}));
+      final id = orgs.firstOrNull?['id'];
+      return id is String ? _tenantIds[_identity] = id : null;
+    } on ServerException {
+      return null;
+    }
+  }
 
   Future<List<Map<String, dynamic>>> _listChatPages(
     String expand, {
@@ -228,7 +310,11 @@ class GraphChatDatasource implements ChatRemoteDatasource {
     // (ADR 0009 D2). Built on the account's own Graph root: a literal
     // Microsoft URL here would send a server account's members to Microsoft
     // (no_hardcoded_graph_urls_test).
-    final own = isNightmailServer ? ownEmail : await _ownUserId();
+    final own = isNightmailServer
+        ? ownEmail
+        : await ownUserId(null) ??
+            (throw const ServerException(
+                message: 'Could not read your user id.'));
     final other = isNightmailServer ? email : await _userIdOf(email);
     String bind(String key) =>
         "${_root()}/users('${Uri.encodeComponent(key)}')";
@@ -241,7 +327,7 @@ class GraphChatDatasource implements ChatRemoteDatasource {
       'chatType': 'oneOnOne',
       'members': [member(own), member(other)],
     });
-    final chat = _parseChat(data);
+    final chat = _parseChat(data, null);
     return ChatConversation(
       id: chat?.id ?? (data['id'] as String),
       kind: ChatKind.oneOnOne,
@@ -345,7 +431,7 @@ class GraphChatDatasource implements ChatRemoteDatasource {
 
   // ---- parsing ------------------------------------------------------------
 
-  ChatConversation? _parseChat(Map<String, dynamic> raw) {
+  ChatConversation? _parseChat(Map<String, dynamic> raw, String? ownId) {
     final id = raw['id'] as String?;
     if (id == null) return null;
     final kind = switch (raw['chatType']) {
@@ -390,7 +476,31 @@ class GraphChatDatasource implements ChatRemoteDatasource {
       lastMessagePreview:
           preview is Map<String, dynamic> ? _previewOf(preview) : null,
       members: others,
+      unread: ownId != null && isUnread(raw, ownId),
     );
+  }
+
+  /// Someone other than [ownId] wrote the newest message, after the user's
+  /// read marker. A null marker is unread: on Microsoft the chat was never
+  /// read, on Nightware the marker is not on the newest message (phase 23).
+  /// A hidden chat, a system event and the user's own message never are.
+  @visibleForTesting
+  static bool isUnread(Map<String, dynamic> raw, String ownId) {
+    final viewpoint = raw['viewpoint'];
+    if (viewpoint is Map && viewpoint['isHidden'] == true) return false;
+    final preview = raw['lastMessagePreview'];
+    if (preview is! Map || preview['isDeleted'] == true) return false;
+    if (preview['messageType'] == 'systemEventMessage') return false;
+    final from = preview['from'];
+    final user = from is Map ? from['user'] : null;
+    final sender = user is Map ? user['id'] as String? : null;
+    if (sender == null || sender == ownId) return false;
+    final sent = _date(preview['createdDateTime']);
+    if (sent == null) return false;
+    final read = viewpoint is Map
+        ? _date(viewpoint['lastMessageReadDateTime'])
+        : null;
+    return read == null || sent.isAfter(read);
   }
 
   ChatMessage _parseMessage(Map<String, dynamic> raw) {

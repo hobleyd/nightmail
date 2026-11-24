@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:typed_data';
 
 import 'package:flutter/foundation.dart' show debugPrint;
@@ -124,6 +125,69 @@ class ChatRepositoryImpl implements ChatRepository {
         }
         return updated;
       });
+
+  @override
+  Future<int> unreadCount(String accountId) async {
+    final access = await this.access(accountId);
+    if (access != ChatAccess.chatsOnly && access != ChatAccess.full) return 0;
+    final recent = await _guard(accountId, (ds) => ds.listRecentChats());
+    return recent.match((f) {
+      debugPrint('[Chat] unread count failed: ${f.message}');
+      return 0;
+    }, (chats) => chats.where((c) {
+      if (!c.unread) return false;
+      // Microsoft's read state can trail a mark by a moment; a chat marked
+      // here stays read until something newer arrives in it.
+      final marked = _markedAt['$accountId|${c.key}'];
+      final at = c.lastActivity;
+      return marked == null || (at != null && at.isAfter(marked));
+    }).length);
+  }
+
+  /// When [markRead] last ran per `account|conversation`.
+  final _markedAt = <String, DateTime>{};
+
+  final _reads = StreamController<String>.broadcast();
+
+  @override
+  Stream<String> get reads => _reads.stream;
+
+  @override
+  Future<void> markRead(
+    String accountId,
+    ChatConversation conversation,
+  ) async {
+    if (conversation.isChannel) return;
+    _markedAt['$accountId|${conversation.key}'] = DateTime.now();
+    final done = await _guard(accountId, (ds) => ds.markRead(conversation));
+    done.match(
+      (f) => debugPrint('[Chat] mark read failed: ${f.message}'),
+      (_) {},
+    );
+    final list = _conversations[accountId];
+    if (list != null) {
+      _conversations[accountId] = [
+        for (final c in list)
+          c.key == conversation.key ? c.copyWith(unread: false) : c,
+      ];
+    }
+    _reads.add(accountId);
+  }
+
+  @override
+  Future<String?> ownUserId(
+    String accountId, {
+    ChatConversation? conversation,
+  }) async {
+    final ds = _accounts.chatDatasourceForAccount(accountId);
+    if (ds == null) return null;
+    try {
+      return await ds.ownUserId(conversation);
+    } catch (e) {
+      debugPrint('[Chat] own id unavailable: $e');
+      return null;
+    }
+  }
 
   @override
   Future<Either<Failure, ChatConversation?>> findOneOnOne(

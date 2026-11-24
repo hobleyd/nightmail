@@ -21,6 +21,20 @@ abstract interface class ChatRemoteDatasource {
   /// Chats (and, on Google, spaces), in any order.
   Future<List<ChatConversation>> listChats();
 
+  /// The most recent chats (one page, no members), only for their
+  /// [ChatConversation.unread] — the cheap listing the unread dot polls.
+  /// Empty where the provider has no read state NightMail can see.
+  Future<List<ChatConversation>> listRecentChats();
+
+  /// Tells the server the user has read [chat] up to its newest message.
+  /// Chats only; a no-op where the provider has no read state.
+  Future<void> markRead(ChatConversation chat);
+
+  /// The signed-in user's id as a [ChatMessage.senderUserId] carries it, or
+  /// null when it cannot be told. Google names it per space, so it asks
+  /// [conversation]'s members.
+  Future<String?> ownUserId(ChatConversation? conversation);
+
   /// Teams channels; empty where the provider has none.
   Future<List<ChatConversation>> listChannels();
 

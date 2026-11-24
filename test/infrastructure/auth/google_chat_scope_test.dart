@@ -23,5 +23,10 @@ void main() {
             'https://www.googleapis.com/auth/chat.messages.readonly ')),
         isFalse);
     expect(GmailAuthService.grantsChat(null), isFalse);
+    // A token from before the read-state scope asks again, once.
+    expect(
+        GmailAuthService.grantsChat(all.replaceFirst(
+            ' https://www.googleapis.com/auth/chat.users.readstate', '')),
+        isFalse);
   });
 }

@@ -24,6 +24,7 @@ import 'package:nightmail/infrastructure/migration/account_migration_service.dar
 import 'package:nightmail/infrastructure/update/app_update_status.dart';
 import 'package:nightmail/injection_container.dart';
 import 'package:nightmail/presentation/blocs/account/account_cubit.dart';
+import 'package:nightmail/presentation/blocs/chat/chat_unread_cubit.dart';
 import 'package:nightmail/presentation/blocs/email_detail/email_detail_bloc.dart';
 import 'package:nightmail/presentation/blocs/email_list/email_list_bloc.dart';
 import 'package:nightmail/presentation/blocs/email_list/email_list_event.dart';
@@ -309,6 +310,8 @@ void main() {
               BlocProvider<EmailListBloc>.value(value: emailList),
               BlocProvider<EmailDetailBloc>.value(value: emailDetail),
               BlocProvider<OverdueTasksCubit>.value(value: overdueTasks),
+              BlocProvider<ChatUnreadCubit>.value(
+                  value: _FixedChatUnreadCubit()),
               BlocProvider<UpdateCubit>.value(value: updateCubit),
               BlocProvider<FolderListBloc>.value(value: folderList),
             ],
@@ -1357,4 +1360,15 @@ void main() {
       );
     });
   });
+}
+
+/// No unread chats — the Chat button only reads the cubit's state.
+class _FixedChatUnreadCubit extends Cubit<int> implements ChatUnreadCubit {
+  _FixedChatUnreadCubit() : super(0);
+
+  @override
+  void start() {}
+
+  @override
+  Future<void> refresh() async {}
 }

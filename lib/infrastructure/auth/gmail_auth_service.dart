@@ -217,6 +217,9 @@ class GmailAuthService implements AuthService {
     'https://www.googleapis.com/auth/chat.spaces.create',
     'https://www.googleapis.com/auth/chat.messages',
     'https://www.googleapis.com/auth/chat.memberships.readonly',
+    // Read and set the user's read state: the Chat button's unread dot, and
+    // marking a space read when it is on screen.
+    'https://www.googleapis.com/auth/chat.users.readstate',
   ];
 
   /// Whether a token's granted `scope` carries every one of [chatScopes].

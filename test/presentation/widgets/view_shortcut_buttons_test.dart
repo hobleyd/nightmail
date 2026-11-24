@@ -6,6 +6,7 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mockito/mockito.dart';
 import 'package:nightmail/core/platform/window_utils.dart';
+import 'package:nightmail/presentation/blocs/chat/chat_unread_cubit.dart';
 import 'package:nightmail/presentation/blocs/tasks/overdue_tasks_cubit.dart';
 import 'package:nightmail/presentation/widgets/view_shortcut_buttons.dart';
 
@@ -76,15 +77,19 @@ void main() {
     resetPlatformDoubleClickInterval();
   });
 
-  Future<void> pump(WidgetTester tester) async {
+  Future<void> pump(WidgetTester tester, {int unreadChats = 0}) async {
     final overdue = MockOverdueTasksCubit();
     when(overdue.stream).thenAnswer((_) => const Stream.empty());
     when(overdue.state).thenReturn(0);
     await tester.pumpWidget(
       MaterialApp(
         home: Scaffold(
-          body: BlocProvider<OverdueTasksCubit>.value(
-            value: overdue,
+          body: MultiBlocProvider(
+            providers: [
+              BlocProvider<OverdueTasksCubit>.value(value: overdue),
+              BlocProvider<ChatUnreadCubit>.value(
+                  value: _FixedChatUnreadCubit(unreadChats)),
+            ],
             child: ViewShortcutButtons(
               onCalendarTapped: () => taps.add('calendar'),
               onTasksTapped: () => taps.add('tasks'),
@@ -101,6 +106,28 @@ void main() {
   }
 
   Finder button(String tooltip) => find.byTooltip(tooltip);
+
+  testWidgets('Chat sits right of Tasks, with a dot when chats are unread',
+      (tester) async {
+    await pump(tester);
+    final tooltips = tester
+        .widgetList<IconButton>(find.byType(IconButton))
+        .map((b) => b.tooltip)
+        .toList();
+    expect(tooltips, ['Calendar', 'Tasks', 'Chat', 'AI', 'Commitments']);
+    expect(button('Chat'), findsOneWidget);
+
+    await pump(tester, unreadChats: 2);
+    expect(button('Chat (2 unread)'), findsOneWidget);
+    final dot = find.descendant(
+      of: button('Chat (2 unread)'),
+      matching: find.byWidgetPredicate((w) =>
+          w is Container &&
+          w.decoration is BoxDecoration &&
+          (w.decoration as BoxDecoration).shape == BoxShape.circle),
+    );
+    expect(dot, findsOneWidget);
+  });
 
   testWidgets('one click toggles the pane once the OS interval has passed',
       (tester) async {
@@ -192,4 +219,15 @@ void main() {
 
     expect(taps, ['calendar']);
   });
+}
+
+/// A [ChatUnreadCubit] stuck at [count] — the widgets only read its state.
+class _FixedChatUnreadCubit extends Cubit<int> implements ChatUnreadCubit {
+  _FixedChatUnreadCubit([super.count = 0]);
+
+  @override
+  void start() {}
+
+  @override
+  Future<void> refresh() async {}
 }

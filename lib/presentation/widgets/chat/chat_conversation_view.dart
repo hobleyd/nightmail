@@ -92,6 +92,7 @@ class ChatConversationView extends StatelessWidget {
         );
 
         Widget colored(Widget child) => ChatPeopleColors(
+              ownUserId: state.ownUserId,
               messages: [
                 for (final m in state.messages) ...[m, ...m.replies],
                 ...state.threadReplies,

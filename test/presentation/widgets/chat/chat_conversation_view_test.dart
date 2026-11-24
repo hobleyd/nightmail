@@ -66,19 +66,102 @@ void main() {
     final people = [
       for (var i = 0; i < ChatPersonStyle.hues.length; i++) 'u-$i',
     ];
-    final slots = ChatPersonStyle.assign(people);
+    final slots = ChatPersonStyle.assign(people, own: 'u-3');
     expect(slots.values.toSet().length, ChatPersonStyle.hues.length);
-    // A one-on-one's two people are the list's first two: blue and orange.
-    expect(ChatPersonStyle.assign(['u-ann', 'u-bob']).values.toSet(), {0, 1});
-    expect(ChatPersonStyle.assign(people.reversed), slots);
+    expect(ChatPersonStyle.assign(people.reversed, own: 'u-3'), slots);
+    // A one-on-one is the list's first two: blue (you) and orange.
+    expect(ChatPersonStyle.assign(['u-ann', 'u-bob'], own: 'u-bob'),
+        {'u-bob': 0, 'u-ann': 1});
+  });
+
+  test('your colour is the same in every conversation, and nobody else\'s',
+      () {
+    for (final others in [
+      ['u-ann'],
+      ['u-ann', 'u-bob', 'u-cy'],
+      [for (var i = 0; i < 25; i++) 'u-$i'],
+    ]) {
+      final slots = ChatPersonStyle.assign([...others, 'u-me'], own: 'u-me');
+      expect(slots['u-me'], ChatPersonStyle.ownSlot);
+      expect(
+          others.map((o) => slots[o]), everyElement(isNot(ChatPersonStyle.ownSlot)));
+    }
+    // Before your id is known, nobody else takes your colour either.
+    expect(ChatPersonStyle.assign(['u-ann', 'u-bob']).values,
+        everyElement(isNot(ChatPersonStyle.ownSlot)));
+  });
+
+  group('reading a chat', () {
+    const chat = ChatConversation(id: 'c', kind: ChatKind.group, title: 'G');
+
+    test('marks it read when someone else wrote last, once per message',
+        () async {
+      final repo = _Repo([msg('2', 'Ann Lee', 'u-ann', 2)], ownId: 'u-me');
+      final cubit = ChatConversationCubit(
+          repository: repo, isForeground: () => true);
+      await cubit.open('a', chat);
+      expect(cubit.state.ownUserId, 'u-me');
+      expect(repo.marked, ['c']);
+
+      await cubit.open('a', chat);
+      expect(repo.marked, ['c'], reason: 'same newest message');
+      await cubit.close();
+    });
+
+    test('leaves it alone when the last message is yours, or a channel',
+        () async {
+      final repo = _Repo([msg('2', 'Me', 'u-me', 2)], ownId: 'u-me');
+      final cubit = ChatConversationCubit(
+          repository: repo, isForeground: () => true);
+      await cubit.open('a', chat);
+      expect(repo.marked, isEmpty);
+
+      final channels = _Repo([msg('2', 'Ann Lee', 'u-ann', 2)], ownId: 'u-me');
+      final inChannel = ChatConversationCubit(
+          repository: channels, isForeground: () => true);
+      await inChannel.open('a', const ChatConversation(
+          id: 'ch', kind: ChatKind.channel, title: 'General', teamId: 't'));
+      expect(channels.marked, isEmpty);
+      await cubit.close();
+      await inChannel.close();
+    });
+
+    test('waits while the app is in the background', () async {
+      final repo = _Repo([msg('2', 'Ann Lee', 'u-ann', 2)], ownId: 'u-me');
+      var foreground = false;
+      final cubit = ChatConversationCubit(
+          repository: repo, isForeground: () => foreground);
+      await cubit.open('a', chat);
+      expect(repo.marked, isEmpty);
+
+      foreground = true;
+      await cubit.open('a', chat);
+      expect(repo.marked, ['c']);
+      await cubit.close();
+    });
   });
 }
 
 class _Repo extends Fake implements ChatRepository {
-  _Repo(this.history);
+  _Repo(this.history, {this.ownId});
 
   final List<ChatMessage> history;
+  final String? ownId;
   final photosAsked = <String>{};
+  final marked = <String>[];
+
+  @override
+  Future<String?> ownUserId(
+    String accountId, {
+    ChatConversation? conversation,
+  }) async =>
+      ownId;
+
+  @override
+  Future<void> markRead(
+      String accountId, ChatConversation conversation) async {
+    marked.add(conversation.id);
+  }
 
   @override
   Future<Either<Failure, ChatMessagePage>> messages(

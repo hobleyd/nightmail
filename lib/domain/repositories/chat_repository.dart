@@ -52,6 +52,26 @@ abstract interface class ChatRepository {
     ChatConversation conversation,
   );
 
+  /// How many of the account's recent chats someone has written in since
+  /// the user last read them — the dot on the Chat button. Zero for an
+  /// account without chat access (never asks for consent) and on any error.
+  Future<int> unreadCount(String accountId);
+
+  /// Records [conversation] as read on the server. Best effort: a refusal
+  /// leaves the dot until the chat is read elsewhere.
+  Future<void> markRead(String accountId, ChatConversation conversation);
+
+  /// Fires the account id whenever [markRead] has run here, so the dot can
+  /// clear without waiting for its next poll.
+  Stream<String> get reads;
+
+  /// The user's own id as [ChatMessage.senderUserId] carries it, or null.
+  /// Google names it per space, hence [conversation].
+  Future<String?> ownUserId(
+    String accountId, {
+    ChatConversation? conversation,
+  });
+
   /// The one-on-one chat with [email], or null when there has never been one.
   /// Never creates one — that happens on the first [sendMessage] to a person.
   ///

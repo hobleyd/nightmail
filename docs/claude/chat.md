@@ -1,9 +1,9 @@
 # Chat — Teams chats and channels, and Google Chat
 
-The Chat button (fifth in `ViewShortcutButtons`) opens a pane beside the
-reading pane (`HomeView.chat`, `ChatPanel`) — a one-on-one with the selected
-email's sender, or anyone else on it
-the account can chat with, from the dropdown. Double-clicking it
+The Chat button (third in `ViewShortcutButtons`, right of Tasks) opens a
+pane beside the reading pane (`HomeView.chat`, `ChatPanel`) — a one-on-one
+with the selected email's sender, or anyone else on it the account can chat
+with, from the dropdown. Double-clicking it
 opens the chat window (`'chat'` sub-window, `ChatWindowApp`): every chat and
 channel on the left, grouped (Chats; Teams › channels) and newest first; the
 open one's history on the right, channel threads beside it; search on top.
@@ -107,6 +107,48 @@ list re-sorts as they land. Every async result is checked against a
 generation counter — a reply for a conversation or account the user has moved
 off is dropped.
 
+## Unread dot
+
+The Chat button carries the Tasks button's red dot while any of the active
+account's recent chats is unread (`ChatUnreadCubit`, main window only).
+
+- **Rule** (`GraphChatDatasource.isUnread`): the newest message
+  (`lastMessagePreview`) is someone else's, not a system event, in a chat
+  that is not hidden, and later than `viewpoint.lastMessageReadDateTime` —
+  equal is read. A null marker is unread: never read on Microsoft; on
+  Nightware the marker is not on the newest message (phase 23 notes).
+- **"Someone else"** needs the user's id: `/me`'s `id`, once per account
+  (root plus own addresses — every Microsoft 365 account shares one root).
+  Nightware names users by Keycloak id in `/me` and in `from.user.id` alike
+  (ADR 0009 D2). Until it is known nothing is unread — no false dots.
+- **The poll is light**: every 60 s, only for an account with chat access
+  (never prompts consent), one page of `/me/chats` with
+  `$expand=lastMessagePreview` alone (`listRecentChats`) — not
+  `conversations(refresh:)`, which lists every team's channels and replaces
+  the members-bearing cache `findOneOnOne` scans.
+- **Marking read**: `ChatConversationCubit` marks a chat read
+  (`markChatReadForUser`) when its newest message is someone else's — once
+  per newest message, and only while the app is in the foreground, or a
+  message arriving while the user is away would turn read in Teams too.
+  Microsoft wants `user {id, tenantId}` (tenant from `/organization`);
+  Nightware takes the id alone. `ChatRepository.reads` clears the dot at
+  once in the same isolate — the repository also counts a chat it marked as
+  read until something newer arrives, since Microsoft's read state can trail
+  the mark. A chat read in the chat window (its own isolate) or in Teams
+  clears on the next poll. A mark that fails (offline) is not retried for
+  that message; the next message from someone else marks it again.
+- **No dot** for Teams channels: Graph has no per-user read state on
+  channel messages.
+- **Google** (`GoogleChatDatasource.listRecentChats`): `spaces.list` carries
+  no read state, so each of the 20 most recently active spaces whose
+  `lastActiveTime` moved since the last poll costs a
+  `users/me/spaces/{s}/spaceReadState` and, when that is behind, its newest
+  message (to tell the user's own from someone else's). A quiet poll is the
+  one listing. Marking read PATCHes `lastReadTime` to now (`updateMask`);
+  Google coerces it to the newest message's time. Thread replies keep their
+  own read state, which this ignores. Needs `chat.users.readstate` — part of
+  `chatScopes`, so a token from before it asks for consent again, once.
+
 ## Search
 
 Microsoft 365: `POST /search/query` with `entityTypes: ['chatMessage']`,
@@ -159,10 +201,12 @@ fetches anything itself, and without a loader an image reads "[image]".
 Each run of one sender's messages starts with a `ChatAvatar` and their name
 in their colour; their messages sit in a pastel bubble of the same hue (a
 channel post's card takes it too). Colours come from `ChatPersonStyle.hues`,
-ten hues ordered for contrast, dealt out per conversation by
-`ChatPeopleColors` in an order fixed by each person's hash — so the same
-people always get the same colours and a one-on-one is always blue and
-orange. Hashing each person straight to a hue was tried: two of four people
+ten hues ordered for contrast. The first (blue) is always the user's own, in
+every conversation (`ChatConversationState.ownUserId`: `/me` on Graph, the
+user's `members/{email}` on Google); the other nine are dealt out per
+conversation by `ChatPeopleColors` in an order fixed by each person's hash —
+so the same people always get the same colours, nobody else is ever blue,
+and a one-on-one is always blue (you) and orange. Hashing each person straight to a hue was tried: two of four people
 landed in one colour, or 30° apart, which is the same colour in pastel.
 
 Avatars are initials on the person's colour until `photo(userId)` answers:
@@ -185,7 +229,8 @@ outside person has no photo in your directory and keeps their initials.
   the first and opens the page for the second, which has no API.
 - **Consent:** `GmailAuthService.chatScopes` — `chat.spaces.readonly`,
   `chat.spaces.create` (a DM, without rename/delete power over spaces),
-  `chat.messages`, `chat.memberships.readonly` — one incremental request, no
+  `chat.messages`, `chat.memberships.readonly`, `chat.users.readstate`
+  (the unread dot and marking read) — one incremental request, no
   separate channel step: spaces come with it. Google echoes granted scopes on
   refresh, so nothing is added to a refresh request.
 - **Mapping:** `DIRECT_MESSAGE` → one-on-one, `GROUP_CHAT` → group, `SPACE` →

@@ -40,6 +40,7 @@ class ChatConversation extends Equatable {
     this.lastMessagePreview,
     this.members = const [],
     this.threaded = false,
+    this.unread = false,
   });
 
   /// The chat id, or the channel id for a [ChatKind.channel] (which only
@@ -68,6 +69,10 @@ class ChatConversation extends Equatable {
   /// always is, see [hasThreads].
   final bool threaded;
 
+  /// Someone else has written since the user last read it. Always false for
+  /// a Teams channel, which has no per-user read state.
+  final bool unread;
+
   bool get isChannel => kind == ChatKind.channel;
 
   /// Whether messages here are posts with replies (Teams channels, threaded
@@ -80,6 +85,7 @@ class ChatConversation extends Equatable {
   ChatConversation copyWith({
     DateTime? lastActivity,
     String? lastMessagePreview,
+    bool? unread,
   }) =>
       ChatConversation(
         id: id,
@@ -91,6 +97,7 @@ class ChatConversation extends Equatable {
         lastMessagePreview: lastMessagePreview ?? this.lastMessagePreview,
         members: members,
         threaded: threaded,
+        unread: unread ?? this.unread,
       );
 
   @override
@@ -104,6 +111,7 @@ class ChatConversation extends Equatable {
         lastMessagePreview,
         members,
         threaded,
+        unread,
       ];
 }
 

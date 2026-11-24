@@ -9,9 +9,10 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import '../../core/platform/touch_metrics.dart';
 import '../../core/platform/window_utils.dart';
 import '../../core/theme/app_colors.dart';
+import '../blocs/chat/chat_unread_cubit.dart';
 import '../blocs/tasks/overdue_tasks_cubit.dart';
 
-/// The Calendar, Tasks, AI, Commitments and Chat buttons, as a row.
+/// The Calendar, Tasks, Chat, AI and Commitments buttons, as a row.
 ///
 /// Drawn at the foot of the folder panel everywhere, and on a phone also at
 /// the foot of the email list — which is where the app now opens, so the
@@ -44,6 +45,8 @@ class ViewShortcutButtons extends StatelessWidget {
     // Red dot on the Tasks icon: the active account has something already past
     // due, in any of its lists — not only the one the pane last showed.
     final overdueTasks = context.watch<OverdueTasksCubit>().state;
+    // And on Chat: someone has written in a chat since the user last read it.
+    final unreadChats = context.watch<ChatUnreadCubit>().state;
 
     return Row(
       mainAxisSize: MainAxisSize.min,
@@ -56,30 +59,27 @@ class ViewShortcutButtons extends StatelessWidget {
           windowType: 'calendar',
         ),
         _ViewButton(
-          icon: Stack(
-            clipBehavior: Clip.none,
-            children: [
-              Icon(Icons.checklist_rounded,
-                  size: touchIcon(16), color: c.textMuted),
-              if (overdueTasks > 0)
-                Positioned(
-                  top: -2,
-                  right: -2,
-                  child: Container(
-                    width: 7,
-                    height: 7,
-                    decoration: const BoxDecoration(
-                      color: AppColors.notification,
-                      shape: BoxShape.circle,
-                    ),
-                  ),
-                ),
-            ],
+          icon: _Dotted(
+            dot: overdueTasks > 0,
+            child: Icon(Icons.checklist_rounded,
+                size: touchIcon(16), color: c.textMuted),
           ),
           tooltip:
               overdueTasks > 0 ? 'Tasks ($overdueTasks overdue)' : 'Tasks',
           onTap: onTasksTapped,
           windowType: 'tasks',
+        ),
+        _ViewButton(
+          // The pane chats with the selected email's people; the window is
+          // every chat and channel.
+          icon: _Dotted(
+            dot: unreadChats > 0,
+            child: Icon(Icons.forum_outlined,
+                size: touchIcon(16), color: c.textMuted),
+          ),
+          tooltip: unreadChats > 0 ? 'Chat ($unreadChats unread)' : 'Chat',
+          onTap: onChatTapped,
+          windowType: 'chat',
         ),
         _ViewButton(
           icon: Icon(Icons.auto_awesome_rounded,
@@ -95,18 +95,38 @@ class ViewShortcutButtons extends StatelessWidget {
           onTap: onCommitmentsTapped,
           windowType: 'commitments',
         ),
-        _ViewButton(
-          // The pane chats with the selected email's people; the window is
-          // every chat and channel.
-          icon: Icon(Icons.forum_outlined,
-              size: touchIcon(16), color: c.textMuted),
-          tooltip: 'Chat',
-          onTap: onChatTapped,
-          windowType: 'chat',
-        ),
       ],
     );
   }
+}
+
+/// [child] with the red notification dot on its top-right corner when [dot].
+class _Dotted extends StatelessWidget {
+  const _Dotted({required this.dot, required this.child});
+
+  final bool dot;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) => Stack(
+        clipBehavior: Clip.none,
+        children: [
+          child,
+          if (dot)
+            Positioned(
+              top: -2,
+              right: -2,
+              child: Container(
+                width: 7,
+                height: 7,
+                decoration: const BoxDecoration(
+                  color: AppColors.notification,
+                  shape: BoxShape.circle,
+                ),
+              ),
+            ),
+        ],
+      );
 }
 
 /// One of the five buttons.

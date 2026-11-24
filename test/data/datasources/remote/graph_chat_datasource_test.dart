@@ -46,6 +46,107 @@ void main() {
   setUp(() {
     requests = [];
     routes = {};
+    GraphChatDatasource.forgetIdentities();
+  });
+
+  group('unread', () {
+    Map<String, dynamic> chat({
+      String sender = 'u-ann',
+      String sent = '2026-11-25T10:00:00Z',
+      String? read = '2026-11-25T09:00:00Z',
+      bool hidden = false,
+      String type = 'message',
+    }) =>
+        {
+          'id': '19:c',
+          'chatType': 'oneOnOne',
+          'viewpoint': {'isHidden': hidden, 'lastMessageReadDateTime': read},
+          'lastMessagePreview': {
+            'createdDateTime': sent,
+            'messageType': type,
+            'from': {
+              'user': {'id': sender, 'displayName': 'X'},
+            },
+            'body': {'contentType': 'text', 'content': 'hi'},
+          },
+        };
+
+    test('someone else wrote after the read marker', () {
+      expect(GraphChatDatasource.isUnread(chat(), 'u-me'), isTrue);
+      expect(GraphChatDatasource.isUnread(chat(read: null), 'u-me'), isTrue,
+          reason: 'never read (Microsoft), or marker not on the newest '
+              '(Nightware)');
+    });
+
+    test('read up to the newest, your own message, hidden, or an event', () {
+      expect(
+          GraphChatDatasource.isUnread(
+              chat(read: '2026-11-25T10:00:00Z'), 'u-me'),
+          isFalse,
+          reason: 'equal times are read');
+      expect(GraphChatDatasource.isUnread(chat(sender: 'u-me'), 'u-me'),
+          isFalse);
+      expect(GraphChatDatasource.isUnread(chat(hidden: true), 'u-me'), isFalse);
+      expect(
+          GraphChatDatasource.isUnread(
+              chat(type: 'systemEventMessage'), 'u-me'),
+          isFalse);
+    });
+
+    test('the poll is one page with the preview alone', () async {
+      routes['/me'] = (_) => {'id': 'u-me'};
+      routes['/me/chats'] = (_) => {
+            'value': [chat(), {...chat(sender: 'u-me'), 'id': '19:d'}],
+          };
+      final chats = await datasource().listRecentChats();
+      expect(chats.where((c) => c.unread).map((c) => c.id), ['19:c']);
+      final listing =
+          requests.where((r) => r.uri.path.endsWith('/me/chats')).single;
+      expect(listing.uri.queryParameters[r'$expand'], 'lastMessagePreview');
+      expect(listing.uri.queryParameters[r'$top'], '50');
+    });
+
+    test('two accounts on one root never share an id', () async {
+      var answer = 'u-first';
+      routes['/me'] = (_) => {'id': answer};
+      final dio = Dio(BaseOptions(baseUrl: root))
+        ..httpClientAdapter = _StubAdapter((o) async {
+          requests.add(o);
+          return ResponseBody.fromString(
+              jsonEncode(routes['/me']!(o)), 200, headers: _json);
+        });
+      GraphChatDatasource as(String address) => GraphChatDatasource(
+          dio: dio, ownAddresses: {address}, isNightmailServer: false);
+
+      expect(await as('a@example.com').ownUserId(null), 'u-first');
+      answer = 'u-second';
+      expect(await as('b@example.com').ownUserId(null), 'u-second');
+      expect(await as('a@example.com').ownUserId(null), 'u-first');
+    });
+
+    test('mark read: Nightware takes the id, Microsoft the tenant too',
+        () async {
+      routes['/me'] = (_) => {'id': 'u-me'};
+      routes['/organization'] = (_) => {
+            'value': [
+              {'id': 'tenant-1'},
+            ],
+          };
+      routes['/markChatReadForUser'] = (_) => <String, dynamic>{};
+      const c = ChatConversation(id: '19:c', kind: ChatKind.group, title: 'G');
+
+      await datasource().markRead(c);
+      expect(requests.last.uri.path, endsWith('/chats/19:c/markChatReadForUser'));
+      expect(requests.last.data, {
+        'user': {'id': 'u-me'},
+      });
+
+      GraphChatDatasource.forgetIdentities();
+      await datasource(server: false).markRead(c);
+      expect(requests.last.data, {
+        'user': {'id': 'u-me', 'tenantId': 'tenant-1'},
+      });
+    });
   });
 
   test('lists chats without \$filter, newest first, titled by the others', () async {

@@ -1,6 +1,7 @@
 import 'dart:typed_data';
 
 import 'package:dio/dio.dart';
+import 'package:flutter/foundation.dart' show visibleForTesting;
 
 import '../../../core/error/exceptions.dart';
 import '../../../domain/entities/chat.dart';
@@ -77,6 +78,101 @@ class GoogleChatDatasource implements ChatRemoteDatasource {
     }
     return [for (final s in raw) ?_parseSpace(s)];
   }
+
+  /// Whether each space was unread when it was last asked, by
+  /// `ownEmail|space`, with the `lastActiveTime` it was asked at — a poll
+  /// asks Google again only about a space something has happened in.
+  static final _readStates = <String, ({String active, bool unread})>{};
+
+  /// How many of the most recently active spaces the unread poll checks.
+  static const _unreadChecked = 20;
+
+  @visibleForTesting
+  static void forgetIdentities() {
+    _readStates.clear();
+    _ownIds.clear();
+  }
+
+  /// The most recent spaces with their unread state. Google's `spaces.list`
+  /// carries no read state, so a space that moved since the last poll costs
+  /// its `spaceReadState` and, when that is behind, its newest message — to
+  /// tell someone else's message from the user's own. A quiet poll is the one
+  /// listing.
+  @override
+  Future<List<ChatConversation>> listRecentChats() async {
+    final data = await _get('/spaces', query: {'pageSize': 1000});
+    final raw = _list(data['spaces'])
+      ..sort((a, b) => (b['lastActiveTime'] as String? ?? '')
+          .compareTo(a['lastActiveTime'] as String? ?? ''));
+    final recent = raw
+        .where((s) => s['name'] is String && s['lastActiveTime'] is String)
+        .take(_unreadChecked)
+        .toList();
+    if (recent.isEmpty) return const [];
+    final own = await _ownUserId(recent.first['name'] as String);
+    if (own == null) return const [];
+
+    final unread = <String, bool>{};
+    for (var i = 0; i < recent.length; i += 4) {
+      await Future.wait(recent.skip(i).take(4).map((s) async {
+        final name = s['name'] as String;
+        final active = s['lastActiveTime'] as String;
+        final key = '${ownEmail.toLowerCase()}|$name';
+        final known = _readStates[key];
+        if (known != null && known.active == active) {
+          unread[name] = known.unread;
+          return;
+        }
+        try {
+          final value = await _isUnread(name, active, own);
+          _readStates[key] = (active: active, unread: value);
+          unread[name] = value;
+        } on ServerException {
+          // One space that cannot be asked leaves the rest counted.
+        }
+      }));
+    }
+    return [
+      for (final s in recent)
+        if (_parseSpace(s) case final c?)
+          c.copyWith(unread: unread[c.id] ?? false),
+    ];
+  }
+
+  Future<bool> _isUnread(String space, String active, String own) async {
+    final state = await _get('/users/me/$space/spaceReadState');
+    final read = _date(state['lastReadTime']);
+    final last = _date(active);
+    if (last == null || (read != null && !last.isAfter(read))) return false;
+    final newest = _list((await _get('/$space/messages', query: {
+      'pageSize': 1,
+      'orderBy': 'createTime DESC',
+    }))['messages']);
+    final sender = newest.firstOrNull?['sender'];
+    final from = sender is Map ? sender['name'] as String? : null;
+    return from != null && from != own;
+  }
+
+  /// Google coerces a later time to the newest message's, so "now" marks
+  /// every top-level message read (a thread's replies keep their own state).
+  @override
+  Future<void> markRead(ChatConversation chat) async {
+    await _patch(
+      '/users/me/${chat.id}/spaceReadState',
+      {'lastReadTime': DateTime.now().toUtc().toIso8601String()},
+      query: {'updateMask': 'lastReadTime'},
+    );
+    final key = '${ownEmail.toLowerCase()}|${chat.id}';
+    final known = _readStates[key];
+    if (known != null) _readStates[key] = (active: known.active, unread: false);
+  }
+
+  @override
+  Future<String?> ownUserId(ChatConversation? conversation) async =>
+      _ownIds[ownEmail.toLowerCase()] ??
+      (conversation == null || conversation.id.isEmpty
+          ? null
+          : await _ownUserId(conversation.id));
 
   @override
   Future<List<ChatConversation>> listChannels() async => const [];
@@ -459,6 +555,20 @@ class GoogleChatDatasource implements ChatRemoteDatasource {
   }) async {
     try {
       final r = await _dio.post<Map<String, dynamic>>(path,
+          data: body, queryParameters: query);
+      return r.data ?? const {};
+    } on DioException catch (e) {
+      throw _map(e);
+    }
+  }
+
+  Future<Map<String, dynamic>> _patch(
+    String path,
+    Map<String, dynamic> body, {
+    Map<String, dynamic>? query,
+  }) async {
+    try {
+      final r = await _dio.patch<Map<String, dynamic>>(path,
           data: body, queryParameters: query);
       return r.data ?? const {};
     } on DioException catch (e) {

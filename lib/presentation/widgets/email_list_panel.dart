@@ -76,6 +76,7 @@ class EmailListPanel extends StatefulWidget {
     this.onTasksTapped,
     this.onAiTapped,
     this.onCommitmentsTapped,
+    this.onChatTapped,
     @visibleForTesting this.composeOpener = ComposeWindowApp.open,
   });
 
@@ -94,6 +95,7 @@ class EmailListPanel extends StatefulWidget {
   final VoidCallback? onTasksTapped;
   final VoidCallback? onAiTapped;
   final VoidCallback? onCommitmentsTapped;
+  final VoidCallback? onChatTapped;
 
   /// How Compose and a selection's Forward open their screen. Only a test
   /// passes one: the real [ComposeWindowApp.open] decides phone or desktop
@@ -105,7 +107,8 @@ class EmailListPanel extends StatefulWidget {
       onCalendarTapped != null &&
       onTasksTapped != null &&
       onAiTapped != null &&
-      onCommitmentsTapped != null;
+      onCommitmentsTapped != null &&
+      onChatTapped != null;
 
   @override
   State<EmailListPanel> createState() => _EmailListPanelState();
@@ -1100,6 +1103,7 @@ class _EmailListPanelState extends State<EmailListPanel> {
                         onTasksTapped: widget.onTasksTapped!,
                         onAiTapped: widget.onAiTapped!,
                         onCommitmentsTapped: widget.onCommitmentsTapped!,
+                        onChatTapped: widget.onChatTapped!,
                       )
                     : null,
               ),

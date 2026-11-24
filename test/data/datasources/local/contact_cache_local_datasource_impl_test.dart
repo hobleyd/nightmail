@@ -298,4 +298,23 @@ void main() {
       expect(await ds.cachedAccountIds(), isEmpty);
     });
   });
+
+  group('directoryAddresses', () {
+    test('only directory rows of this account answer', () async {
+      await seed([
+        contact('kim@corp.com'),
+        contact('pal@home.example', source: ContactSource.personal),
+      ]);
+      await seed([contact('lee@other.com')], account: 'acc2');
+
+      final found = await ds.directoryAddresses(
+        accountId: accountId,
+        addresses: ['kim@corp.com', 'pal@home.example', 'lee@other.com'],
+      );
+      expect(found, {'kim@corp.com'});
+      expect(
+          await ds.directoryAddresses(accountId: accountId, addresses: []),
+          isEmpty);
+    });
+  });
 }

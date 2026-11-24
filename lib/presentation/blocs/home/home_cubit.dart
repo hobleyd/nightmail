@@ -3,7 +3,7 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 
 import '../../../core/settings/app_settings.dart';
 
-enum HomeView { email, calendar, tasks, ai, commitments }
+enum HomeView { email, calendar, tasks, ai, commitments, chat }
 
 class HomeCubit extends Cubit<HomeState> {
   HomeCubit(this._appSettings) : super(const HomeState());
@@ -117,6 +117,11 @@ class HomeCubit extends Cubit<HomeState> {
   void showAi() {
     emit(state.copyWith(view: HomeView.ai));
     _appSettings.saveActiveView('ai');
+  }
+
+  void showChat() {
+    emit(state.copyWith(view: HomeView.chat));
+    _appSettings.saveActiveView('chat');
   }
 
   void showCommitments() {

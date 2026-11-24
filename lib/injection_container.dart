@@ -42,6 +42,7 @@ import 'data/repositories/out_of_office_repository_impl.dart';
 import 'data/repositories/sender_repository_impl.dart';
 import 'data/repositories/spam_filter_repository_impl.dart';
 import 'data/repositories/system_contacts_repository_impl.dart';
+import 'data/repositories/chat_repository_impl.dart';
 import 'data/repositories/tasks_repository_impl.dart';
 import 'data/services/eml_parser.dart';
 import 'data/services/inline_attachment_cache.dart';
@@ -77,6 +78,8 @@ import 'domain/usecases/commitments/detect_commitments.dart';
 import 'domain/usecases/commitments/run_commitments_agent.dart';
 import 'domain/usecases/commitments/schedule_commitment.dart';
 import 'domain/usecases/commitments/track_commitment.dart';
+import 'presentation/blocs/chat/chat_conversation_cubit.dart';
+import 'presentation/blocs/chat/chat_list_cubit.dart';
 import 'presentation/blocs/commitments/commitments_cubit.dart';
 import 'presentation/blocs/out_of_office/meeting_sweep_cubit.dart';
 import 'presentation/blocs/out_of_office/out_of_office_cubit.dart';
@@ -93,6 +96,7 @@ import 'domain/repositories/email_repository.dart';
 import 'domain/repositories/sender_repository.dart';
 import 'domain/repositories/spam_filter_repository.dart';
 import 'domain/repositories/system_contacts_repository.dart';
+import 'domain/repositories/chat_repository.dart';
 import 'domain/repositories/tasks_repository.dart';
 import 'domain/usecases/attach_email_to_task.dart';
 import 'domain/usecases/get_raw_email_bytes.dart';
@@ -453,6 +457,12 @@ Future<void> configureDependencies() async {
   sl.registerLazySingleton<TasksRepository>(
     () => TasksRepositoryImpl(accountManager: sl<AccountManager>()),
   );
+  sl.registerLazySingleton<ChatRepository>(
+    () => ChatRepositoryImpl(
+      accountManager: sl<AccountManager>(),
+      contacts: sl<ContactCacheRepository>(),
+    ),
+  );
   sl.registerLazySingleton<SpamFilterRepository>(
     () => SpamFilterRepositoryImpl(),
   );
@@ -701,6 +711,9 @@ Future<void> configureDependencies() async {
         downloadTaskAttachment: sl<DownloadTaskAttachment>(),
         taskReminders: sl<TaskReminderService>(),
       ));
+  sl.registerFactory(
+      () => ChatConversationCubit(repository: sl<ChatRepository>()));
+  sl.registerFactory(() => ChatListCubit(repository: sl<ChatRepository>()));
   sl.registerFactory(() => CommitmentsCubit(
         accountManager: sl<AccountManager>(),
         emailRepository: sl<EmailRepository>(),

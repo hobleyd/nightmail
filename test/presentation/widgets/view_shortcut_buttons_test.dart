@@ -90,6 +90,7 @@ void main() {
               onTasksTapped: () => taps.add('tasks'),
               onAiTapped: () => taps.add('ai'),
               onCommitmentsTapped: () => taps.add('commitments'),
+              onChatTapped: () => taps.add('chat'),
             ),
           ),
         ),

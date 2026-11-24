@@ -11,14 +11,14 @@ import '../../core/platform/window_utils.dart';
 import '../../core/theme/app_colors.dart';
 import '../blocs/tasks/overdue_tasks_cubit.dart';
 
-/// The Calendar, Tasks, AI and Commitments buttons, as a row.
+/// The Calendar, Tasks, AI, Commitments and Chat buttons, as a row.
 ///
 /// Drawn at the foot of the folder panel everywhere, and on a phone also at
 /// the foot of the email list — which is where the app now opens, so the
 /// views have to be reachable without first backing out to the folders.
 /// One widget so the two feet cannot drift apart.
 ///
-/// On desktop a double-click brings up Calendar, Tasks or Commitments in its
+/// On desktop a double-click brings up Calendar, Tasks, Commitments or Chat in its
 /// own window — the one already open if there is one, see
 /// [showOrCreateSubWindow] — and leaves the pane as it was. AI has no window
 /// of its own.
@@ -29,12 +29,14 @@ class ViewShortcutButtons extends StatelessWidget {
     required this.onTasksTapped,
     required this.onAiTapped,
     required this.onCommitmentsTapped,
+    required this.onChatTapped,
   });
 
   final VoidCallback onCalendarTapped;
   final VoidCallback onTasksTapped;
   final VoidCallback onAiTapped;
   final VoidCallback onCommitmentsTapped;
+  final VoidCallback onChatTapped;
 
   @override
   Widget build(BuildContext context) {
@@ -93,12 +95,21 @@ class ViewShortcutButtons extends StatelessWidget {
           onTap: onCommitmentsTapped,
           windowType: 'commitments',
         ),
+        _ViewButton(
+          // The pane chats with the selected email's people; the window is
+          // every chat and channel.
+          icon: Icon(Icons.forum_outlined,
+              size: touchIcon(16), color: c.textMuted),
+          tooltip: 'Chat',
+          onTap: onChatTapped,
+          windowType: 'chat',
+        ),
       ],
     );
   }
 }
 
-/// One of the four buttons.
+/// One of the five buttons.
 ///
 /// A click toggles the pane; on desktop a double-click on a button with a
 /// [windowType] opens that window instead. The two have to be told apart by

@@ -21,6 +21,9 @@ import '../../data/datasources/remote/google_calendar_datasource_impl.dart';
 import '../../data/datasources/remote/google_drive_datasource_impl.dart';
 import '../../data/datasources/remote/google_tasks_datasource_impl.dart';
 import '../../data/datasources/remote/graph_api_datasource_impl.dart';
+import '../../data/datasources/remote/chat_remote_datasource.dart';
+import '../../data/datasources/remote/google_chat_datasource.dart';
+import '../../data/datasources/remote/graph_chat_datasource.dart';
 import '../../data/datasources/remote/graph_drive_datasource_impl.dart';
 import '../../data/datasources/remote/imap_datasource_impl.dart';
 import '../../data/datasources/remote/tasks_remote_datasource.dart';
@@ -36,17 +39,21 @@ import '../auth/signed_in_mailbox_lookup.dart';
 import '../auth/token_storage.dart';
 import '../http/gmail_http_client.dart';
 import '../http/google_calendar_http_client.dart';
+import '../http/google_chat_http_client.dart';
 import '../http/google_drive_http_client.dart';
 import '../http/google_people_http_client.dart';
 import '../http/google_tasks_http_client.dart';
 import '../http/graph_http_client.dart';
 import '../../core/utils/cloud_document_link.dart';
+import '../../core/utils/consumer_email_domain.dart';
 import '../../domain/entities/cloud_document.dart';
 import '../../domain/entities/cloud_file.dart';
 import '../../domain/entities/graph_endpoints.dart';
 import '../../core/error/failures.dart';
+import '../../core/platform/window_utils.dart';
 import 'account.dart';
 import 'account_storage.dart';
+import 'chat_consent_channel.dart';
 import 'file_sites_refresh.dart';
 
 class AccountManager {
@@ -673,6 +680,126 @@ class AccountManager {
       ImapAccount() => false,
     };
   }
+
+  /// Whether [accountId] can chat: null for an account whose provider has no
+  /// chat NightMail reaches (Gmail, IMAP), otherwise whether chats and team
+  /// channels are granted.
+  ///
+  /// Chat is always the credential owner's own — a shared mailbox has none,
+  /// so it is the parent's chats a shared mailbox's pane shows. A NightMail
+  /// Server has no incremental scopes: its token carries everything it
+  /// published, and whether chat works is its answer to the first request.
+  ///
+  /// A Google Workspace account chats through Google Chat, whose spaces come
+  /// with the one consent — there is no separate channel grant, so `channels`
+  /// follows `chats`. A consumer `@gmail.com` account has no Chat API.
+  Future<({bool chats, bool channels})?> chatGrants(String accountId) async {
+    final account = _credentialOwnerFor(accountById(accountId));
+    if (account is GmailAccount) {
+      if (isConsumerGoogleAddress(account.emailAddress)) return null;
+      final token =
+          await _buildOAuthServiceForAccount(account)?.getStoredToken();
+      final granted = GmailAuthService.grantsChat(token?.scope);
+      return (chats: granted, channels: granted);
+    }
+    if (account is! MicrosoftAccount) return null;
+    if (account.isNightmailServer) return (chats: true, channels: true);
+    final authService = _buildOAuthServiceForAccount(account);
+    final token = await authService?.getStoredToken();
+    if (token == null) return (chats: false, channels: false);
+    return (
+      chats: MicrosoftAuthService.grantsChat(token.scope),
+      channels: MicrosoftAuthService.grantsChannels(token.scope),
+    );
+  }
+
+  /// Runs the interactive sign-in again for [accountId]'s credential owner,
+  /// also asking for [MicrosoftAuthService.chatScope] — and, with [channels],
+  /// [MicrosoftAuthService.channelScopes]. Same shape as
+  /// [requestThreatSubmissionAccess]: a tenant that reserves
+  /// `ChannelMessage.Read.All` for its administrator answers with an error,
+  /// which surfaces as the sign-in's exception; chats granted earlier stay.
+  Future<({bool chats, bool channels})> requestChatAccess(
+    String accountId, {
+    bool channels = false,
+  }) async {
+    final account = _credentialOwnerFor(accountById(accountId));
+    final isWorkspace = account is GmailAccount &&
+        !isConsumerGoogleAddress(account.emailAddress);
+    if (account is! MicrosoftAccount && !isWorkspace) {
+      return (chats: false, channels: false);
+    }
+    if (account is MicrosoftAccount && account.isNightmailServer) {
+      return (chats: true, channels: true);
+    }
+    // The chat window asks the main window to do it — see
+    // ChatConsentChannel for why the token must be replaced there.
+    if (!AppWindow.isMain) {
+      return ChatConsentChannel.request(accountId, channels: channels);
+    }
+    if (account is GmailAccount) {
+      final token = await _signInExistingAccount(account,
+          extraScopes: GmailAuthService.chatScopes);
+      final granted = GmailAuthService.grantsChat(token.scope);
+      return (chats: granted, channels: granted);
+    }
+    if (account is! MicrosoftAccount) return (chats: false, channels: false);
+    final token = await _signInExistingAccount(
+      account,
+      extraScopes: [
+        MicrosoftAuthService.chatScope,
+        if (channels) ...MicrosoftAuthService.channelScopes,
+      ],
+    );
+    final activeId = activeAccount?.id;
+    if (accountId == activeId || account.id == activeId) {
+      _buildDatasourcesForActiveAccount();
+    }
+    return (
+      chats: MicrosoftAuthService.grantsChat(token.scope),
+      channels: MicrosoftAuthService.grantsChannels(token.scope),
+    );
+  }
+
+  /// A chat datasource acting as [accountId]'s credential owner — Graph for
+  /// Microsoft 365 and NightMail Server, Google Chat for a Workspace account —
+  /// or null for an account with no chat (IMAP, `@gmail.com`). A fresh one
+  /// each call, like
+  /// [_graphClientFor]: stateless, and an account switch can never leave one
+  /// pointing at the wrong mailbox.
+  ChatRemoteDatasource? chatDatasourceForAccount(String accountId) {
+    final account = _credentialOwnerFor(accountById(accountId));
+    if (account is GmailAccount) {
+      if (isConsumerGoogleAddress(account.emailAddress)) return null;
+      final authSvc = GmailAuthService(
+        clientId: account.clientId ?? AppConfig.gmailClientId,
+        clientSecret: account.clientSecret ?? AppConfig.gmailClientSecret,
+        redirectUri: AppConfig.gmailRedirectUri,
+        tokenStorage:
+            TokenStorage(_secureStorage, storageKey: 'token_${account.id}'),
+        accountEmail: account.emailAddress,
+      );
+      return GoogleChatDatasource(
+        dio: GoogleChatHttpClient(
+          authService: authSvc,
+          onAuthFailure: () => _authFailureController.add(account.id),
+          onAuthSuccess: () => _authSuccessController.add(account.id),
+        ).dio,
+        ownEmail: account.emailAddress,
+      );
+    }
+    if (account is! MicrosoftAccount) return null;
+    return GraphChatDatasource(
+      dio: _graphClientFor(account).dio,
+      ownAddresses: account.allAddresses,
+      isNightmailServer: account.isNightmailServer,
+    );
+  }
+
+  /// The address chat members are bound by for [accountId]'s credential
+  /// owner — the signed-in user, never a shared mailbox.
+  String? chatOwnAddress(String accountId) =>
+      _credentialOwnerFor(accountById(accountId))?.emailAddress;
 
   /// Whether [accountId]'s stored token can report a message to Microsoft as
   /// phishing (Graph's threat submission API).

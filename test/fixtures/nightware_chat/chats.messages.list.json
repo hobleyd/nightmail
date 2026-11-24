@@ -1,0 +1,180 @@
+{
+  "operationId": "chats.messages.list",
+  "provenance": "Graph v1.0 reference (https://learn.microsoft.com/graph/api/chat-list-messages); constructed with example.com data and Talk-shaped ids (ADR 0009 D2), no tenant capture yet",
+  "request": {
+    "method": "GET",
+    "path": "/v1.0/chats/5opkrcg6/messages",
+    "query": {
+      "$top": "3"
+    },
+    "headers": {
+      "Accept": "application/json",
+      "Authorization": "Bearer {token}"
+    },
+    "body": null
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "Content-Type": "application/json;odata.metadata=minimal;odata.streaming=true;IEEE754Compatible=false;charset=utf-8"
+    },
+    "body": {
+      "@odata.context": "https://graph.microsoft.com/v1.0/$metadata#chats('5opkrcg6')/messages",
+      "value": [
+        {
+          "id": "76",
+          "replyToId": null,
+          "etag": "1795257300000",
+          "messageType": "message",
+          "createdDateTime": "2026-11-21T10:35:00Z",
+          "lastModifiedDateTime": "2026-11-21T10:35:00Z",
+          "lastEditedDateTime": null,
+          "deletedDateTime": null,
+          "subject": null,
+          "chatId": "5opkrcg6",
+          "channelIdentity": null,
+          "importance": "normal",
+          "webUrl": "https://cloud.example.com/call/5opkrcg6#message_76",
+          "eventDetail": null,
+          "from": {
+            "application": null,
+            "device": null,
+            "user": {
+              "@odata.type": "#microsoft.graph.teamworkUserIdentity",
+              "id": "8b081ef6-4792-4def-b2c9-c363a1bf41d5",
+              "displayName": "Alice Anderson",
+              "userIdentityType": "aadUser"
+            }
+          },
+          "body": {
+            "contentType": "html",
+            "content": "<p><attachment id=\"467\"></attachment></p>"
+          },
+          "attachments": [
+            {
+              "id": "467",
+              "contentType": "reference",
+              "contentUrl": "https://cloud.example.com/f/467",
+              "content": null,
+              "name": "notes.txt",
+              "thumbnailUrl": null
+            }
+          ],
+          "mentions": [],
+          "reactions": []
+        },
+        {
+          "id": "59",
+          "replyToId": null,
+          "etag": "1795257300000",
+          "messageType": "message",
+          "createdDateTime": "2026-11-21T10:30:00Z",
+          "lastModifiedDateTime": "2026-11-21T10:35:00Z",
+          "lastEditedDateTime": "2026-11-21T10:35:00Z",
+          "deletedDateTime": null,
+          "subject": null,
+          "chatId": "5opkrcg6",
+          "channelIdentity": null,
+          "importance": "normal",
+          "webUrl": "https://cloud.example.com/call/5opkrcg6#message_59",
+          "eventDetail": null,
+          "from": {
+            "application": null,
+            "device": null,
+            "user": {
+              "@odata.type": "#microsoft.graph.teamworkUserIdentity",
+              "id": "8b081ef6-4792-4def-b2c9-c363a1bf41d5",
+              "displayName": "Alice Anderson",
+              "userIdentityType": "aadUser"
+            }
+          },
+          "body": {
+            "contentType": "html",
+            "content": "<p>Hello <strong>world</strong>, <at id=\"0\">Bob Brown</at></p>"
+          },
+          "attachments": [],
+          "mentions": [
+            {
+              "id": 0,
+              "mentionText": "Bob Brown",
+              "mentioned": {
+                "application": null,
+                "device": null,
+                "conversation": null,
+                "tag": null,
+                "user": {
+                  "@odata.type": "#microsoft.graph.teamworkUserIdentity",
+                  "id": "5d3f2a1b-9c4e-4b7a-8f0d-2e6c1a9b7d44",
+                  "displayName": "Bob Brown",
+                  "userIdentityType": "aadUser"
+                }
+              }
+            }
+          ],
+          "reactions": [
+            {
+              "reactionType": "👍",
+              "displayName": null,
+              "reactionContentUrl": null,
+              "createdDateTime": "2026-11-21T10:35:00Z",
+              "user": {
+                "application": null,
+                "device": null,
+                "user": {
+                  "@odata.type": "#microsoft.graph.teamworkUserIdentity",
+                  "id": "5d3f2a1b-9c4e-4b7a-8f0d-2e6c1a9b7d44",
+                  "displayName": "Bob Brown",
+                  "userIdentityType": "aadUser"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "id": "57",
+          "replyToId": null,
+          "etag": "1795165200000",
+          "messageType": "systemEventMessage",
+          "createdDateTime": "2026-11-20T09:00:00Z",
+          "lastModifiedDateTime": "2026-11-20T09:00:00Z",
+          "lastEditedDateTime": null,
+          "deletedDateTime": null,
+          "subject": null,
+          "chatId": "5opkrcg6",
+          "channelIdentity": null,
+          "importance": "normal",
+          "webUrl": "https://cloud.example.com/call/5opkrcg6#message_57",
+          "eventDetail": {
+            "@odata.type": "#microsoft.graph.membersAddedEventMessageDetail",
+            "visibleHistoryStartDateTime": "0001-01-01T00:00:00Z",
+            "members": [
+              {
+                "id": "5d3f2a1b-9c4e-4b7a-8f0d-2e6c1a9b7d44",
+                "displayName": "Bob Brown",
+                "userIdentityType": "aadUser"
+              }
+            ],
+            "initiator": {
+              "application": null,
+              "device": null,
+              "user": {
+                "id": "8b081ef6-4792-4def-b2c9-c363a1bf41d5",
+                "displayName": "Alice Anderson",
+                "userIdentityType": "aadUser"
+              }
+            }
+          },
+          "from": null,
+          "body": {
+            "contentType": "html",
+            "content": "<systemEventMessage/>"
+          },
+          "attachments": [],
+          "mentions": [],
+          "reactions": []
+        }
+      ],
+      "@odata.nextLink": "https://graph.microsoft.com/v1.0/chats/5opkrcg6/messages?$top=3&$skiptoken=57"
+    }
+  }
+}

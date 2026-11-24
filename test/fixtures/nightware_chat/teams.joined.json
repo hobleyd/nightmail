@@ -1,0 +1,38 @@
+{
+  "operationId": "teams.joined",
+  "provenance": "Graph v1.0 reference (https://learn.microsoft.com/graph/api/user-list-joinedteams); constructed with example.com data and Nextcloud/Talk-shaped ids (ADR 0009 D2), no tenant capture yet",
+  "request": {
+    "method": "GET",
+    "path": "/v1.0/me/joinedTeams",
+    "query": {},
+    "headers": {
+      "Accept": "application/json",
+      "Authorization": "Bearer {token}"
+    },
+    "body": null
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "Content-Type": "application/json;odata.metadata=minimal;odata.streaming=true;IEEE754Compatible=false;charset=utf-8"
+    },
+    "body": {
+      "@odata.context": "https://graph.microsoft.com/v1.0/$metadata#teams",
+      "value": [
+        {
+          "id": "Pq7Xk2LmN9vRt4WzYc8BdHf3JsQa6Ue",
+          "createdDateTime": "2026-11-20T09:00:00Z",
+          "displayName": "Project Phoenix",
+          "description": "Planning the Phoenix launch",
+          "internalId": null,
+          "classification": null,
+          "specialization": null,
+          "visibility": "private",
+          "webUrl": "https://cloud.example.com/apps/circles/teams/team/Pq7Xk2LmN9vRt4WzYc8BdHf3JsQa6Ue",
+          "isArchived": false,
+          "isMembershipLimitedToOwners": null
+        }
+      ]
+    }
+  }
+}

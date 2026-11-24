@@ -50,6 +50,7 @@ class FolderPanel extends StatefulWidget {
     required this.onTasksTapped,
     required this.onAiTapped,
     required this.onCommitmentsTapped,
+    required this.onChatTapped,
     this.initialExpandedIds = const {},
     this.onExpandedIdsChanged,
   });
@@ -60,6 +61,7 @@ class FolderPanel extends StatefulWidget {
   final VoidCallback onTasksTapped;
   final VoidCallback onAiTapped;
   final VoidCallback onCommitmentsTapped;
+  final VoidCallback onChatTapped;
   final Set<String> initialExpandedIds;
   final ValueChanged<Set<String>>? onExpandedIdsChanged;
 
@@ -368,6 +370,7 @@ class _FolderPanelState extends State<FolderPanel> {
             onTasksTapped: widget.onTasksTapped,
             onAiTapped: widget.onAiTapped,
             onCommitmentsTapped: widget.onCommitmentsTapped,
+            onChatTapped: widget.onChatTapped,
           ),
         ],
       ),
@@ -2187,12 +2190,14 @@ class _SettingsFooter extends StatelessWidget {
     required this.onTasksTapped,
     required this.onAiTapped,
     required this.onCommitmentsTapped,
+    required this.onChatTapped,
   });
 
   final VoidCallback onCalendarTapped;
   final VoidCallback onTasksTapped;
   final VoidCallback onAiTapped;
   final VoidCallback onCommitmentsTapped;
+  final VoidCallback onChatTapped;
 
   @override
   Widget build(BuildContext context) {
@@ -2211,7 +2216,7 @@ class _SettingsFooter extends StatelessWidget {
         child: Row(
         children: [
           // Takes whatever width Settings and Sign-out leave, and scales the
-          // four view buttons down only when a pane is too narrow for four
+          // five view buttons down only when a pane is too narrow for five
           // touch targets side by side — so a narrow phone never overflows.
           Expanded(
             child: Align(
@@ -2223,6 +2228,7 @@ class _SettingsFooter extends StatelessWidget {
                   onTasksTapped: onTasksTapped,
                   onAiTapped: onAiTapped,
                   onCommitmentsTapped: onCommitmentsTapped,
+                  onChatTapped: onChatTapped,
                 ),
               ),
             ),

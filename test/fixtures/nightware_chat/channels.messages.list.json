@@ -1,0 +1,163 @@
+{
+  "operationId": "channels.messages.list",
+  "provenance": "Graph v1.0 reference (https://learn.microsoft.com/graph/api/channel-list-messages); constructed with example.com data and Nextcloud/Talk-shaped ids (ADR 0009 D2), no tenant capture yet",
+  "request": {
+    "method": "GET",
+    "path": "/v1.0/teams/Pq7Xk2LmN9vRt4WzYc8BdHf3JsQa6Ue/channels/hktd6xvp/messages",
+    "query": {
+      "$top": "3"
+    },
+    "headers": {
+      "Accept": "application/json",
+      "Authorization": "Bearer {token}"
+    },
+    "body": null
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "Content-Type": "application/json;odata.metadata=minimal;odata.streaming=true;IEEE754Compatible=false;charset=utf-8"
+    },
+    "body": {
+      "@odata.context": "https://graph.microsoft.com/v1.0/$metadata#teams('Pq7Xk2LmN9vRt4WzYc8BdHf3JsQa6Ue')/channels('hktd6xvp')/messages",
+      "value": [
+        {
+          "id": "106",
+          "replyToId": null,
+          "etag": "1795257300000",
+          "messageType": "message",
+          "createdDateTime": "2026-11-21T10:35:00Z",
+          "lastModifiedDateTime": "2026-11-21T10:35:00Z",
+          "lastEditedDateTime": null,
+          "deletedDateTime": null,
+          "subject": null,
+          "chatId": null,
+          "channelIdentity": {
+            "teamId": "Pq7Xk2LmN9vRt4WzYc8BdHf3JsQa6Ue",
+            "channelId": "hktd6xvp"
+          },
+          "importance": "normal",
+          "webUrl": "https://cloud.example.com/call/hktd6xvp#message_106",
+          "eventDetail": null,
+          "from": {
+            "application": null,
+            "device": null,
+            "user": {
+              "@odata.type": "#microsoft.graph.teamworkUserIdentity",
+              "id": "5d3f2a1b-9c4e-4b7a-8f0d-2e6c1a9b7d44",
+              "displayName": "Bob Brown",
+              "userIdentityType": "aadUser"
+            }
+          },
+          "body": {
+            "contentType": "html",
+            "content": "<p>Status update</p>"
+          },
+          "attachments": [],
+          "mentions": [],
+          "reactions": []
+        },
+        {
+          "id": "100",
+          "replyToId": null,
+          "etag": "1795257000000",
+          "messageType": "message",
+          "createdDateTime": "2026-11-21T10:30:00Z",
+          "lastModifiedDateTime": "2026-11-21T10:30:00Z",
+          "lastEditedDateTime": null,
+          "deletedDateTime": null,
+          "subject": "Kick-off",
+          "chatId": null,
+          "channelIdentity": {
+            "teamId": "Pq7Xk2LmN9vRt4WzYc8BdHf3JsQa6Ue",
+            "channelId": "hktd6xvp"
+          },
+          "importance": "normal",
+          "webUrl": "https://cloud.example.com/call/hktd6xvp#message_100",
+          "eventDetail": null,
+          "from": {
+            "application": null,
+            "device": null,
+            "user": {
+              "@odata.type": "#microsoft.graph.teamworkUserIdentity",
+              "id": "8b081ef6-4792-4def-b2c9-c363a1bf41d5",
+              "displayName": "Alice Anderson",
+              "userIdentityType": "aadUser"
+            }
+          },
+          "body": {
+            "contentType": "html",
+            "content": "<p>Agenda <strong>here</strong></p>"
+          },
+          "attachments": [],
+          "mentions": [],
+          "reactions": [
+            {
+              "reactionType": "👍",
+              "displayName": null,
+              "reactionContentUrl": null,
+              "createdDateTime": "2026-11-21T10:35:00Z",
+              "user": {
+                "application": null,
+                "device": null,
+                "user": {
+                  "@odata.type": "#microsoft.graph.teamworkUserIdentity",
+                  "id": "5d3f2a1b-9c4e-4b7a-8f0d-2e6c1a9b7d44",
+                  "displayName": "Bob Brown",
+                  "userIdentityType": "aadUser"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "id": "98",
+          "replyToId": null,
+          "etag": "1795165200000",
+          "messageType": "systemEventMessage",
+          "createdDateTime": "2026-11-20T09:00:00Z",
+          "lastModifiedDateTime": "2026-11-20T09:00:00Z",
+          "lastEditedDateTime": null,
+          "deletedDateTime": null,
+          "subject": null,
+          "chatId": null,
+          "channelIdentity": {
+            "teamId": "Pq7Xk2LmN9vRt4WzYc8BdHf3JsQa6Ue",
+            "channelId": "hktd6xvp"
+          },
+          "importance": "normal",
+          "webUrl": "https://cloud.example.com/call/hktd6xvp#message_98",
+          "eventDetail": {
+            "@odata.type": "#microsoft.graph.membersAddedEventMessageDetail",
+            "visibleHistoryStartDateTime": "0001-01-01T00:00:00Z",
+            "members": [
+              {
+                "id": "5d3f2a1b-9c4e-4b7a-8f0d-2e6c1a9b7d44",
+                "displayName": "Bob Brown",
+                "userIdentityType": "aadUser"
+              }
+            ],
+            "initiator": {
+              "application": null,
+              "device": null,
+              "user": {
+                "id": "8b081ef6-4792-4def-b2c9-c363a1bf41d5",
+                "displayName": "Alice Anderson",
+                "userIdentityType": "aadUser"
+              }
+            }
+          },
+          "from": null,
+          "body": {
+            "contentType": "html",
+            "content": "<systemEventMessage/>"
+          },
+          "attachments": [],
+          "mentions": [],
+          "reactions": []
+        }
+      ],
+      "@odata.nextLink": "https://graph.microsoft.com/v1.0/teams/Pq7Xk2LmN9vRt4WzYc8BdHf3JsQa6Ue/channels/hktd6xvp/messages?$top=3&$skiptoken=98"
+    }
+  }
+}

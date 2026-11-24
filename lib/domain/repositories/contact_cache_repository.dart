@@ -15,4 +15,11 @@ abstract interface class ContactCacheRepository {
   /// found nothing. The typeahead uses this to decide whether the cache can be
   /// trusted yet, or whether it still has to fall back to a live lookup.
   Future<bool> hasSyncedAccount(String accountId);
+
+  /// Which of [addresses] (lower-cased) are in [accountId]'s organisation
+  /// directory, as last cached — no network.
+  Future<Set<String>> directoryAddresses({
+    required String accountId,
+    required Iterable<String> addresses,
+  });
 }

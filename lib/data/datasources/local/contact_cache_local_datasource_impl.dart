@@ -144,6 +144,28 @@ class ContactCacheLocalDatasourceImpl implements ContactCacheLocalDatasource {
   }
 
   @override
+  Future<Set<String>> directoryAddresses({
+    required String accountId,
+    required Iterable<String> addresses,
+  }) async {
+    final wanted = addresses.toSet().toList();
+    if (wanted.isEmpty) return const {};
+    // The primary key (account_id, address) answers this without a scan.
+    final rows = await _database.customSelect(
+      'SELECT address FROM cached_contacts '
+      'WHERE account_id = ? AND source = ? '
+      'AND address IN (${List.filled(wanted.length, '?').join(', ')})',
+      variables: [
+        Variable.withString(accountId),
+        Variable.withString(ContactSource.directory.name),
+        for (final a in wanted) Variable.withString(a),
+      ],
+      readsFrom: {_database.cachedContacts},
+    ).get();
+    return {for (final r in rows) r.read<String>('address')};
+  }
+
+  @override
   Future<bool> hasContacts(String accountId) async {
     final row = await _database.customSelect(
       'SELECT 1 FROM cached_contacts WHERE account_id = ? LIMIT 1',

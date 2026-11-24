@@ -1,0 +1,579 @@
+import 'package:dio/dio.dart';
+
+import '../../../core/error/exceptions.dart';
+import '../../../core/utils/latest_reply.dart' show htmlToPlainText;
+import '../../../domain/entities/chat.dart';
+import 'chat_remote_datasource.dart';
+
+/// Graph's chat and Teams-channel API, as Microsoft 365 and a NightMail
+/// Server (Nextcloud Talk behind Graph's shapes, nightware ADR 0009) both
+/// serve it. Always the signed-in user's own (`/me`) — a shared mailbox has
+/// no chats, so the account manager hands this the credential owner's client.
+///
+/// Only what both servers accept is asked for: no `$filter` on `/me/chats`
+/// (Nightware refuses one), `$orderby` only newest first, `$top` at most 50.
+/// See `docs/claude/chat.md`.
+class GraphChatDatasource implements ChatRemoteDatasource {
+  GraphChatDatasource({
+    required this._dio,
+    required Set<String> ownAddresses,
+    required this.isNightmailServer,
+  }) : _own = ownAddresses;
+
+  final Dio _dio;
+  final Set<String> _own;
+  final bool isNightmailServer;
+
+  /// Microsoft Search; a NightMail Server has no search route.
+  @override
+  bool get searchesOnServer => !isNightmailServer;
+
+  /// Neither server can filter `/me/chats` by member.
+  @override
+  bool get findsOneOnOneDirectly => false;
+
+  @override
+  Future<ChatConversation?> findOneOnOne(String email) =>
+      throw UnsupportedError('Graph one-on-ones are found by listing chats');
+
+  /// How many pages of `/me/chats` to read. 250 chats is far more than a
+  /// list anybody scrolls; the rest are found by search.
+  static const _maxChatPages = 5;
+
+  /// Roots on which `/me/chats` refused both expansions in one request.
+  /// Microsoft documents each of `members` and `lastMessagePreview` as
+  /// expandable but shows them only one at a time; Nightware takes both.
+  static final _splitExpandRoots = <String>{};
+
+  @override
+  Future<List<ChatConversation>> listChats() async {
+    if (!_splitExpandRoots.contains(_root())) {
+      try {
+        return _parseChats(
+            await _listChatPages('members,lastMessagePreview', ordered: true));
+      } on ServerException catch (e) {
+        if (e.statusCode != 400) rethrow;
+        _splitExpandRoots.add(_root());
+      }
+    }
+    // Two listings merged by id: the preview carries the activity the list
+    // sorts by, the members carry the names a one-on-one is titled by.
+    final previews =
+        await _listChatPages('lastMessagePreview', ordered: true);
+    final members = {
+      for (final raw in await _listChatPages('members', ordered: false))
+        if (raw['id'] is String) raw['id'] as String: raw['members'],
+    };
+    return _parseChats([
+      for (final raw in previews)
+        {...raw, if (members.containsKey(raw['id'])) 'members': members[raw['id']]},
+    ]);
+  }
+
+  List<ChatConversation> _parseChats(List<Map<String, dynamic>> raws) => [
+        for (final raw in raws) ?_parseChat(raw),
+      ];
+
+  Future<List<Map<String, dynamic>>> _listChatPages(
+    String expand, {
+    required bool ordered,
+  }) async {
+    final out = <Map<String, dynamic>>[];
+    String? next = '/me/chats';
+    Map<String, dynamic>? query = {
+      r'$expand': expand,
+      if (ordered) r'$orderby': 'lastMessagePreview/createdDateTime desc',
+      r'$top': 50,
+    };
+    for (var page = 0; next != null && page < _maxChatPages; page++) {
+      final data = await _get(next, query: query);
+      query = null; // A nextLink carries its own.
+      out.addAll(_values(data));
+      next = _nextLink(data);
+    }
+    return out;
+  }
+
+  @override
+  Future<List<ChatConversation>> listChannels() async {
+    final teams = _values(await _get('/me/joinedTeams'));
+    final channels = <ChatConversation>[];
+    for (final team in teams) {
+      final teamId = team['id'] as String?;
+      if (teamId == null) continue;
+      final teamName = (team['displayName'] as String?) ?? 'Team';
+      final List<Map<String, dynamic>> raw;
+      try {
+        raw = _values(await _get('/teams/$teamId/channels'));
+      } on ServerException catch (e) {
+        // One team the user cannot list (archived, policy) must not hide the
+        // rest of them.
+        if (e.statusCode == 403 || e.statusCode == 404) continue;
+        rethrow;
+      }
+      for (final c in raw) {
+        final id = c['id'] as String?;
+        if (id == null) continue;
+        channels.add(ChatConversation(
+          id: id,
+          kind: ChatKind.channel,
+          title: (c['displayName'] as String?) ?? 'Channel',
+          teamId: teamId,
+          teamName: teamName,
+          lastActivity: _date(c['createdDateTime']),
+        ));
+      }
+    }
+    return channels;
+  }
+
+  /// The newest activity in a channel: a post's own time or its last reply's,
+  /// which Graph reports as the post's `lastModifiedDateTime`.
+  @override
+  Future<ChatConversation> channelActivity(ChatConversation channel) async {
+    final data = await _get(
+      '/teams/${channel.teamId}/channels/${channel.id}/messages',
+      query: {r'$top': 5},
+    );
+    DateTime? newest;
+    String? preview;
+    for (final raw in _values(data)) {
+      final at = _date(raw['lastModifiedDateTime']) ??
+          _date(raw['createdDateTime']);
+      if (at != null && (newest == null || at.isAfter(newest))) {
+        newest = at;
+        preview = _previewOf(raw);
+      }
+    }
+    return newest == null
+        ? channel
+        : channel.copyWith(lastActivity: newest, lastMessagePreview: preview);
+  }
+
+  @override
+  Future<ChatMessagePage> messages(
+    ChatConversation conversation, {
+    String? cursor,
+  }) async {
+    final Map<String, dynamic> data;
+    if (cursor != null) {
+      data = await _get(cursor);
+    } else if (conversation.isChannel) {
+      data = await _get(
+        '/teams/${conversation.teamId}/channels/${conversation.id}/messages',
+        query: {r'$top': 50, r'$expand': 'replies'},
+      );
+    } else {
+      data = await _get(
+        '/chats/${conversation.id}/messages',
+        query: {r'$top': 50, r'$orderby': 'createdDateTime desc'},
+      );
+    }
+    final messages = _values(data).map(_parseMessage).toList()
+      ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
+    return ChatMessagePage(messages: messages, nextLink: _nextLink(data));
+  }
+
+  @override
+  Future<List<ChatMessage>> replies(
+    ChatConversation channel,
+    ChatMessage post,
+  ) async {
+    final out = <ChatMessage>[];
+    String? next = '/teams/${channel.teamId}/channels/${channel.id}'
+        '/messages/${post.id}/replies';
+    Map<String, dynamic>? query = {r'$top': 50};
+    for (var page = 0; next != null && page < 10; page++) {
+      final data = await _get(next, query: query);
+      query = null;
+      out.addAll(_values(data).map(_parseMessage));
+      next = _nextLink(data);
+    }
+    out.sort((a, b) => a.createdAt.compareTo(b.createdAt));
+    return out;
+  }
+
+  @override
+  Future<ChatMessage> send(
+    ChatConversation conversation,
+    String text, {
+    ChatMessage? replyTo,
+  }) async {
+    final path = !conversation.isChannel
+        ? '/chats/${conversation.id}/messages'
+        : replyTo == null
+            ? '/teams/${conversation.teamId}/channels/${conversation.id}/messages'
+            : '/teams/${conversation.teamId}/channels/${conversation.id}'
+                '/messages/${replyTo.id}/replies';
+    final data = await _post(path, {
+      'body': {'contentType': 'text', 'content': text},
+    });
+    return _parseMessage(data);
+  }
+
+  /// Creates (or, as both servers do for an existing pair, returns) the
+  /// one-on-one chat between the signed-in user and [email].
+  @override
+  Future<ChatConversation> createOneOnOne({
+    required String ownEmail,
+    required String email,
+    required String displayName,
+  }) async {
+    // Microsoft binds members by directory id — its reference shows no
+    // other form, and `users('{address}')` only resolves a UPN, which is not
+    // the mail address in every tenant. Nightware resolves an address itself
+    // (ADR 0009 D2). Built on the account's own Graph root: a literal
+    // Microsoft URL here would send a server account's members to Microsoft
+    // (no_hardcoded_graph_urls_test).
+    final own = isNightmailServer ? ownEmail : await _ownUserId();
+    final other = isNightmailServer ? email : await _userIdOf(email);
+    String bind(String key) =>
+        "${_root()}/users('${Uri.encodeComponent(key)}')";
+    Map<String, dynamic> member(String key) => {
+          '@odata.type': '#microsoft.graph.aadUserConversationMember',
+          'roles': ['owner'],
+          'user@odata.bind': bind(key),
+        };
+    final data = await _post('/chats', {
+      'chatType': 'oneOnOne',
+      'members': [member(own), member(other)],
+    });
+    final chat = _parseChat(data);
+    return ChatConversation(
+      id: chat?.id ?? (data['id'] as String),
+      kind: ChatKind.oneOnOne,
+      title: displayName.isNotEmpty ? displayName : email,
+      lastActivity: DateTime.now(),
+      members: [ChatMember(displayName: displayName, email: email)],
+    );
+  }
+
+  Future<String> _ownUserId() async {
+    final id = (await _get('/me', query: {r'$select': 'id'}))['id'];
+    if (id is! String) {
+      throw const ServerException(message: 'Could not read your user id.');
+    }
+    return id;
+  }
+
+  /// The directory id of whoever receives mail at [email]: the UPN first
+  /// (the common case), then `mail`, then any proxy address — an alias. A
+  /// 404 means nobody in the directory: an external address.
+  Future<String> _userIdOf(String email) async {
+    try {
+      final id = (await _get('/users/${Uri.encodeComponent(email)}',
+          query: {r'$select': 'id'}))['id'];
+      if (id is String) return id;
+    } on ServerException catch (e) {
+      if (e.statusCode != 404) rethrow;
+    }
+    final quoted = email.replaceAll("'", "''");
+    final byMail = _values(await _get('/users', query: {
+      r'$filter': "mail eq '$quoted'",
+      r'$select': 'id',
+    }));
+    if (byMail.isNotEmpty && byMail.first['id'] is String) {
+      return byMail.first['id'] as String;
+    }
+    // proxyAddresses is an advanced query: eventual consistency and $count.
+    try {
+      final r = await _dio.get<Map<String, dynamic>>('/users',
+          queryParameters: {
+            r'$filter': "proxyAddresses/any(p:p eq 'smtp:$quoted')",
+            r'$select': 'id',
+            r'$count': 'true',
+          },
+          options: Options(headers: {'ConsistencyLevel': 'eventual'}));
+      final byProxy = _values(r.data ?? const {});
+      if (byProxy.isNotEmpty && byProxy.first['id'] is String) {
+        return byProxy.first['id'] as String;
+      }
+    } on DioException catch (e) {
+      throw _map(e);
+    }
+    throw const ServerException(message: 'Not in the directory', statusCode: 404);
+  }
+
+  /// Microsoft Search over chat and channel messages. A NightMail Server does
+  /// not serve `/search/query`; the repository searches its history itself.
+  @override
+  Future<List<ChatSearchHit>> search(String query) async {
+    final data = await _post('/search/query', {
+      'requests': [
+        {
+          'entityTypes': ['chatMessage'],
+          'query': {'queryString': query},
+          'from': 0,
+          'size': 25,
+        },
+      ],
+    });
+    final hits = <ChatSearchHit>[];
+    for (final response in _list(data['value'])) {
+      for (final container in _list(response['hitsContainers'])) {
+        for (final hit in _list(container['hits'])) {
+          final resource = hit['resource'];
+          if (resource is! Map<String, dynamic>) continue;
+          final summary = hit['summary'] as String?;
+          final body = resource['body'];
+          final withBody = {
+            ...resource,
+            // Search answers carry a highlighted summary and often no body.
+            if (body is! Map || (body['content'] as String? ?? '').isEmpty)
+              'body': {
+                'contentType': 'html',
+                'content': (summary ?? '')
+                    .replaceAll(RegExp(r'</?c0>'), '')
+                    .replaceAll('<ddd/>', '…'),
+              },
+          };
+          final channel = resource['channelIdentity'];
+          hits.add(ChatSearchHit(
+            message: _parseMessage(withBody),
+            chatId: resource['chatId'] as String?,
+            teamId: channel is Map ? channel['teamId'] as String? : null,
+            channelId: channel is Map ? channel['channelId'] as String? : null,
+          ));
+        }
+      }
+    }
+    return hits;
+  }
+
+  // ---- parsing ------------------------------------------------------------
+
+  ChatConversation? _parseChat(Map<String, dynamic> raw) {
+    final id = raw['id'] as String?;
+    if (id == null) return null;
+    final kind = switch (raw['chatType']) {
+      'oneOnOne' => ChatKind.oneOnOne,
+      'meeting' => ChatKind.meeting,
+      _ => ChatKind.group,
+    };
+    final members = _list(raw['members'])
+        .map((m) => ChatMember(
+              displayName: (m['displayName'] as String?) ?? '',
+              userId: m['userId'] as String?,
+              email: (m['email'] as String?)?.trim().toLowerCase(),
+            ))
+        .toList();
+    final others = members
+        .where((m) => m.email == null || !_own.contains(m.email))
+        .toList();
+    final topic = (raw['topic'] as String?)?.trim();
+    final title = topic != null && topic.isNotEmpty && kind != ChatKind.oneOnOne
+        ? topic
+        : others.isNotEmpty
+            ? others
+                .map((m) => m.displayName.isNotEmpty
+                    ? m.displayName
+                    : (m.email ?? ''))
+                .where((n) => n.isNotEmpty)
+                .join(', ')
+            : (topic?.isNotEmpty ?? false)
+                ? topic!
+                : 'Chat';
+    final preview = raw['lastMessagePreview'];
+    final previewAt = preview is Map<String, dynamic>
+        ? _date(preview['createdDateTime'])
+        : null;
+    return ChatConversation(
+      id: id,
+      kind: kind,
+      title: title.isEmpty ? 'Chat' : title,
+      lastActivity: previewAt ??
+          _date(raw['lastUpdatedDateTime']) ??
+          _date(raw['createdDateTime']),
+      lastMessagePreview:
+          preview is Map<String, dynamic> ? _previewOf(preview) : null,
+      members: others,
+    );
+  }
+
+  ChatMessage _parseMessage(Map<String, dynamic> raw) {
+    final from = raw['from'];
+    // A search hit names its sender as an email address, not a user.
+    final user = from is Map
+        ? from['user'] ??
+            from['application'] ??
+            (from['emailAddress'] is Map
+                ? {'displayName': (from['emailAddress'] as Map)['name']}
+                : null)
+        : null;
+    final body = raw['body'];
+    final contentType = body is Map ? body['contentType'] as String? : null;
+    var content = body is Map ? (body['content'] as String?) ?? '' : '';
+    if (contentType == 'text') content = _escape(content);
+    final isSystem = raw['messageType'] == 'systemEventMessage' ||
+        raw['messageType'] == 'unknownFutureValue';
+    if (isSystem) content = _escape(_describeEvent(raw['eventDetail']));
+
+    final reactionCounts = <String, int>{};
+    for (final r in _list(raw['reactions'])) {
+      final type = _reactionEmoji(r['reactionType'] as String?);
+      if (type != null) reactionCounts[type] = (reactionCounts[type] ?? 0) + 1;
+    }
+
+    final replies = _list(raw['replies']).map(_parseMessage).toList()
+      ..sort((a, b) => a.createdAt.compareTo(b.createdAt));
+
+    return ChatMessage(
+      id: raw['id'] as String? ?? '',
+      createdAt: _date(raw['createdDateTime']) ?? DateTime.now(),
+      senderName: (user is Map ? user['displayName'] as String? : null) ?? '',
+      senderUserId: user is Map ? user['id'] as String? : null,
+      bodyHtml: content,
+      replyToId: raw['replyToId'] as String?,
+      subject: (raw['subject'] as String?)?.trim().isEmpty ?? true
+          ? null
+          : raw['subject'] as String,
+      editedAt: _date(raw['lastEditedDateTime']),
+      isDeleted: raw['deletedDateTime'] != null,
+      isSystem: isSystem,
+      reactions: [
+        for (final e in reactionCounts.entries)
+          ChatReaction(emoji: e.key, count: e.value),
+      ],
+      replies: replies,
+      replyCount: raw['replies@odata.count'] as int?,
+      attachmentNames: [
+        for (final a in _list(raw['attachments']))
+          // A quoted reply in a chat travels as a messageReference
+          // attachment; it is not a file.
+          if (a['contentType'] != 'messageReference' &&
+              (a['name'] as String?)?.isNotEmpty == true)
+            a['name'] as String,
+      ],
+    );
+  }
+
+  static String? _reactionEmoji(String? type) => switch (type) {
+        null || '' => null,
+        'like' => '👍',
+        'heart' => '❤️',
+        'laugh' => '😆',
+        'surprised' => '😮',
+        'sad' => '😢',
+        'angry' => '😠',
+        _ => type,
+      };
+
+  static String _describeEvent(Object? detail) {
+    if (detail is! Map) return 'Conversation updated';
+    final type = (detail['@odata.type'] as String? ?? '').split('.').last;
+    String names(Object? members) => _list(members)
+        .map((m) => m['displayName'] as String? ?? '')
+        .where((n) => n.isNotEmpty)
+        .join(', ');
+    return switch (type) {
+      'membersAddedEventMessageDetail' =>
+        'Added ${names(detail['members'])}'.trim(),
+      'membersDeletedEventMessageDetail' =>
+        'Removed ${names(detail['members'])}'.trim(),
+      'chatRenamedEventMessageDetail' =>
+        'Renamed to "${detail['chatDisplayName'] ?? ''}"',
+      'callEndedEventMessageDetail' => 'Call ended',
+      'callStartedEventMessageDetail' => 'Call started',
+      'channelAddedEventMessageDetail' => 'Channel created',
+      _ => 'Conversation updated',
+    };
+  }
+
+  String _previewOf(Map<String, dynamic> raw) {
+    final body = raw['body'];
+    final text = body is Map ? (body['content'] as String?) ?? '' : '';
+    final plain = (body is Map && body['contentType'] == 'text')
+        ? text
+        : htmlToPlainText(text);
+    return plain.replaceAll(RegExp(r'\s+'), ' ').trim();
+  }
+
+  static String _escape(String s) => s
+      .replaceAll('&', '&amp;')
+      .replaceAll('<', '&lt;')
+      .replaceAll('>', '&gt;')
+      .replaceAll('\n', '<br>');
+
+  static DateTime? _date(Object? v) =>
+      v is String ? DateTime.tryParse(v)?.toLocal() : null;
+
+  static List<Map<String, dynamic>> _list(Object? v) => v is List
+      ? v.whereType<Map<String, dynamic>>().toList()
+      : const [];
+
+  static List<Map<String, dynamic>> _values(Map<String, dynamic> data) =>
+      _list(data['value']);
+
+  // ---- transport ----------------------------------------------------------
+
+  String _root() {
+    final base = _dio.options.baseUrl;
+    return base.endsWith('/') ? base.substring(0, base.length - 1) : base;
+  }
+
+  /// A server's nextLink is followed only on the account's own Graph root —
+  /// it is requested with the account's bearer token.
+  String? _nextLink(Map<String, dynamic> data) {
+    final link = data['@odata.nextLink'] as String?;
+    if (link == null) return null;
+    final root = Uri.tryParse(_root());
+    final next = Uri.tryParse(link);
+    if (root == null || next == null) return null;
+    if (next.scheme != root.scheme ||
+        next.host != root.host ||
+        next.port != root.port) {
+      return null;
+    }
+    return link;
+  }
+
+  Future<Map<String, dynamic>> _get(
+    String path, {
+    Map<String, dynamic>? query,
+  }) async {
+    try {
+      final r =
+          await _dio.get<Map<String, dynamic>>(path, queryParameters: query);
+      return r.data ?? const {};
+    } on DioException catch (e) {
+      throw _map(e);
+    }
+  }
+
+  Future<Map<String, dynamic>> _post(
+    String path,
+    Map<String, dynamic> body,
+  ) async {
+    try {
+      final r = await _dio.post<Map<String, dynamic>>(path, data: body);
+      return r.data ?? const {};
+    } on DioException catch (e) {
+      throw _map(e);
+    }
+  }
+
+  /// The same mapping as `GraphApiDatasourceImpl._mapDioException`.
+  static Exception _map(DioException e) {
+    if (e.error is AuthException) return e.error as AuthException;
+    if (e.error is NetworkException) return e.error as NetworkException;
+    if (e.type == DioExceptionType.connectionError ||
+        e.type == DioExceptionType.connectionTimeout ||
+        e.type == DioExceptionType.receiveTimeout) {
+      return NetworkException(message: e.message ?? 'Network error');
+    }
+    final status = e.response?.statusCode;
+    String? message;
+    final data = e.response?.data;
+    if (data is Map && data['error'] is Map) {
+      message = (data['error'] as Map)['message'] as String?;
+    }
+    if (status == 401) {
+      return AuthException(message: message ?? 'Authentication required');
+    }
+    return ServerException(
+      message: message ??
+          (status != null ? 'Server error ($status)' : 'Unknown server error'),
+      statusCode: status,
+    );
+  }
+}

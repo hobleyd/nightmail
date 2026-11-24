@@ -1,0 +1,351 @@
+import 'dart:convert';
+import 'dart:typed_data';
+
+import 'package:dio/dio.dart';
+import 'package:flutter_test/flutter_test.dart';
+import 'package:nightmail/core/error/exceptions.dart';
+import 'package:nightmail/data/datasources/remote/graph_chat_datasource.dart';
+import 'package:nightmail/domain/entities/chat.dart';
+
+/// The chat datasource talks to Microsoft and to a NightMail Server with one
+/// set of requests, so what it asks for is pinned to what both accept
+/// (nightware ADR 0009): no `$filter`, newest-first ordering only, `$top` at
+/// most 50, members bound by address on the account's own Graph root.
+void main() {
+  const root = 'https://mail.example.com/graph/v1.0';
+  late List<RequestOptions> requests;
+  late Map<String, Object? Function(RequestOptions)> routes;
+
+  GraphChatDatasource datasource({bool server = true}) {
+    final dio = Dio(BaseOptions(baseUrl: root))
+      ..httpClientAdapter = _StubAdapter((o) async {
+        requests.add(o);
+        final handler = routes.entries
+            .where((e) => o.uri.path.endsWith(e.key))
+            .firstOrNull
+            ?.value;
+        if (handler == null) {
+          return ResponseBody.fromString('{"error":{"message":"nope"}}', 404,
+              headers: _json);
+        }
+        final body = handler(o);
+        if (body is int) {
+          return ResponseBody.fromString(
+              '{"error":{"message":"status $body"}}', body,
+              headers: _json);
+        }
+        return ResponseBody.fromString(jsonEncode(body), 200, headers: _json);
+      });
+    return GraphChatDatasource(
+      dio: dio,
+      ownAddresses: {'me@example.com'},
+      isNightmailServer: server,
+    );
+  }
+
+  setUp(() {
+    requests = [];
+    routes = {};
+  });
+
+  test('lists chats without \$filter, newest first, titled by the others', () async {
+    routes['/me/chats'] = (_) => {
+          'value': [
+            {
+              'id': '19:a',
+              'chatType': 'oneOnOne',
+              'topic': null,
+              'lastUpdatedDateTime': '2026-11-20T00:00:00Z',
+              'members': [
+                {'displayName': 'Me', 'email': 'ME@example.com'},
+                {'displayName': 'Bob', 'email': 'Bob@Example.com', 'userId': 'b'},
+              ],
+              'lastMessagePreview': {
+                'createdDateTime': '2026-11-23T01:00:00Z',
+                'body': {'contentType': 'html', 'content': '<p>Hi&nbsp;there</p>'},
+              },
+            },
+            {
+              'id': '19:g',
+              'chatType': 'group',
+              'topic': 'Launch',
+              'members': [],
+            },
+          ],
+        };
+    final chats = await datasource().listChats();
+
+    final q = requests.single.uri.queryParameters;
+    expect(q.containsKey(r'$filter'), isFalse);
+    expect(q[r'$orderby'], 'lastMessagePreview/createdDateTime desc');
+    expect(int.parse(q[r'$top']!), lessThanOrEqualTo(50));
+
+    expect(chats.first.kind, ChatKind.oneOnOne);
+    expect(chats.first.title, 'Bob');
+    expect(chats.first.members.single.email, 'bob@example.com');
+    expect(chats.first.lastMessagePreview, 'Hi there');
+    expect(chats.first.lastActivity,
+        DateTime.parse('2026-11-23T01:00:00Z').toLocal());
+    expect(chats[1].title, 'Launch');
+  });
+
+  test('never follows a nextLink to another host with the bearer token',
+      () async {
+    routes['/me/chats'] = (_) => {
+          'value': <Object>[],
+          '@odata.nextLink': 'https://evil.example.net/me/chats?page=2',
+        };
+    await datasource().listChats();
+    expect(requests, hasLength(1));
+  });
+
+  test('Microsoft binds members by directory id, resolved by address',
+      () async {
+    Map<String, dynamic>? sent;
+    routes['/me'] = (_) => {'id': 'me-id'};
+    // bob's UPN is not his mail address: the UPN lookup misses, mail finds him.
+    routes['/users/bob%40example.com'] = (_) => 404;
+    routes['/users'] = (o) => {
+          'value': [
+            {'id': 'bob-id'}
+          ],
+        };
+    routes['/chats'] = (o) {
+      sent = o.data as Map<String, dynamic>;
+      return {'id': '19:new', 'chatType': 'oneOnOne'};
+    };
+    await datasource(server: false).createOneOnOne(
+      ownEmail: 'me@example.com',
+      email: 'bob@example.com',
+      displayName: 'Bob',
+    );
+    expect(
+      [for (final m in sent!['members'] as List) m['user@odata.bind']],
+      ["$root/users('me-id')", "$root/users('bob-id')"],
+    );
+    final byMail = requests.firstWhere((r) =>
+        r.uri.path.endsWith('/users') &&
+        (r.uri.queryParameters[r'$filter'] ?? '').startsWith('mail eq'));
+    expect(byMail.uri.queryParameters[r'$filter'], "mail eq 'bob@example.com'");
+  });
+
+  test('Microsoft: an address nobody in the directory has is a 404',
+      () async {
+    routes['/me'] = (_) => {'id': 'me-id'};
+    routes['/users'] = (_) => {'value': <Object>[]};
+    await expectLater(
+      datasource(server: false).createOneOnOne(
+        ownEmail: 'me@example.com',
+        email: 'stranger@other.example',
+        displayName: 'Stranger',
+      ),
+      throwsA(isA<ServerException>()
+          .having((e) => e.statusCode, 'statusCode', 404)),
+    );
+  });
+
+  test('a Graph that refuses both expansions at once gets two listings',
+      () async {
+    routes['/me/chats'] = (o) {
+      final expand = o.uri.queryParameters[r'$expand'];
+      if (expand == 'members,lastMessagePreview') return 400;
+      if (expand == 'members') {
+        return {
+          'value': [
+            {
+              'id': '19:a',
+              'members': [
+                {'displayName': 'Bob', 'email': 'bob@example.com'},
+              ],
+            },
+          ],
+        };
+      }
+      return {
+        'value': [
+          {
+            'id': '19:a',
+            'chatType': 'oneOnOne',
+            'lastMessagePreview': {
+              'createdDateTime': '2026-11-23T01:00:00Z',
+              'body': {'contentType': 'text', 'content': 'hey'},
+            },
+          },
+        ],
+      };
+    };
+    final chats = await datasource(server: false).listChats();
+    expect(chats.single.title, 'Bob');
+    expect(chats.single.lastMessagePreview, 'hey');
+  });
+
+  test('a search hit names its sender by email address', () async {
+    routes['/search/query'] = (o) {
+      final request = ((o.data as Map)['requests'] as List).single as Map;
+      expect(request['size'], lessThanOrEqualTo(25));
+      return {
+        'value': [
+          {
+            'hitsContainers': [
+              {
+                'hits': [
+                  {
+                    'summary': 'the <c0>launch</c0> plan',
+                    'resource': {
+                      'id': '1',
+                      'createdDateTime': '2026-11-23T01:00:00Z',
+                      'from': {
+                        'emailAddress': {
+                          'name': 'Bob',
+                          'address': 'bob@example.com'
+                        }
+                      },
+                      'channelIdentity': {},
+                      'chatId': '19:a',
+                    },
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+      };
+    };
+    final hits = await datasource(server: false).search('launch');
+    expect(hits.single.message.senderName, 'Bob');
+    expect(hits.single.message.bodyHtml, 'the launch plan');
+    expect(hits.single.conversationKey, '19:a');
+  });
+
+  test('a NightMail Server binds members by address on its own root',
+      () async {
+    Map<String, dynamic>? sent;
+    routes['/chats'] = (o) {
+      sent = o.data as Map<String, dynamic>;
+      return {'id': '19:new', 'chatType': 'oneOnOne'};
+    };
+    final chat = await datasource().createOneOnOne(
+      ownEmail: 'me@example.com',
+      email: 'bob@example.com',
+      displayName: 'Bob',
+    );
+    final binds = [
+      for (final m in sent!['members'] as List) m['user@odata.bind'] as String,
+    ];
+    expect(binds, [
+      "$root/users('me%40example.com')",
+      "$root/users('bob%40example.com')",
+    ]);
+    expect(sent!['chatType'], 'oneOnOne');
+    expect(chat.id, '19:new');
+    expect(chat.title, 'Bob');
+  });
+
+  test('channel posts carry their replies, oldest first', () async {
+    routes['/messages'] = (_) => {
+          'value': [
+            {
+              'id': '1',
+              'createdDateTime': '2026-11-23T01:00:00Z',
+              'subject': 'Plan',
+              'from': {
+                'user': {'displayName': 'Ann', 'id': 'a'}
+              },
+              'body': {'contentType': 'text', 'content': 'a < b\nc'},
+              'replies': [
+                {
+                  'id': '3',
+                  'createdDateTime': '2026-11-23T03:00:00Z',
+                  'body': {'contentType': 'html', 'content': 'later'},
+                },
+                {
+                  'id': '2',
+                  'createdDateTime': '2026-11-23T02:00:00Z',
+                  'body': {'contentType': 'html', 'content': 'first'},
+                },
+              ],
+              'reactions': [
+                {'reactionType': 'like'},
+                {'reactionType': 'like'},
+              ],
+            },
+          ],
+        };
+    final page = await datasource().messages(const ChatConversation(
+      id: 'c',
+      kind: ChatKind.channel,
+      title: 'General',
+      teamId: 't',
+    ));
+    expect(requests.single.uri.path, endsWith('/teams/t/channels/c/messages'));
+    expect(requests.single.uri.queryParameters[r'$expand'], 'replies');
+    final post = page.messages.single;
+    expect(post.subject, 'Plan');
+    expect(post.bodyHtml, 'a &lt; b<br>c');
+    expect(post.replies.map((r) => r.id), ['2', '3']);
+    expect(post.reactions.single, const ChatReaction(emoji: '👍', count: 2));
+  });
+
+  test('a reply in a channel goes to the post\'s replies', () async {
+    routes['/replies'] = (_) => {
+          'id': '9',
+          'createdDateTime': '2026-11-23T01:00:00Z',
+          'body': {'contentType': 'text', 'content': 'ok'},
+        };
+    await datasource().send(
+      const ChatConversation(
+          id: 'c', kind: ChatKind.channel, title: 'G', teamId: 't'),
+      'ok',
+      replyTo: ChatMessage(
+          id: '1', createdAt: DateTime(2026), senderName: '', bodyHtml: ''),
+    );
+    expect(requests.single.uri.path,
+        endsWith('/teams/t/channels/c/messages/1/replies'));
+    expect((requests.single.data as Map)['body'],
+        {'contentType': 'text', 'content': 'ok'});
+  });
+
+  test('a team the user cannot list does not hide the others', () async {
+    routes['/me/joinedTeams'] = (_) => {
+          'value': [
+            {'id': 'locked', 'displayName': 'Locked'},
+            {'id': 'open', 'displayName': 'Open'},
+          ],
+        };
+    routes['/teams/locked/channels'] = (_) => 403;
+    routes['/teams/open/channels'] = (_) => {
+          'value': [
+            {'id': 'c1', 'displayName': 'General'},
+          ],
+        };
+    final channels = await datasource().listChannels();
+    expect(channels.single.teamName, 'Open');
+    expect(channels.single.key, 'open/c1');
+  });
+
+  test('a 401 surfaces as an AuthException', () async {
+    routes['/me/chats'] = (_) => 401;
+    expect(datasource().listChats(), throwsA(isA<AuthException>()));
+  });
+}
+
+const _json = {
+  Headers.contentTypeHeader: [Headers.jsonContentType],
+};
+
+class _StubAdapter implements HttpClientAdapter {
+  _StubAdapter(this._respond);
+
+  final Future<ResponseBody> Function(RequestOptions) _respond;
+
+  @override
+  Future<ResponseBody> fetch(
+    RequestOptions options,
+    Stream<Uint8List>? requestStream,
+    Future<void>? cancelFuture,
+  ) =>
+      _respond(options);
+
+  @override
+  void close({bool force = false}) {}
+}

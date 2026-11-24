@@ -51,6 +51,13 @@ abstract interface class ContactCacheLocalDatasource {
 
   Future<ContactSyncStatus?> syncStatus(String accountId);
 
+  /// Which of [addresses] (lower-cased) are in [accountId]'s cached
+  /// organisation directory ([ContactSource.directory]).
+  Future<Set<String>> directoryAddresses({
+    required String accountId,
+    required Iterable<String> addresses,
+  });
+
   /// True once [accountId] has at least one cached row — the signal the
   /// typeahead uses to decide whether it can trust the cache yet.
   Future<bool> hasContacts(String accountId);

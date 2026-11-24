@@ -37,6 +37,7 @@ import 'presentation/pages/email_view_window.dart';
 import 'presentation/pages/event_edit_window.dart';
 import 'presentation/pages/image_view_window.dart';
 import 'presentation/pages/meeting_reminders_window.dart';
+import 'presentation/pages/chat_window.dart';
 import 'presentation/pages/tasks_window.dart';
 import 'presentation/pages/home_page.dart';
 
@@ -228,6 +229,14 @@ void main(List<String> args) async {
         const WindowOptions(size: Size(640, 520), center: true, title: 'Tasks'),
       );
       runApp(const TasksWindowApp());
+      return;
+    }
+
+    if (arguments['type'] == 'chat') {
+      await showSubWindow(
+        const WindowOptions(size: Size(1000, 680), center: true, title: 'Chat'),
+      );
+      runApp(const ChatWindowApp());
       return;
     }
 

@@ -253,6 +253,33 @@ class MicrosoftAuthService implements AuthService {
         s == threatSubmissionScope || s == 'ThreatSubmission.ReadWrite');
   }
 
+  /// Teams chats: listing them, reading and sending messages, starting a
+  /// one-on-one. Requested incrementally — see [extraScopes] — the first time
+  /// the Chat pane or window is opened on a Microsoft account. User-consentable,
+  /// so it is asked for alone and never waits on [channelScopes].
+  static const chatScope = 'https://graph.microsoft.com/Chat.ReadWrite';
+
+  /// Whether a token's granted `scope` carries [chatScope]. Whole tokens:
+  /// `Chat.Read` is a prefix of it.
+  static bool grantsChat(String? scope) =>
+      _hasScope(scope, chatScope, 'Chat.ReadWrite');
+
+  /// Team channels: the teams and channels the user is in, their posts and
+  /// replies. Asked for separately from [chatScope] because
+  /// `ChannelMessage.Read.All` is *admin consent required* — one request
+  /// carrying it fails outright (AADSTS65001) in a tenant whose administrator
+  /// has not approved it, and chats must still work there.
+  static const channelScopes = [
+    'https://graph.microsoft.com/Team.ReadBasic.All',
+    'https://graph.microsoft.com/Channel.ReadBasic.All',
+    'https://graph.microsoft.com/ChannelMessage.Read.All',
+    'https://graph.microsoft.com/ChannelMessage.Send',
+  ];
+
+  /// Whether a token carries every one of [channelScopes].
+  static bool grantsChannels(String? scope) => channelScopes.every(
+      (full) => _hasScope(scope, full, full.split('/').last));
+
   /// The scopes a refresh must ask for: the base set, plus any incremental
   /// scope this token already carries.
   ///
@@ -273,6 +300,8 @@ class MicrosoftAuthService implements AuthService {
           if (grantsMailboxSettingsWrite(token.scope))
             mailboxSettingsWriteScope,
           if (grantsThreatSubmission(token.scope)) threatSubmissionScope,
+          if (grantsChat(token.scope)) chatScope,
+          if (grantsChannels(token.scope)) ...channelScopes,
         ]
       : _serverScopes;
 

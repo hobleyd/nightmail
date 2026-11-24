@@ -206,6 +206,28 @@ class GmailAuthService implements AuthService {
         granted.contains('https://mail.google.com');
   }
 
+  /// Google Chat as the user: listing spaces and their members, finding and
+  /// starting a direct message, reading and sending messages. Requested
+  /// incrementally — see [extraScopes] — the first time Chat is opened on a
+  /// Workspace account; never on `@gmail.com`, whose accounts Chat's API does
+  /// not serve. `chat.spaces.create` rather than `chat.spaces`: starting a DM
+  /// needs no power to rename or delete spaces.
+  static const chatScopes = [
+    'https://www.googleapis.com/auth/chat.spaces.readonly',
+    'https://www.googleapis.com/auth/chat.spaces.create',
+    'https://www.googleapis.com/auth/chat.messages',
+    'https://www.googleapis.com/auth/chat.memberships.readonly',
+  ];
+
+  /// Whether a token's granted `scope` carries every one of [chatScopes].
+  /// Exact membership: `chat.messages` is a prefix of
+  /// `chat.messages.readonly`, which cannot send.
+  static bool grantsChat(String? scope) {
+    if (scope == null || scope.isEmpty) return false;
+    final granted = scope.split(RegExp(r'\s+')).toSet();
+    return chatScopes.every(granted.contains);
+  }
+
   static const _roomDirectoryScope =
       'https://www.googleapis.com/auth/admin.directory.resource.calendar.readonly';
 

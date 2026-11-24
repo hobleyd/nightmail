@@ -22,6 +22,14 @@ class ContactCacheRepositoryImpl implements ContactCacheRepository {
       );
 
   @override
+  Future<Set<String>> directoryAddresses({
+    required String accountId,
+    required Iterable<String> addresses,
+  }) =>
+      _localDatasource.directoryAddresses(
+          accountId: accountId, addresses: addresses);
+
+  @override
   Future<bool> hasSyncedAccount(String accountId) async =>
       await _localDatasource.syncStatus(accountId) != null;
 }

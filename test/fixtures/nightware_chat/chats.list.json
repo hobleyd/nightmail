@@ -1,0 +1,56 @@
+{
+  "operationId": "chats.list",
+  "provenance": "Graph v1.0 reference (https://learn.microsoft.com/graph/api/chat-list); constructed with example.com data and Talk-shaped ids (ADR 0009 D2), no tenant capture yet",
+  "request": {
+    "method": "GET",
+    "path": "/v1.0/me/chats",
+    "query": {
+      "$top": "2"
+    },
+    "headers": {
+      "Accept": "application/json",
+      "Authorization": "Bearer {token}"
+    },
+    "body": null
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "Content-Type": "application/json;odata.metadata=minimal;odata.streaming=true;IEEE754Compatible=false;charset=utf-8"
+    },
+    "body": {
+      "@odata.context": "https://graph.microsoft.com/v1.0/$metadata#chats",
+      "value": [
+        {
+          "id": "5opkrcg6",
+          "topic": "Project review",
+          "createdDateTime": null,
+          "lastUpdatedDateTime": "2026-11-21T10:35:00Z",
+          "chatType": "group",
+          "webUrl": "https://cloud.example.com/call/5opkrcg6",
+          "viewpoint": {
+            "isHidden": false,
+            "lastMessageReadDateTime": "2026-11-21T10:35:00Z"
+          },
+          "onlineMeetingInfo": null,
+          "isHiddenForAllMembers": false
+        },
+        {
+          "id": "nge9dkks",
+          "topic": null,
+          "createdDateTime": null,
+          "lastUpdatedDateTime": "2026-11-21T10:30:00Z",
+          "chatType": "oneOnOne",
+          "webUrl": "https://cloud.example.com/call/nge9dkks",
+          "viewpoint": {
+            "isHidden": true,
+            "lastMessageReadDateTime": null
+          },
+          "onlineMeetingInfo": null,
+          "isHiddenForAllMembers": false
+        }
+      ],
+      "@odata.nextLink": "https://graph.microsoft.com/v1.0/me/chats?$top=2&$skiptoken=2"
+    }
+  }
+}

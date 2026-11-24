@@ -319,6 +319,7 @@ void main() {
               onTasksTapped: () {},
               onAiTapped: () {},
               onCommitmentsTapped: () {},
+              onChatTapped: () {},
               initialExpandedIds: expanded,
             ),
           ),

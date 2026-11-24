@@ -51,6 +51,9 @@ import '../blocs/email_list/email_list_state.dart';
 import '../widgets/contacts_access_notice.dart';
 import '../widgets/meeting_reminder_host.dart';
 import '../widgets/ai_day_panel.dart';
+import '../widgets/chat/chat_panel.dart';
+import '../../infrastructure/accounts/account_manager.dart';
+import '../../infrastructure/accounts/chat_consent_channel.dart';
 import '../widgets/email_list_panel.dart';
 import '../widgets/email_selection.dart';
 import '../widgets/folder_panel.dart';
@@ -94,6 +97,8 @@ class HomePage extends StatelessWidget {
       await sl<CalendarReminderService>().reconcileAll();
       await sl<TaskReminderService>().reconcileAll();
     }));
+    // The chat window's consent sign-ins run here, where the accounts live.
+    unawaited(ChatConsentChannel.listen(sl<AccountManager>().requestChatAccess));
     return MultiBlocProvider(
       providers: [
         BlocProvider.value(value: sl<AccountCubit>()),
@@ -724,7 +729,7 @@ class _MobileLayoutState extends State<_MobileLayout> {
     _nav?.pushNamed(_MobileRoute.readingPane);
   }
 
-  // The Calendar, Tasks and AI views, each pushed as a full-screen route over
+  // The Calendar, Tasks, AI, Commitments and Chat views, each pushed as a full-screen route over
   // whichever screen is showing. Shared by the folder panel's foot and the
   // email list's, so the two cannot open them differently.
 
@@ -822,6 +827,30 @@ class _MobileLayoutState extends State<_MobileLayout> {
     );
   }
 
+  void _openChat() {
+    final emailDetailBloc = context.read<EmailDetailBloc>();
+    final accountCubit = context.read<AccountCubit>();
+    _nav?.push<void>(
+      MaterialPageRoute(
+        fullscreenDialog: true,
+        builder: (ctx) => Scaffold(
+          body: SafeArea(
+            child: MultiBlocProvider(
+              providers: [
+                BlocProvider.value(value: emailDetailBloc),
+                BlocProvider.value(value: accountCubit),
+              ],
+              child: ChatPanel(
+                onClose: () => Navigator.of(ctx).pop(),
+                useBackNavigation: true,
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
   void _openAi() {
     final aiFolderCubit = context.read<AiFolderCubit>();
     final emailListBloc = context.read<EmailListBloc>();
@@ -877,6 +906,7 @@ class _MobileLayoutState extends State<_MobileLayout> {
           onTasksTapped: _openTasks,
           onAiTapped: _openAi,
           onCommitmentsTapped: _openCommitments,
+          onChatTapped: _openChat,
           onFolderChosen: _showEmailList,
         ),
       _MobileRoute.emailList => _EmailListScreen(
@@ -885,6 +915,7 @@ class _MobileLayoutState extends State<_MobileLayout> {
           onTasksTapped: _openTasks,
           onAiTapped: _openAi,
           onCommitmentsTapped: _openCommitments,
+          onChatTapped: _openChat,
           onEmailOpened: _showReadingPane,
         ),
       _MobileRoute.thread => _EmailListScreen(
@@ -893,6 +924,7 @@ class _MobileLayoutState extends State<_MobileLayout> {
           onTasksTapped: _back,
           onAiTapped: _openAi,
           onCommitmentsTapped: _openCommitments,
+          onChatTapped: _openChat,
           onEmailOpened: _showReadingPane,
         ),
       _MobileRoute.readingPane => ReadingPane(onBack: _back),
@@ -1017,6 +1049,7 @@ class _FoldersScreen extends StatelessWidget {
     required this.onTasksTapped,
     required this.onAiTapped,
     required this.onCommitmentsTapped,
+    required this.onChatTapped,
     required this.onFolderChosen,
   });
 
@@ -1024,6 +1057,7 @@ class _FoldersScreen extends StatelessWidget {
   final VoidCallback onTasksTapped;
   final VoidCallback onAiTapped;
   final VoidCallback onCommitmentsTapped;
+  final VoidCallback onChatTapped;
   final VoidCallback onFolderChosen;
 
   @override
@@ -1059,6 +1093,7 @@ class _FoldersScreen extends StatelessWidget {
           onTasksTapped: onTasksTapped,
           onAiTapped: onAiTapped,
           onCommitmentsTapped: onCommitmentsTapped,
+          onChatTapped: onChatTapped,
         );
       },
     );
@@ -1073,6 +1108,7 @@ class _EmailListScreen extends StatelessWidget {
     required this.onTasksTapped,
     required this.onAiTapped,
     required this.onCommitmentsTapped,
+    required this.onChatTapped,
     required this.onEmailOpened,
   });
 
@@ -1081,6 +1117,7 @@ class _EmailListScreen extends StatelessWidget {
   final VoidCallback onTasksTapped;
   final VoidCallback onAiTapped;
   final VoidCallback onCommitmentsTapped;
+  final VoidCallback onChatTapped;
   final VoidCallback onEmailOpened;
 
   @override
@@ -1105,6 +1142,7 @@ class _EmailListScreen extends StatelessWidget {
               onTasksTapped: onTasksTapped,
               onAiTapped: onAiTapped,
               onCommitmentsTapped: onCommitmentsTapped,
+              onChatTapped: onChatTapped,
             );
           },
         );
@@ -1352,6 +1390,13 @@ class _ThreePanelLayoutState extends State<_ThreePanelLayout> {
                   homeCubit.showCommitments();
                 }
               },
+              onChatTapped: () {
+                if (homeState.view == HomeView.chat) {
+                  homeCubit.showEmail();
+                } else {
+                  homeCubit.showChat();
+                }
+              },
             );
 
             if (homeState.view == HomeView.commitments) {
@@ -1508,7 +1553,8 @@ class _ThreePanelLayoutState extends State<_ThreePanelLayout> {
               );
             }
 
-            if (homeState.view == HomeView.tasks) {
+            if (homeState.view == HomeView.tasks ||
+                homeState.view == HomeView.chat) {
               return Row(
                 children: [
                   SizedBox(width: _folderWidth, child: folderPanel),
@@ -1565,9 +1611,15 @@ class _ThreePanelLayoutState extends State<_ThreePanelLayout> {
                   ),
                   SizedBox(
                     width: calendarWidth,
-                    child: TasksDayPanel(
-                      onClose: () => context.read<HomeCubit>().showEmail(),
-                    ),
+                    child: homeState.view == HomeView.chat
+                        ? ChatPanel(
+                            onClose: () =>
+                                context.read<HomeCubit>().showEmail(),
+                          )
+                        : TasksDayPanel(
+                            onClose: () =>
+                                context.read<HomeCubit>().showEmail(),
+                          ),
                   ),
                 ],
               );

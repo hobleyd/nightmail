@@ -91,6 +91,38 @@ void main() {
         everyElement(isNot(ChatPersonStyle.ownSlot)));
   });
 
+  testWidgets('a deleted message is one line, with no sender', (tester) async {
+    final repo = _Repo([
+      msg('2', 'Ann Lee', 'u-ann', 2),
+      ChatMessage(
+        id: '1',
+        createdAt: DateTime(2026, 11, 25, 10, 1),
+        senderName: '',
+        bodyHtml: '',
+        isDeleted: true,
+      ),
+    ]);
+    final cubit = ChatConversationCubit(repository: repo);
+    await cubit.open('a', const ChatConversation(
+        id: 'c', kind: ChatKind.group, title: 'G'));
+    await tester.pumpWidget(MaterialApp(
+      home: Scaffold(
+        body: BlocProvider.value(
+          value: cubit,
+          child: const ChatConversationView(),
+        ),
+      ),
+    ));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Deleted message'), findsOneWidget);
+    expect(find.text('Unknown'), findsNothing);
+    expect(find.text('This message was deleted.'), findsNothing);
+    // Ann's message after it still heads its own run.
+    expect(find.byType(ChatAvatar), findsOneWidget);
+    await cubit.close();
+  });
+
   group('reading a chat', () {
     const chat = ChatConversation(id: 'c', kind: ChatKind.group, title: 'G');
 

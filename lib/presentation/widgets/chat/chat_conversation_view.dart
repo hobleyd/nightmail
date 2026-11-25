@@ -194,6 +194,7 @@ class _HistoryState extends State<_History> {
           final grouped = !widget.isChannel &&
               !newDay &&
               !older.isSystem &&
+              !older.isDeleted &&
               older.senderName == m.senderName &&
               m.createdAt.difference(older.createdAt).inMinutes < 5;
           return Column(
@@ -282,17 +283,44 @@ class _MessageTile extends StatelessWidget {
         ),
       );
     }
-    final body = m.isDeleted
-        ? Text('This message was deleted.',
-            style: TextStyle(
-                fontSize: 13,
-                color: c.textMuted,
-                fontStyle: FontStyle.italic))
-        : ChatMessageBody(
-            html: m.bodyHtml,
-            style: TextStyle(fontSize: 13, height: 1.35, color: c.textBody),
-            loadImage: context.read<ChatConversationCubit>().image,
-          );
+    // One muted line, without a sender — providers send a deleted message
+    // without one, which read "Unknown" over "This message was deleted."
+    // A channel post keeps its way into the replies it still has.
+    if (m.isDeleted) {
+      return Padding(
+        padding: const EdgeInsets.fromLTRB(50, 3, 12, 3),
+        child: Row(
+          children: [
+            Icon(Icons.block, size: 12, color: c.textMuted),
+            const SizedBox(width: 5),
+            Text('Deleted message',
+                style: TextStyle(
+                    fontSize: 12,
+                    color: c.textMuted,
+                    fontStyle: FontStyle.italic)),
+            if (isPost && m.totalReplies > 0) ...[
+              const SizedBox(width: 8),
+              InkWell(
+                onTap: () =>
+                    context.read<ChatConversationCubit>().openThread(m.id),
+                child: Text(
+                  m.totalReplies == 1 ? '1 reply' : '${m.totalReplies} replies',
+                  style: const TextStyle(
+                      fontSize: 12,
+                      color: AppColors.accent,
+                      fontWeight: FontWeight.w600),
+                ),
+              ),
+            ],
+          ],
+        ),
+      );
+    }
+    final body = ChatMessageBody(
+      html: m.bodyHtml,
+      style: TextStyle(fontSize: 13, height: 1.35, color: c.textBody),
+      loadImage: context.read<ChatConversationCubit>().image,
+    );
     final person = ChatPersonStyle.of(context, m);
 
     final header = Padding(
@@ -315,7 +343,7 @@ class _MessageTile extends StatelessWidget {
             DateFormat.jm().format(m.createdAt),
             style: TextStyle(fontSize: 11, color: c.textMuted),
           ),
-          if (m.editedAt != null && !m.isDeleted) ...[
+          if (m.editedAt != null) ...[
             const SizedBox(width: 6),
             Text('Edited',
                 style: TextStyle(fontSize: 11, color: c.textMuted)),

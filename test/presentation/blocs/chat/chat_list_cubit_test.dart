@@ -59,6 +59,22 @@ void main() {
     cubit.setSortByName(false);
     expect(cubit.state.chats.map((c) => c.title), ['zed', 'Mia', 'Ann']);
   });
+
+  test('quiet after a week, unless unread, open or not yet looked up', () {
+    final now = DateTime.utc(2026, 11, 25);
+    const state = ChatListState(selectedKey: 'open');
+    expect(state.isQuiet(chat('new', 'New', 20), now), isFalse);
+    expect(state.isQuiet(chat('old', 'Old', 10), now), isTrue);
+    expect(state.isQuiet(chat('u', 'Unread', 10, unread: true), now), isFalse);
+    expect(state.isQuiet(chat('open', 'Open', 10), now), isFalse);
+    expect(
+        state.isQuiet(
+            const ChatConversation(
+                id: 'ch', kind: ChatKind.channel, title: 'General',
+                teamId: 't'),
+            now),
+        isFalse);
+  });
 }
 
 class _Repo implements ChatRepository {

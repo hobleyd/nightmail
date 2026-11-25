@@ -62,10 +62,15 @@ class ChatListState extends Equatable {
   /// Each team's channels, teams ordered by their busiest channel and
   /// channels by activity — the order [conversations] already has — or both
   /// by name.
-  List<(String teamName, List<ChatConversation> channels)> get teams {
+  List<(String teamName, List<ChatConversation> channels)> get teams =>
+      teamsOf(conversations);
+
+  /// [teams] made of only these [channels].
+  List<(String teamName, List<ChatConversation> channels)> teamsOf(
+      Iterable<ChatConversation> channels) {
     final byTeam = <String, List<ChatConversation>>{};
     final names = <String, String>{};
-    for (final c in conversations.where((c) => c.isChannel)) {
+    for (final c in channels.where((c) => c.isChannel)) {
       byTeam.putIfAbsent(c.teamId!, () => []).add(c);
       names[c.teamId!] = c.teamName ?? 'Team';
     }
@@ -76,6 +81,21 @@ class ChatListState extends Equatable {
       out.sort((a, b) => a.$1.toLowerCase().compareTo(b.$1.toLowerCase()));
     }
     return out;
+  }
+
+  /// How long a conversation may sit without anything new before the chat
+  /// window tucks it under its section's "older" row.
+  static const quietAfter = Duration(days: 7);
+
+  /// Nothing new in [quietAfter]. A conversation whose activity is not known
+  /// yet (a channel not looked up), one still unread and the open one never
+  /// are.
+  bool isQuiet(ChatConversation c, DateTime now) {
+    final at = c.lastActivity;
+    return at != null &&
+        now.difference(at) > quietAfter &&
+        !c.unread &&
+        c.key != selectedKey;
   }
 
   ChatConversation? get selected => selectedKey == null

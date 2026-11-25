@@ -264,6 +264,9 @@ class _ConversationListState extends State<_ConversationList> {
   final _search = TextEditingController();
   final _collapsed = <String>{};
 
+  /// Sections ('chats', 'spaces', 'teams') showing their quiet conversations.
+  final _showQuiet = <String>{};
+
   @override
   void dispose() {
     _search.dispose();
@@ -399,6 +402,10 @@ class _ConversationListState extends State<_ConversationList> {
                   onToggle: (team) => setState(() {
                     if (!_collapsed.remove(team)) _collapsed.add(team);
                   }),
+                  showQuiet: _showQuiet,
+                  onToggleQuiet: (section) => setState(() {
+                    if (!_showQuiet.remove(section)) _showQuiet.add(section);
+                  }),
                   onOpen: widget.onOpen,
                 );
               },
@@ -415,20 +422,82 @@ class _Grouped extends StatelessWidget {
     required this.state,
     required this.collapsed,
     required this.onToggle,
+    required this.showQuiet,
+    required this.onToggleQuiet,
     required this.onOpen,
   });
 
   final ChatListState state;
   final Set<String> collapsed;
   final ValueChanged<String> onToggle;
+  final Set<String> showQuiet;
+  final ValueChanged<String> onToggleQuiet;
   final ValueChanged<ChatConversation> onOpen;
 
   @override
   Widget build(BuildContext context) {
     final c = context.colors;
-    final chats = state.chats;
-    final spaces = state.spaces;
-    final teams = state.teams;
+    // Conversations with nothing new in a week wait under each section's
+    // "older" row, in the section's own order, until it is opened.
+    final now = DateTime.now();
+    bool quiet(ChatConversation x) => state.isQuiet(x, now);
+    final allChats = state.chats;
+    final chats = allChats.where((x) => !quiet(x)).toList();
+    final quietChats = allChats.where(quiet).toList();
+    final allSpaces = state.spaces;
+    final spaces = allSpaces.where((x) => !quiet(x)).toList();
+    final quietSpaces = allSpaces.where(quiet).toList();
+    final channels = state.conversations.where((x) => x.isChannel);
+    final teams = state.teamsOf(channels.where((x) => !quiet(x)));
+    final quietChannels = channels.where(quiet).toList();
+    final quietTeams = state.teamsOf(quietChannels);
+
+    Widget row(ChatConversation x, {bool indent = false}) => _ConversationRow(
+          conversation: x,
+          selected: x.key == state.selectedKey,
+          indent: indent,
+          onTap: () => onOpen(x),
+        );
+
+    List<Widget> team(String name, List<ChatConversation> channels) => [
+          InkWell(
+            onTap: () => onToggle(channels.first.teamId!),
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(10, 6, 12, 6),
+              child: Row(
+                children: [
+                  Icon(
+                    collapsed.contains(channels.first.teamId)
+                        ? Icons.chevron_right
+                        : Icons.expand_more,
+                    size: 16,
+                    color: c.textMuted,
+                  ),
+                  const SizedBox(width: 4),
+                  Icon(Icons.groups_2_outlined,
+                      size: 15, color: c.textTertiary),
+                  const SizedBox(width: 6),
+                  Expanded(
+                    child: Text(name,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                            fontSize: 13,
+                            fontWeight: FontWeight.w600,
+                            color: c.textSecondary)),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          if (!collapsed.contains(channels.first.teamId))
+            for (final ch in channels) row(ch, indent: true),
+        ];
+
+    Widget older(String section, int count) => _QuietToggle(
+          count: count,
+          open: showQuiet.contains(section),
+          onTap: () => onToggleQuiet(section),
+        );
     return RefreshIndicator(
       onRefresh: context.read<ChatListCubit>().refresh,
       child: ListView(
@@ -440,68 +509,37 @@ class _Grouped extends StatelessWidget {
                   style: TextStyle(fontSize: 12, color: c.errorBannerText)),
             ),
           _SectionHeader(label: 'Chats'),
-          if (chats.isEmpty && state.error == null)
+          if (allChats.isEmpty && state.error == null)
             Padding(
               padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
               child: Text('No chats yet.',
                   style: TextStyle(fontSize: 12, color: c.textMuted)),
             ),
-          for (final chat in chats)
-            _ConversationRow(
-              conversation: chat,
-              selected: chat.key == state.selectedKey,
-              onTap: () => onOpen(chat),
-            ),
-          if (spaces.isNotEmpty)
+          for (final chat in chats) row(chat),
+          if (quietChats.isNotEmpty) ...[
+            older('chats', quietChats.length),
+            if (showQuiet.contains('chats'))
+              for (final chat in quietChats) row(chat),
+          ],
+          if (allSpaces.isNotEmpty)
             _SectionHeader(
                 label: ChatSource.isSlackId(state.accountId)
                     ? 'Channels'
                     : 'Spaces'),
-          for (final space in spaces)
-            _ConversationRow(
-              conversation: space,
-              selected: space.key == state.selectedKey,
-              onTap: () => onOpen(space),
-            ),
-          if (teams.isNotEmpty) _SectionHeader(label: 'Teams'),
-          for (final (name, channels) in teams) ...[
-            InkWell(
-              onTap: () => onToggle(channels.first.teamId!),
-              child: Padding(
-                padding: const EdgeInsets.fromLTRB(10, 6, 12, 6),
-                child: Row(
-                  children: [
-                    Icon(
-                      collapsed.contains(channels.first.teamId)
-                          ? Icons.chevron_right
-                          : Icons.expand_more,
-                      size: 16,
-                      color: c.textMuted,
-                    ),
-                    const SizedBox(width: 4),
-                    Icon(Icons.groups_2_outlined,
-                        size: 15, color: c.textTertiary),
-                    const SizedBox(width: 6),
-                    Expanded(
-                      child: Text(name,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                              fontSize: 13,
-                              fontWeight: FontWeight.w600,
-                              color: c.textSecondary)),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-            if (!collapsed.contains(channels.first.teamId))
-              for (final ch in channels)
-                _ConversationRow(
-                  conversation: ch,
-                  selected: ch.key == state.selectedKey,
-                  indent: true,
-                  onTap: () => onOpen(ch),
-                ),
+          for (final space in spaces) row(space),
+          if (quietSpaces.isNotEmpty) ...[
+            older('spaces', quietSpaces.length),
+            if (showQuiet.contains('spaces'))
+              for (final space in quietSpaces) row(space),
+          ],
+          if (teams.isNotEmpty || quietTeams.isNotEmpty)
+            _SectionHeader(label: 'Teams'),
+          for (final (name, channels) in teams) ...team(name, channels),
+          if (quietChannels.isNotEmpty) ...[
+            older('teams', quietChannels.length),
+            if (showQuiet.contains('teams'))
+              for (final (name, channels) in quietTeams)
+                ...team(name, channels),
           ],
           if (state.access == ChatAccess.chatsOnly)
             Padding(
@@ -515,6 +553,45 @@ class _Grouped extends StatelessWidget {
               ),
             ),
         ],
+      ),
+    );
+  }
+}
+
+/// The row at the foot of a section that shows or hides its conversations
+/// with nothing new in [ChatListState.quietAfter].
+class _QuietToggle extends StatelessWidget {
+  const _QuietToggle({
+    required this.count,
+    required this.open,
+    required this.onTap,
+  });
+
+  final int count;
+  final bool open;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.colors;
+    return InkWell(
+      onTap: onTap,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(12, 6, 12, 6),
+        child: Row(
+          children: [
+            Icon(open ? Icons.expand_less : Icons.expand_more,
+                size: 16, color: c.textMuted),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                open ? 'Hide older' : 'Show $count older',
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(fontSize: 12, color: c.textMuted),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }

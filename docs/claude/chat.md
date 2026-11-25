@@ -8,6 +8,13 @@ opens the chat window (`'chat'` sub-window, `ChatWindowApp`): every chat and
 channel on the left, grouped (Chats; Teams › channels) and newest first; the
 open one's history on the right, channel threads beside it; search on top.
 
+A conversation with nothing new in a week (`ChatListState.quietAfter`,
+`isQuiet`) waits under a "Show N older" row at the foot of its section —
+quiet Teams channels are regrouped by team below that row. Unread ones, the
+open one, and a channel whose activity is not known yet always show. A
+deleted message is a single "Deleted message" line with no sender: the
+providers send none, so it used to read "Unknown".
+
 ## More than one chat system: the Chat button's menu
 
 The account's own chat (Teams, NightMail Server, Google Chat — "platform

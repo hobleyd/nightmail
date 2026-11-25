@@ -99,7 +99,9 @@ class ChatPeopleColors extends InheritedWidget {
     String? ownUserId,
     required super.child,
   }) : slots = ChatPersonStyle.assign(
-            messages.where((m) => !m.isSystem).map(ChatPersonStyle.personKey),
+            messages
+                .where((m) => !m.isSystem && !m.isDeleted)
+                .map(ChatPersonStyle.personKey),
             own: ownUserId);
 
   final Map<String, int> slots;

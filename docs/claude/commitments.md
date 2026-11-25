@@ -94,7 +94,9 @@ never auto-resolved.
 
 Today (the day's cached calendar events that have not yet ended — a meeting
 in progress stays, a finished one is dropped, and the pane ticks once a
-minute (`dropEndedEvents`) so this holds between refreshes — the count of
+minute (`dropEndedEvents`) so this holds between refreshes; the meeting in
+progress, or the next one when none is, is highlighted
+(`focusEventIdsAt` — all-day and free events never are) — the count of
 task-reminder rows due today across every list, and every commitment due
 today or overdue),
 You owe, Waiting on (with age), Needs a decision (with "N emails need action

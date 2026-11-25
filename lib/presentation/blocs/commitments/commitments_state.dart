@@ -120,6 +120,30 @@ class CommitmentsState extends Equatable {
           if (c.isDueTodayAt(now)) c,
       ]..sort(_byUrgencyThenAge);
 
+  /// The Today meetings to highlight at [now]: every one in progress, or,
+  /// when none is, the next to start (several, if they start together).
+  /// All-day events and ones that do not block time (free, working
+  /// elsewhere) are never the meeting you are in or heading to.
+  Set<String> focusEventIdsAt(DateTime now) {
+    final timed = [
+      for (final e in todayEvents)
+        if (!e.isAllDay && e.blocksTime && e.end.isAfter(now)) e,
+    ];
+    final current = {
+      for (final e in timed)
+        if (!e.start.isAfter(now)) e.id,
+    };
+    if (current.isNotEmpty) return current;
+    DateTime? next;
+    for (final e in timed) {
+      if (next == null || e.start.isBefore(next)) next = e.start;
+    }
+    return {
+      for (final e in timed)
+        if (e.start.isAtSameMomentAs(next!)) e.id,
+    };
+  }
+
   bool get hasAnyOpen => commitments.any((c) => c.isOpen);
 
   static int _byUrgencyThenAge(Commitment a, Commitment b) {

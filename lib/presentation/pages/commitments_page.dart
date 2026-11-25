@@ -130,10 +130,14 @@ class _CommitmentsDayPanelState extends State<CommitmentsDayPanel> {
         if (mounted) unawaited(_cubit.load());
       });
     } catch (_) {}
-    // Today lists only the meetings still to come, so it has to move with
-    // the clock between refreshes.
+    // Today lists only the meetings still to come, and highlights the one
+    // in progress or next up, so it has to move with the clock between
+    // refreshes. The rebuild re-reads the time for the highlight even when
+    // no meeting has ended.
     _clock = Timer.periodic(const Duration(minutes: 1), (_) {
-      if (mounted) _cubit.dropEndedEvents();
+      if (!mounted) return;
+      _cubit.dropEndedEvents();
+      setState(() {});
     });
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) unawaited(_cubit.load());
@@ -461,6 +465,7 @@ class _LoadedBody extends StatelessWidget {
   Widget build(BuildContext context) {
     final now = DateTime.now();
     final dueToday = state.dueTodayAt(now);
+    final focusEvents = state.focusEventIdsAt(now);
     final iOwe = state.iOwe;
     final waitingOn = state.waitingOn;
     final needsAction = state.needsAction;
@@ -497,7 +502,8 @@ class _LoadedBody extends StatelessWidget {
               ? 'Nothing scheduled, nothing due.'
               : null,
           children: [
-            for (final e in state.todayEvents) _EventRow(event: e),
+            for (final e in state.todayEvents)
+              _EventRow(event: e, focused: focusEvents.contains(e.id)),
             if (state.tasksDueToday > 0)
               _TodayTasks(state: state, onOpenTasks: onOpenTasks),
             for (final c in dueToday) row(c),
@@ -724,10 +730,13 @@ class _Section extends StatelessWidget {
 // Rows
 // ---------------------------------------------------------------------------
 
+/// A meeting in the pane's Today section. [focused] marks the meeting in
+/// progress, or the next one when none is: an accent bar, tint and glyph.
 class _EventRow extends StatelessWidget {
-  const _EventRow({required this.event});
+  const _EventRow({required this.event, this.focused = false});
 
   final CalendarEvent event;
+  final bool focused;
 
   @override
   Widget build(BuildContext context) {
@@ -735,20 +744,33 @@ class _EventRow extends StatelessWidget {
     final time = event.isAllDay
         ? 'All day'
         : DateFormat.jm().format(event.start.toLocal());
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+    return Container(
+      padding: const EdgeInsets.fromLTRB(9, 8, 12, 8),
+      decoration: BoxDecoration(
+        color: focused ? AppColors.accent.withValues(alpha: 0.12) : null,
+        border: Border(
+          left: BorderSide(
+            color: focused ? AppColors.accent : Colors.transparent,
+            width: 3,
+          ),
+        ),
+      ),
       child: Row(
         children: [
-          Icon(Icons.calendar_month_outlined, size: 14, color: c.textMuted),
+          Icon(
+            focused ? Icons.event_rounded : Icons.calendar_month_outlined,
+            size: 14,
+            color: focused ? AppColors.accent : c.textMuted,
+          ),
           const SizedBox(width: 8),
           SizedBox(
             width: 64,
             child: Text(
               time,
               style: TextStyle(
-                color: c.textSecondary,
+                color: focused ? AppColors.accent : c.textSecondary,
                 fontSize: 12,
-                fontWeight: FontWeight.w500,
+                fontWeight: focused ? FontWeight.w600 : FontWeight.w500,
               ),
             ),
           ),
@@ -756,7 +778,11 @@ class _EventRow extends StatelessWidget {
             child: Text(
               event.subject,
               overflow: TextOverflow.ellipsis,
-              style: TextStyle(color: c.textSecondary, fontSize: 12),
+              style: TextStyle(
+                color: focused ? c.textPrimary : c.textSecondary,
+                fontSize: 12,
+                fontWeight: focused ? FontWeight.w600 : null,
+              ),
             ),
           ),
         ],
@@ -1049,6 +1075,7 @@ class _BoardBody extends StatelessWidget {
   Widget build(BuildContext context) {
     final now = DateTime.now();
     final dueToday = state.dueTodayAt(now);
+    final focusEvents = state.focusEventIdsAt(now);
     final iOwe = state.iOwe;
     final waitingOn = state.waitingOn;
     final needsAction = state.needsAction;
@@ -1124,7 +1151,10 @@ class _BoardBody extends StatelessWidget {
                         emptyText: 'Nothing scheduled, nothing due.',
                         children: [
                           for (final e in state.todayEvents)
-                            _BoardEventTile(event: e),
+                            _BoardEventTile(
+                              event: e,
+                              focused: focusEvents.contains(e.id),
+                            ),
                           if (state.tasksDueToday > 0)
                             _TodayTasks(
                               state: state,
@@ -1467,11 +1497,13 @@ class _CommitmentCard extends StatelessWidget {
 }
 
 /// A meeting in the board's Today column: the time in a fixed gutter, the
-/// subject beside it, and the location when there is one.
+/// subject beside it, and the location when there is one. [focused] marks
+/// the meeting in progress, or the next one when none is.
 class _BoardEventTile extends StatelessWidget {
-  const _BoardEventTile({required this.event});
+  const _BoardEventTile({required this.event, this.focused = false});
 
   final CalendarEvent event;
+  final bool focused;
 
   @override
   Widget build(BuildContext context) {
@@ -1485,13 +1517,21 @@ class _BoardEventTile extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
       decoration: BoxDecoration(
-        border: Border.all(color: c.separatorStrong),
+        color: focused ? AppColors.accent.withValues(alpha: 0.12) : null,
+        border: Border.all(
+          color: focused ? AppColors.accent : c.separatorStrong,
+          width: focused ? 1.5 : 1,
+        ),
         borderRadius: BorderRadius.circular(8),
       ),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Icon(Icons.calendar_month_outlined, size: 14, color: c.textMuted),
+          Icon(
+            focused ? Icons.event_rounded : Icons.calendar_month_outlined,
+            size: 14,
+            color: focused ? AppColors.accent : c.textMuted,
+          ),
           const SizedBox(width: 8),
           Expanded(
             child: Column(
@@ -1500,7 +1540,7 @@ class _BoardEventTile extends StatelessWidget {
                 Text(
                   time,
                   style: TextStyle(
-                    color: c.textMuted,
+                    color: focused ? AppColors.accent : c.textMuted,
                     fontSize: 11,
                     fontWeight: FontWeight.w600,
                   ),
@@ -1510,7 +1550,11 @@ class _BoardEventTile extends StatelessWidget {
                   event.subject,
                   maxLines: 2,
                   overflow: TextOverflow.ellipsis,
-                  style: TextStyle(color: c.textSecondary, fontSize: 13),
+                  style: TextStyle(
+                    color: focused ? c.textPrimary : c.textSecondary,
+                    fontSize: 13,
+                    fontWeight: focused ? FontWeight.w600 : null,
+                  ),
                 ),
                 if (location != null && location.isNotEmpty) ...[
                   const SizedBox(height: 2),

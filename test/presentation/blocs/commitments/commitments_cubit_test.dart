@@ -542,6 +542,35 @@ void main() {
       cubit.dropEndedEvents();
       expect(identical(cubit.state, before), isTrue);
     });
+
+    test('highlights the meetings in progress, else the next to start; '
+        'all-day and free events never count', () {
+      final day = DateTime(2026, 10, 2);
+      DateTime at(int h, [int m = 0]) => day.add(Duration(hours: h, minutes: m));
+      final state = CommitmentsState(todayEvents: [
+        CalendarEvent(
+            id: 'allday', subject: 'allday', start: day,
+            end: day.add(const Duration(days: 1)), isAllDay: true),
+        CalendarEvent(
+            id: 'free', subject: 'free', start: at(9), end: at(10),
+            isAllDay: false, status: CalendarEventStatus.free),
+        meeting('a', at(9), at(10)),
+        meeting('b', at(9, 30), at(10, 30)),
+        meeting('c', at(11), at(12)),
+        meeting('d', at(11), at(11, 30)),
+      ]);
+
+      // Before anything starts: the next meeting.
+      expect(state.focusEventIdsAt(at(8)), {'a'});
+      // In progress, even with another queued up.
+      expect(state.focusEventIdsAt(at(9, 10)), {'a'});
+      // Overlapping meetings both in progress.
+      expect(state.focusEventIdsAt(at(9, 45)), {'a', 'b'});
+      // Between meetings: the next ones, both starting at 11.
+      expect(state.focusEventIdsAt(at(10, 30)), {'c', 'd'});
+      // Nothing left.
+      expect(state.focusEventIdsAt(at(12)), isEmpty);
+    });
   });
 
   group('Future Me forecast', () {

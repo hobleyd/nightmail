@@ -18,9 +18,11 @@ import '../../blocs/chat/chat_conversation_cubit.dart';
 import '../../blocs/chat/chat_unread_cubit.dart';
 import '../../blocs/email_detail/email_detail_bloc.dart';
 import '../../blocs/email_detail/email_detail_state.dart';
+import 'chat_conversation_row.dart';
 import 'chat_conversation_view.dart';
 import 'chat_pane_picker.dart';
 import 'chat_rename_dialog.dart';
+import 'chat_source_picker.dart';
 import 'chat_window_target.dart';
 
 /// The Chat pane beside the reading pane: a one-on-one with the selected
@@ -34,14 +36,16 @@ import 'chat_window_target.dart';
 /// the person already chosen is on that email too. Never creates a chat by
 /// being opened; see [ChatPerson].
 ///
-/// Chats on the system the Chat button's menu chose
+/// Chats on the system picked in the pane's header
 /// ([ChatUnreadState.chosen]): the account's own chat, or a Slack workspace —
 /// where the people on offer are the ones Slack finds by address.
 ///
-/// The dropdown also offers that system's unread chats
-/// ([ChatUnreadState.unreadChats]), under the people, and a field that finds
-/// anyone in the address book or any chat or channel ([ChatPanePicker]):
-/// picking one of those opens it in place until another email is selected.
+/// Laid out top to bottom: the system (a dropdown when there is more than
+/// one, [ChatSourcePicker]); its unread chats and channels, newest first, in
+/// the top 30% ([ChatUnreadState.unreadChats]) — one clicked stays open across
+/// emails; then a bar with the email's people and a field that finds anyone
+/// in the address book or any chat or channel ([ChatPanePicker]) — picked
+/// there, it lasts until another email is selected; and the conversation.
 class ChatPanel extends StatelessWidget {
   const ChatPanel({
     super.key,
@@ -91,6 +95,10 @@ class _ChatPanelBodyState extends State<_ChatPanelBody> {
   ChatConversation? _chat;
   ChatPerson? _picked;
   String? _chatEmailId;
+
+  /// [_chat] came from the unread list: it stays open across emails until
+  /// something else is picked or the system changes.
+  bool _held = false;
 
   /// What the conversation cubit was last pointed at: `account|address`.
   String? _openedKey;
@@ -219,7 +227,7 @@ class _ChatPanelBodyState extends State<_ChatPanelBody> {
       _access = access;
       _openedKey = null;
     });
-    // A reconnected Slack workspace drops its "Reconnect" in the menu.
+    // A reconnected Slack workspace drops its "Reconnect" in the dropdown.
     unawaited(unread.refresh());
   }
 
@@ -232,7 +240,7 @@ class _ChatPanelBodyState extends State<_ChatPanelBody> {
     final detail = context.watch<EmailDetailBloc>().state;
     final email = detail is EmailDetailLoaded ? detail.email : null;
 
-    // The chat system: what the button's menu chose, or — before the
+    // The chat system: what the header's dropdown chose, or — before the
     // systems are known, or for an account with none — the account itself,
     // whose access check then explains what is missing.
     final unreadState = context.watch<ChatUnreadCubit>().state;
@@ -251,9 +259,10 @@ class _ChatPanelBodyState extends State<_ChatPanelBody> {
     // A chat or person picked on another email, or on another chat system,
     // is let go.
     if ((_chat != null || _picked != null) &&
-        (_chatEmailId != email?.id || _chatSourceId != chatId)) {
+        (_chatSourceId != chatId || (!_held && _chatEmailId != email?.id))) {
       _chat = null;
       _picked = null;
+      _held = false;
     }
     final chat = _chat;
     final picked = _picked;
@@ -261,14 +270,17 @@ class _ChatPanelBodyState extends State<_ChatPanelBody> {
         candidates.where((p) => p.email == _chosen).firstOrNull ??
         candidates.firstOrNull;
 
-    final people = {for (final p in everyone) p.email};
-    final unreadChats = <ChatConversation>[
-      for (final c in unreadState.unreadChats[chatId] ?? const [])
-        // A one-on-one with someone on the email is already offered as them.
-        if (!(c.kind == ChatKind.oneOnOne &&
-            c.members.any((m) => people.contains(m.email))))
-          c,
+    final unreadChats = [
+      ...unreadState.unreadChats[chatId] ?? const <ChatConversation>[],
     ];
+    if (chat != null && _held && !unreadChats.any((u) => u.key == chat.key)) {
+      unreadChats.add(chat);
+    }
+    unreadChats.sort((a, b) {
+      final at = a.lastActivity, bt = b.lastActivity;
+      if (at == null || bt == null) return at == null ? (bt == null ? 0 : 1) : -1;
+      return bt.compareTo(at);
+    });
     if (chatId != null) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted) _sync(chatId, person, chat);
@@ -327,6 +339,10 @@ class _ChatPanelBodyState extends State<_ChatPanelBody> {
       body = const ChatConversationView();
     }
 
+    final hasChat =
+        _access == ChatAccess.chatsOnly || _access == ChatAccess.full;
+    final ready = hasChat && chatId != null && account != null;
+
     return ColoredBox(
       color: c.surfacePanel,
       child: Column(
@@ -348,70 +364,16 @@ class _ChatPanelBodyState extends State<_ChatPanelBody> {
                     ),
                     const SizedBox(width: 4),
                   ],
-                  Tooltip(
-                    message: source?.label ?? 'Chat',
-                    child: Icon(
-                        source != null && source.isSlack
-                            ? Icons.tag_rounded
-                            : Icons.forum_outlined,
-                        size: touchIcon(16),
-                        color: AppColors.accent),
-                  ),
-                  const SizedBox(width: 8),
                   Expanded(
-                    child: chatId != null &&
-                            account != null &&
-                            (_access == ChatAccess.chatsOnly ||
-                                _access == ChatAccess.full)
-                        ? ChatPanePicker(
-                            chatId: chatId,
-                            account: account,
-                            people: candidates,
-                            chats: unreadChats,
-                            selectedPerson: chat == null ? person : null,
-                            selectedChat: chat,
-                            onPerson: (p) => setState(() {
-                              _chat = null;
-                              if (candidates.any((c) => c.email == p.email)) {
-                                _chosen = p.email;
-                                _picked = null;
-                              } else {
-                                _picked = p;
-                                _chatEmailId = email?.id;
-                                _chatSourceId = chatId;
-                              }
-                            }),
-                            onChat: (c) => setState(() {
-                              _chat = c;
-                              _picked = null;
-                              _chatEmailId = email?.id;
-                              _chatSourceId = chatId;
-                            }),
-                          )
-                        : Text(
-                            chat?.title ?? person?.label ?? 'Chat',
-                            overflow: TextOverflow.ellipsis,
-                            style: TextStyle(
-                              color: c.textPrimary,
-                              fontSize: 14,
-                              fontWeight: FontWeight.w600,
-                              letterSpacing: -0.2,
-                            ),
-                          ),
-                  ),
-                  BlocBuilder<ChatConversationCubit, ChatConversationState>(
-                    buildWhen: (a, b) =>
-                        a.accountId != b.accountId ||
-                        a.conversation != b.conversation,
-                    builder: (context, _) =>
-                        context.read<ChatConversationCubit>().canRename
-                            ? IconButton(
-                                icon: Icon(Icons.edit_outlined,
-                                    size: touchIcon(15), color: c.textMuted),
-                                tooltip: 'Rename',
-                                onPressed: _rename,
-                              )
-                            : const SizedBox.shrink(),
+                    child: Align(
+                      alignment: Alignment.centerLeft,
+                      child: ChatSourcePicker(
+                        sources: unreadState.sources,
+                        chosen: source,
+                        unreadIn: unreadState.unreadIn,
+                        onChoose: context.read<ChatUnreadCubit>().choose,
+                      ),
+                    ),
                   ),
                   if (_isDesktop)
                     IconButton(
@@ -432,8 +394,143 @@ class _ChatPanelBodyState extends State<_ChatPanelBody> {
             ),
           ),
           Divider(height: 1, color: c.separatorStrong),
-          Expanded(child: body),
+          Expanded(
+            child: !ready
+                ? body
+                : LayoutBuilder(
+                    builder: (context, box) => Column(
+                      children: [
+                        SizedBox(
+                          height: box.maxHeight * 0.3,
+                          child: _UnreadList(
+                            chats: unreadChats,
+                            selected: chat,
+                            onTap: (u) => setState(() {
+                              _chat = u;
+                              _picked = null;
+                              _held = true;
+                              _chatEmailId = email?.id;
+                              _chatSourceId = chatId;
+                            }),
+                          ),
+                        ),
+                        Divider(height: 1, color: c.separatorStrong),
+                        _conversationBar(
+                          c: c,
+                          chatId: chatId,
+                          account: account,
+                          email: email,
+                          candidates: candidates,
+                          person: person,
+                          chat: chat,
+                        ),
+                        Divider(height: 1, color: c.separator),
+                        Expanded(child: body),
+                      ],
+                    ),
+                  ),
+          ),
         ],
+      ),
+    );
+  }
+
+  /// Above the conversation: who or what it is — the email's people and
+  /// "find anyone" ([ChatPanePicker]) — and Rename.
+  Widget _conversationBar({
+    required AppColors c,
+    required String chatId,
+    required Account account,
+    required Email? email,
+    required List<ChatPerson> candidates,
+    required ChatPerson? person,
+    required ChatConversation? chat,
+  }) {
+    return SizedBox(
+      height: touchRowHeight(36),
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(16, 0, 8, 0),
+        child: Row(
+          children: [
+            Expanded(
+              child: ChatPanePicker(
+                chatId: chatId,
+                account: account,
+                people: candidates,
+                chats: const [],
+                selectedPerson: chat == null ? person : null,
+                selectedChat: chat,
+                onPerson: (p) => setState(() {
+                  _chat = null;
+                  _held = false;
+                  if (candidates.any((c) => c.email == p.email)) {
+                    _chosen = p.email;
+                    _picked = null;
+                  } else {
+                    _picked = p;
+                    _chatEmailId = email?.id;
+                    _chatSourceId = chatId;
+                  }
+                }),
+                onChat: (c) => setState(() {
+                  _chat = c;
+                  _picked = null;
+                  _held = false;
+                  _chatEmailId = email?.id;
+                  _chatSourceId = chatId;
+                }),
+              ),
+            ),
+            BlocBuilder<ChatConversationCubit, ChatConversationState>(
+              buildWhen: (a, b) =>
+                  a.accountId != b.accountId ||
+                  a.conversation != b.conversation,
+              builder: (context, _) =>
+                  context.read<ChatConversationCubit>().canRename
+                      ? IconButton(
+                          icon: Icon(Icons.edit_outlined,
+                              size: touchIcon(15), color: c.textMuted),
+                          tooltip: 'Rename',
+                          onPressed: _rename,
+                        )
+                      : const SizedBox.shrink(),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// The top of the pane: the chosen system's unread chats and channels,
+/// newest first. The open one stays listed, highlighted, once it is read.
+class _UnreadList extends StatelessWidget {
+  const _UnreadList({
+    required this.chats,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final List<ChatConversation> chats;
+  final ChatConversation? selected;
+  final ValueChanged<ChatConversation> onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.colors;
+    if (chats.isEmpty) {
+      return Center(
+        child: Text('No unread chats',
+            style: TextStyle(fontSize: 12.5, color: c.textTertiary)),
+      );
+    }
+    return ListView.builder(
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      itemCount: chats.length,
+      itemBuilder: (context, i) => ChatConversationRow(
+        conversation: chats[i],
+        selected: chats[i].key == selected?.key,
+        onTap: () => onTap(chats[i]),
       ),
     );
   }

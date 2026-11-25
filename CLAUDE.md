@@ -122,7 +122,7 @@ would re-break.
   Teams chats and channels over Graph on Microsoft 365 and NightMail Server
   (Talk), Google Chat on Workspace accounts, Slack workspaces (one internal
   app each, PKCE, `slack:{team}` chat ids, never the email re-auth path),
-  the Chat button's menu of systems, the encrypted cache and per-provider
+  the pane's system dropdown and unread list, the encrypted cache and per-provider
   deltas, colleagues-only people, the two-step
   Microsoft consent (channels need admin approval), polling, and search
   without a server route on Nightware and Google

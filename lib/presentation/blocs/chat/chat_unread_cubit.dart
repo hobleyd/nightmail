@@ -29,7 +29,7 @@ class ChatUnreadState extends Equatable {
   /// dropdown offers beside the people on the email.
   final Map<String, List<ChatConversation>> unreadChats;
 
-  /// The system last picked from the menu, by id; may name one no longer
+  /// The system last picked in the pane's dropdown, by id; may name one no longer
   /// offered (an account switch), see [chosen].
   final String? chosenId;
 
@@ -42,7 +42,8 @@ class ChatUnreadState extends Equatable {
 
   int unreadIn(String sourceId) => unread[sourceId] ?? 0;
 
-  /// More than one system: the button asks which, as a menu.
+  /// More than one system: the pane's header is a dropdown of them, and the
+  /// button's tooltip names which has the unread chats.
   bool get hasChoice => sources.length > 1;
 
   @override
@@ -50,8 +51,8 @@ class ChatUnreadState extends Equatable {
 }
 
 /// The chat systems behind the Chat button and how many of each's chats
-/// have something the user has not read — the dot, and the menu's per-system
-/// dots.
+/// have something the user has not read — the button's dot, and the pane's
+/// unread list and per-system dots.
 ///
 /// This polls: one page of recent chats per system every [pollInterval]
 /// ([ChatRepository.unreadCount]). A chat read in this window clears at once
@@ -141,26 +142,13 @@ class ChatUnreadCubit extends Cubit<ChatUnreadState> {
     ));
   }
 
-  /// Points the Chat pane at [sourceId] (from the button's menu).
+  /// Points the Chat pane at [sourceId] (from the pane's dropdown).
   void choose(String sourceId) {
-    _switched = sourceId != state.chosen?.id;
     emit(ChatUnreadState(
         sources: state.sources,
         unread: state.unread,
         unreadChats: state.unreadChats,
         chosenId: sourceId));
-  }
-
-  bool _switched = false;
-
-  /// Whether the click being handled picked a different system from the one
-  /// the pane was on — which switches an open pane rather than closing it.
-  /// Read once: false again after, and always false without a menu, so the
-  /// button is the plain toggle it always was.
-  bool takeSwitched() {
-    final switched = _switched;
-    _switched = false;
-    return switched;
   }
 
   void _dropRead(String sourceId, String key) {

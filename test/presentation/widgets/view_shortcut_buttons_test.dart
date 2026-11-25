@@ -193,50 +193,17 @@ void main() {
     expect(created, isEmpty);
   });
 
-  testWidgets('with Slack beside the account\'s chat, a click asks which',
+  testWidgets('with Slack beside the account\'s chat, a click is still the '
+      'toggle; the tooltip names the system with the unread chats',
       (tester) async {
     await pump(tester,
         sources: const [teams, slack], unread: const {'slack:T1': 3});
-    expect(button('Chat — 3 unread in Slack · Acme'), findsOneWidget,
-        reason: 'the tooltip names the system with the unread chats');
+    expect(button('Chat — 3 unread in Slack · Acme'), findsOneWidget);
 
     await tester.tap(button('Chat — 3 unread in Slack · Acme'));
     await tester.pump(osInterval + const Duration(milliseconds: 50));
     await tester.pumpAndSettle();
-    expect(find.text('Teams'), findsOneWidget);
-    expect(find.text('Slack · Acme'), findsOneWidget);
-    expect(find.text('3'), findsOneWidget, reason: 'Slack\'s count');
-    expect(taps, isEmpty, reason: 'nothing opens until one is picked');
-
-    await tester.tap(find.text('Slack · Acme'));
-    await tester.pumpAndSettle();
-    expect(chat.chosen, ['slack:T1']);
-    expect(taps, ['chat']);
-  });
-
-  testWidgets('a double-click on the menu button still opens the window',
-      (tester) async {
-    await pump(tester, sources: const [teams, slack]);
-
-    await tester.tap(button('Chat'));
-    await tester.pump(slowGap);
-    await tester.tap(button('Chat'));
-    await tester.pump(osInterval * 2);
-    await tester.pumpAndSettle();
-
     expect(find.text('Slack · Acme'), findsNothing, reason: 'no menu');
-    expect(created.single, contains('"type":"chat"'));
-  });
-
-  testWidgets('Slack alone (an IMAP account) is the button, with no menu',
-      (tester) async {
-    await pump(tester, sources: const [slack]);
-
-    await tester.tap(button('Chat'));
-    await tester.pump(osInterval + const Duration(milliseconds: 50));
-    await tester.pumpAndSettle();
-
-    expect(find.text('Slack · Acme'), findsNothing);
     expect(taps, ['chat']);
   });
 
@@ -294,9 +261,6 @@ class _FixedChatUnreadCubit extends Cubit<ChatUnreadState>
 
   @override
   void choose(String sourceId) => chosen.add(sourceId);
-
-  @override
-  bool takeSwitched() => false;
 
   @override
   void start() {}

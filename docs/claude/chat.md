@@ -20,26 +20,24 @@ the open one always show; a lookup that fails is asked again next poll. A
 deleted message is a single "Deleted message" line with no sender: the
 providers send none, so it used to read "Unknown".
 
-## More than one chat system: the Chat button's menu
+## More than one chat system: the pane's header
 
 The account's own chat (Teams, NightMail Server, Google Chat — "platform
 chat") and any Slack workspace connected in Settings > General are the
 **chat systems** (`ChatRepository.sources`, `ChatSource`): platform first,
-when the account has one, then each workspace. Nothing changes until a
-second system exists.
+when the account has one, then each workspace.
 
-- **One system** — the account's own, or Slack alone for an IMAP or
-  `@gmail.com` account — and the button toggles the pane as before.
-- **Two or more** and a click opens a menu of them (`_ChatButton` in
-  `view_shortcut_buttons.dart`), each with its own red dot and count, a tick
-  on the one the pane shows, "Reconnect" on a refused workspace. The icon's
-  dot is any system's unread; the tooltip names which ("Chat — 3 unread in
-  Slack · Acme"). Picking one sets `ChatUnreadCubit.choose` and the pane
-  follows `ChatUnreadState.chosen`. Picking the one already open closes the
-  pane (the toggle); picking another while it is open switches it. Whether a
-  pick switched is decided when it is made (`ChatUnreadCubit.takeSwitched`),
-  not by remembering what the pane was opened on — that broke the plain
-  toggle after an account switch and for a pane restored open at launch.
+- **The Chat button is always the plain toggle** (click: pane; double-click:
+  window). Its dot is any system's unread, and with more than one system the
+  tooltip names which ("Chat — 3 unread in Slack · Acme"). It used to be a
+  menu of the systems when there were two or more; that menu, and the
+  `takeSwitched` bookkeeping it needed to tell "switch" from "close", went
+  after 1.63.
+- **The pane's header is the system** (`ChatSourcePicker`): its icon and
+  name, and with more than one a dropdown of them, each with its own red dot
+  and count, a tick on the one shown, "Reconnect" on a refused workspace. A
+  red dot beside the arrow means another system has unread chats. Picking one
+  sets `ChatUnreadCubit.choose` and the pane follows `ChatUnreadState.chosen`.
 - **The double-click** still opens the chat window, which starts on the
   active account's platform chat; Slack workspaces are further entries in
   its picker (and where it starts when the account has no chat).
@@ -230,15 +228,17 @@ Google: the newest message the unread check already reads, remembered in
   it at once (`select`). The sort — most recent first or by name — is a menu
   beside search (`ChatListState.sortByName`), remembered in
   `AppSettings.chat_sort_by_name`.
-- **The pane's dropdown** offers, under the email's people, the chosen
-  system's unread chats (`ChatUnreadState.unreadChats`), less any
-  one-on-one with someone already listed. Picking one opens it in place
-  until something else is picked; a new email (or another system) goes back
-  to the email's people.
+- **The pane's unread list** is the top 30% of the pane: the chosen
+  system's unread chats and channels (`ChatUnreadState.unreadChats`), newest
+  first, in the chat window's row (`ChatConversationRow`). Clicking one opens
+  it in the rest of the pane and holds it there across emails (`_held`)
+  until something else is picked or the system changes; it stays listed,
+  highlighted, after it is read. Nothing unread: "No unread chats".
 
 ## Finding anyone from the pane
 
-The pane's dropdown is a menu (`ChatPanePicker`) with a field on top: typing
+The bar between the unread list and the conversation is a menu
+(`ChatPanePicker`) of the email's people with a field on top: typing
 matches the email's people, the address book and every listed chat and
 channel. It is always there once the system has chat access, even for one
 person or no email at all.
@@ -253,9 +253,9 @@ person or no email at all.
   over `cachedConversations` (disk) and then one `conversations()` per
   menu — in the main window that is often the first listing this isolate
   has made, since the unread poll uses `listRecentChats`.
-- A person or chat picked here, like an unread chat, holds the pane until
-  another email or system is selected (`_picked`, `_chat`). Enter takes the
-  first match.
+- A person or chat picked here holds the pane until another email or
+  system is selected (`_picked`, `_chat`) — unlike a pick from the unread
+  list, which outlasts the email. Enter takes the first match.
 - `MenuAnchor` maps every arrow key to focus traversal; the field maps
   left/right back to cursor movement, or they would jump out of it
   (`chat_pane_picker_test.dart`). Up/down still move into the list.
@@ -685,7 +685,7 @@ than falling into an account lookup that answers null.
   — a `ServerException`, deliberately not an `AuthException`, which means
   "re-auth this email account" everywhere else. The workspace then reports
   `ChatAccess.needsConsent`, so the pane and window show the consent prompt
-  as "Reconnect Slack"; Settings and the menu show "Reconnect" too.
+  as "Reconnect Slack"; Settings and the pane's system dropdown show "Reconnect" too.
 - **Scopes** (`SlackWorkspaces.userScopes`, mirrored in the manifest), one
   per method: `*:read` for `users.conversations`/`conversations.info`,
   `*:history`, `users:read`, `users:read.email` (`users.lookupByEmail`),

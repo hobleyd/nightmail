@@ -1371,9 +1371,6 @@ class _FixedChatUnreadCubit extends Cubit<ChatUnreadState>
   void choose(String sourceId) {}
 
   @override
-  bool takeSwitched() => false;
-
-  @override
   void start() {}
 
   @override

@@ -9,7 +9,6 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import '../../core/platform/touch_metrics.dart';
 import '../../core/platform/window_utils.dart';
 import '../../core/theme/app_colors.dart';
-import '../../domain/entities/chat.dart';
 import '../blocs/chat/chat_unread_cubit.dart';
 import '../blocs/tasks/overdue_tasks_cubit.dart';
 
@@ -88,13 +87,10 @@ class ViewShortcutButtons extends StatelessWidget {
   }
 }
 
-/// The Chat button. One chat system — the account's own, or Slack alone for
-/// an account without one (IMAP) — and a click toggles the pane as the other
-/// buttons do. With a Slack workspace beside the account's chat it is a menu
-/// of the systems instead, each with its own unread dot, and picking one
-/// opens the pane on it ([ChatUnreadCubit.choose]). The dot on the icon is
-/// any system's unread; the double-click still opens the chat window, which
-/// starts on the account's own chat.
+/// The Chat button: a click toggles the pane, a double-click opens the chat
+/// window. The dot is any chat system's unread, and the tooltip says which
+/// ("Chat — 3 unread in Slack · Acme"); the pane's header switches between
+/// the systems.
 class _ChatButton extends StatelessWidget {
   const _ChatButton({required this.onTap});
 
@@ -116,120 +112,15 @@ class _ChatButton extends StatelessWidget {
           if (state.unreadIn(s.id) > 0) '${state.unreadIn(s.id)} unread in ${s.label}',
       ].join(', ')}';
     }
-    return Builder(
-      builder: (buttonContext) => _ViewButton(
-        // The pane chats with the selected email's people; the window is
-        // every chat and channel.
-        icon: _Dotted(
-          dot: total > 0,
-          child: Icon(Icons.forum_outlined,
-              size: touchIcon(16), color: c.textMuted),
-        ),
-        tooltip: tooltip,
-        onTap: state.hasChoice ? () => _choose(buttonContext) : onTap,
-        windowType: 'chat',
+    return _ViewButton(
+      icon: _Dotted(
+        dot: total > 0,
+        child:
+            Icon(Icons.forum_outlined, size: touchIcon(16), color: c.textMuted),
       ),
-    );
-  }
-
-  Future<void> _choose(BuildContext buttonContext) async {
-    final cubit = buttonContext.read<ChatUnreadCubit>();
-    final box = buttonContext.findRenderObject() as RenderBox?;
-    final overlay =
-        Overlay.of(buttonContext).context.findRenderObject() as RenderBox?;
-    if (box == null || overlay == null) return;
-    final c = buttonContext.colors;
-    final topLeft = box.localToGlobal(Offset.zero, ancestor: overlay);
-    final bottomRight =
-        box.localToGlobal(box.size.bottomRight(Offset.zero), ancestor: overlay);
-    final state = cubit.state;
-    final picked = await showMenu<String>(
-      context: buttonContext,
-      color: c.surfacePanel,
-      position: RelativeRect.fromRect(
-        Rect.fromPoints(topLeft, bottomRight),
-        Offset.zero & overlay.size,
-      ),
-      items: [
-        for (final s in state.sources)
-          PopupMenuItem<String>(
-            value: s.id,
-            height: touchRowHeight(36),
-            child: _ChatSourceRow(
-              source: s,
-              unread: state.unreadIn(s.id),
-              chosen: s.id == state.chosen?.id,
-            ),
-          ),
-      ],
-    );
-    if (picked == null) return;
-    cubit.choose(picked);
-    onTap();
-  }
-}
-
-/// One chat system in the Chat button's menu: its name, a red dot and count
-/// when it has unread chats, and a tick on the one the pane shows.
-class _ChatSourceRow extends StatelessWidget {
-  const _ChatSourceRow({
-    required this.source,
-    required this.unread,
-    required this.chosen,
-  });
-
-  final ChatSource source;
-  final int unread;
-  final bool chosen;
-
-  static IconData iconFor(ChatSourceKind kind) => switch (kind) {
-        ChatSourceKind.teams => Icons.groups_2_outlined,
-        ChatSourceKind.nightmailServer => Icons.forum_outlined,
-        ChatSourceKind.googleChat => Icons.chat_bubble_outline_rounded,
-        ChatSourceKind.slack => Icons.tag_rounded,
-      };
-
-  @override
-  Widget build(BuildContext context) {
-    final c = context.colors;
-    return Row(
-      children: [
-        SizedBox(
-          width: 18,
-          child: chosen
-              ? Icon(Icons.check_rounded, size: 15, color: c.textSecondary)
-              : null,
-        ),
-        const SizedBox(width: 4),
-        Icon(iconFor(source.kind), size: 16, color: c.textMuted),
-        const SizedBox(width: 8),
-        Flexible(
-          child: Text(
-            source.label,
-            overflow: TextOverflow.ellipsis,
-            style: TextStyle(fontSize: 13, color: c.textPrimary),
-          ),
-        ),
-        if (source.needsReconnect) ...[
-          const SizedBox(width: 8),
-          Text('Reconnect',
-              style: TextStyle(fontSize: 11.5, color: c.errorBannerText)),
-        ],
-        if (unread > 0) ...[
-          const SizedBox(width: 10),
-          Container(
-            width: 7,
-            height: 7,
-            decoration: const BoxDecoration(
-              color: AppColors.notification,
-              shape: BoxShape.circle,
-            ),
-          ),
-          const SizedBox(width: 4),
-          Text('$unread',
-              style: TextStyle(fontSize: 12, color: c.textTertiary)),
-        ],
-      ],
+      tooltip: tooltip,
+      onTap: onTap,
+      windowType: 'chat',
     );
   }
 }

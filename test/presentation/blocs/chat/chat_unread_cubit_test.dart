@@ -34,13 +34,13 @@ void main() {
     expect(c.state.total, 3);
     expect(c.state.unreadChats['slack:T1']!.map((c) => c.title),
         ['Chat 0', 'Chat 1'],
-        reason: 'the chats themselves, for the pane\'s dropdown');
+        reason: 'the chats themselves, for the pane\'s unread list');
     expect(c.state.hasChoice, isTrue);
     expect(c.state.chosen, teams, reason: 'the account\'s own chat first');
   });
 
   test('an unread Slack channel lights the dot, as on Slack\'s dock icon — '
-      'the dropdown already offered it', () async {
+      'the pane\'s unread list already showed it', () async {
     final c = await cubit(const [teams, slack],
         unread: const {'work': 1, 'slack:T1': 2}, kind: ChatKind.space);
     expect(c.state.unreadIn('slack:T1'), 2);
@@ -49,21 +49,10 @@ void main() {
     expect(c.state.unreadIn('work'), 1);
   });
 
-  test('picking another system switches; picking the same one toggles',
-      () async {
+  test('picking a system points the pane at it', () async {
     final c = await cubit(const [teams, slack]);
     c.choose('slack:T1');
-    expect(c.takeSwitched(), isTrue);
-    expect(c.takeSwitched(), isFalse, reason: 'read once');
-    c.choose('slack:T1');
-    expect(c.takeSwitched(), isFalse);
     expect(c.state.chosen, slack);
-  });
-
-  test('without a menu nothing is ever switched — the plain toggle',
-      () async {
-    final c = await cubit(const [teams]);
-    expect(c.takeSwitched(), isFalse);
   });
 
   group('change stream', () {

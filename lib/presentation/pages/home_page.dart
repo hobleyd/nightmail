@@ -1401,11 +1401,7 @@ class _ThreePanelLayoutState extends State<_ThreePanelLayout> {
                 }
               },
               onChatTapped: () {
-                // With a menu of chat systems, picking another one while the
-                // pane is open switches it rather than closing it.
-                final switched =
-                    context.read<ChatUnreadCubit>().takeSwitched();
-                if (homeState.view == HomeView.chat && !switched) {
+                if (homeState.view == HomeView.chat) {
                   homeCubit.showEmail();
                 } else {
                   homeCubit.showChat();

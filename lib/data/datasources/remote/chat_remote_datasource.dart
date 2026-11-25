@@ -120,6 +120,14 @@ abstract interface class ChatRemoteDatasource {
     String emoji,
   );
 
+  /// Takes the user's own [emoji] reaction off [message]. True when one was
+  /// removed; false when the server had none of the user's to remove.
+  Future<bool> unreact(
+    ChatConversation conversation,
+    ChatMessage message,
+    String emoji,
+  );
+
   /// Creates (or returns the existing) one-on-one with [email].
   Future<ChatConversation> createOneOnOne({
     required String ownEmail,

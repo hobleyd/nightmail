@@ -202,6 +202,15 @@ abstract interface class ChatRepository {
     String emoji,
   );
 
+  /// Takes the user's own [emoji] reaction off [message]. Right: whether
+  /// there was one to take off.
+  Future<Either<Failure, bool>> unreact(
+    String accountId,
+    ChatConversation conversation,
+    ChatMessage message,
+    String emoji,
+  );
+
   /// Whether [conversation] can be renamed — see
   /// `ChatRemoteDatasource.canRename`.
   bool canRename(String accountId, ChatConversation conversation);

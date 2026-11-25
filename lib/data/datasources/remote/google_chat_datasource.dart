@@ -400,6 +400,33 @@ class GoogleChatDatasource implements ChatRemoteDatasource {
     }
   }
 
+  /// Google deletes a reaction by its name, which only a listing gives: the
+  /// user's own [emoji] reactions on [message] (`reactions.list` filtered by
+  /// emoji and user, under `chat.messages`), each deleted.
+  @override
+  Future<bool> unreact(
+    ChatConversation conversation,
+    ChatMessage message,
+    String emoji,
+  ) async {
+    final own = await ownUserId(conversation);
+    if (own == null) {
+      throw const ServerException(
+          message: 'Google Chat did not say who you are in this space.');
+    }
+    final data = await _get('/${message.id}/reactions', query: {
+      'filter': 'emoji.unicode = "$emoji" AND user.name = "$own"',
+    });
+    final names = [
+      for (final r in _list(data['reactions']))
+        if (r['name'] is String) r['name'] as String,
+    ];
+    for (final name in names) {
+      await _delete('/$name');
+    }
+    return names.isNotEmpty;
+  }
+
   /// `spaces.setup` returns the existing direct message when there is one.
   @override
   Future<ChatConversation> createOneOnOne({
@@ -699,6 +726,14 @@ class GoogleChatDatasource implements ChatRemoteDatasource {
       final r = await _dio.patch<Map<String, dynamic>>(path,
           data: body, queryParameters: query);
       return r.data ?? const {};
+    } on DioException catch (e) {
+      throw _map(e);
+    }
+  }
+
+  Future<void> _delete(String path) async {
+    try {
+      await _dio.delete<Object?>(path);
     } on DioException catch (e) {
       throw _map(e);
     }

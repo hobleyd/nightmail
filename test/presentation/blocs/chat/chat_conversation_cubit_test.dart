@@ -317,6 +317,53 @@ void main() {
       expect(cubit.state.messages[0].reactions, isEmpty);
     });
 
+    test('the user\'s own comes off: one fewer, gone at none', () async {
+      await opened([
+        reacted('a', const [
+          ChatReaction(emoji: '👍', count: 1, userIds: ['UME']),
+          ChatReaction(emoji: '❤️', count: 2, userIds: ['UME', 'UANN']),
+          ChatReaction(emoji: '🎉', count: 1, userIds: ['UANN']),
+        ]),
+      ]);
+      await cubit.unreact(cubit.state.messages[0], '👍');
+      await cubit.unreact(cubit.state.messages[0], '❤️');
+      await cubit.unreact(cubit.state.messages[0], '🎉');
+      expect(repo.unreactions, [('a', '👍'), ('a', '❤️')],
+          reason: 'someone else\'s is not the user\'s to take off');
+      expect(cubit.state.messages[0].reactions, const [
+        ChatReaction(emoji: '❤️', count: 1, userIds: ['UANN']),
+        ChatReaction(emoji: '🎉', count: 1, userIds: ['UANN']),
+      ]);
+      expect(repo.saved.single.reactions.length, 2, reason: 'cached');
+    });
+
+    test('a refusal to take it off is worded and leaves it', () async {
+      await opened([
+        reacted('a', const [
+          ChatReaction(emoji: '👍', count: 1, userIds: ['UME']),
+        ]),
+      ]);
+      repo.reactFailure = const ServerFailure(message: 'Connect again');
+      await cubit.unreact(cubit.state.messages[0], '👍');
+      expect(cubit.state.error, 'Could not remove the reaction: Connect again');
+      expect(cubit.state.messages[0].reactions.single.count, 1);
+    });
+
+    test('a repeat the server reports marks it the user\'s, to take off',
+        () async {
+      // Google: the summary names no one, so only the server's 409 tells.
+      await opened([
+        reacted('a', const [ChatReaction(emoji: '👍', count: 1)]),
+      ]);
+      repo.reactAdds = false;
+      await cubit.react(cubit.state.messages[0], '👍');
+      final r = cubit.state.messages[0].reactions.single;
+      expect(r.count, 1);
+      expect(cubit.isOwnReaction(r), isTrue);
+      await cubit.unreact(cubit.state.messages[0], '👍');
+      expect(cubit.state.messages[0].reactions, isEmpty);
+    });
+
     test('not offered on a deleted message or where the provider cannot',
         () async {
       await opened([
@@ -433,6 +480,16 @@ class _Repo implements ChatRepository {
 
   @override
   bool canReact(String accountId, ChatConversation conversation) => reactable;
+
+  final unreactions = <(String, String)>[];
+
+  @override
+  Future<Either<Failure, bool>> unreact(String accountId,
+      ChatConversation conversation, ChatMessage message, String emoji) async {
+    if (reactFailure != null) return Left(reactFailure!);
+    unreactions.add((message.id, emoji));
+    return const Right(true);
+  }
 
   @override
   Future<Either<Failure, bool>> react(String accountId,

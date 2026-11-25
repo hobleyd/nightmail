@@ -302,8 +302,8 @@ void main() {
       await cubit.close();
     });
 
-    testWidgets('tapping someone\'s reaction adds the user\'s; their own '
-        'is not tapped again', (tester) async {
+    testWidgets('tapping someone\'s reaction adds the user\'s; tapping '
+        'their own takes it off', (tester) async {
       final (repo, cubit) = await pump(
         tester,
         ChatMessage(
@@ -325,6 +325,8 @@ void main() {
       await tester.tap(find.text('❤️'));
       await tester.pumpAndSettle();
       expect(repo.reactions, [('1', '👍')]);
+      expect(repo.unreactions, [('1', '❤️')]);
+      expect(find.text('❤️'), findsNothing, reason: 'it was the only one');
       await cubit.close();
     });
   });
@@ -553,6 +555,15 @@ class _Repo extends Fake implements ChatRepository {
 
   @override
   bool canReact(String accountId, ChatConversation conversation) => true;
+
+  final unreactions = <(String, String)>[];
+
+  @override
+  Future<Either<Failure, bool>> unreact(String accountId,
+      ChatConversation conversation, ChatMessage message, String emoji) async {
+    unreactions.add((message.id, emoji));
+    return const Right(true);
+  }
 
   @override
   Future<Either<Failure, bool>> react(String accountId,

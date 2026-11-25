@@ -417,7 +417,14 @@ anything else in the conversation's (`ChatConversationState.editingInThread`).
   the same menu. The menu is `quickReactions` (`core/text/emoji.dart`):
   Teams' six, then six more — no picker dependency. Tapping a reaction chip
   that is not the user's adds the user's; the user's own chips are outlined.
-- **Adding only.** Removing a reaction is not offered.
+- **Taking one off:** tapping the user's own (outlined) chip removes it
+  (`ChatConversationCubit.unreact`) — Graph `POST …/unsetReaction`, Slack
+  `reactions.remove` (`no_reaction`: already gone), Google `reactions.list`
+  filtered `emoji.unicode = "…" AND user.name = "users/…"` then `DELETE` of
+  each one found (Google deletes by the reaction's name only). Google's
+  summaries name no one, so a Google chip is known to be the user's only
+  once they added it here, or the server answered a repeat as already there
+  (`withReactor`) — then the next tap takes it off.
 - **Calls and scopes:** Graph `POST …/setReaction` `{reactionType: "🎉"}` on
   the chat message, post or reply (`Chat.ReadWrite`; a Microsoft 365
   *channel* needs only `ChannelMessage.Send`, which NightMail already holds,

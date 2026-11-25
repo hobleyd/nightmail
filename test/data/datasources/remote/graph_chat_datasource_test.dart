@@ -706,6 +706,22 @@ void main() {
       expect(page.messages.single.reactions.single,
           const ChatReaction(emoji: '👍', count: 2, userIds: ['u-me', 'u-ann']));
     });
+
+    test('unsetReaction goes where setReaction does', () async {
+      routes['/unsetReaction'] = (o) {
+        expect(o.method, 'POST');
+        expect(o.data, {'reactionType': '🎉'});
+        return <String, Object?>{};
+      };
+      const channel = ChatConversation(
+          id: '19:ch', kind: ChatKind.channel, title: 'G', teamId: 'T');
+      expect(
+          await datasource(server: false)
+              .unreact(channel, anyones('r1', replyToId: 'p1'), '🎉'),
+          isTrue);
+      expect(requests.single.uri.path,
+          endsWith('/teams/T/channels/19:ch/messages/p1/replies/r1/unsetReaction'));
+    });
   });
 
   test('a Teams chat has no threads; a channel does', () {

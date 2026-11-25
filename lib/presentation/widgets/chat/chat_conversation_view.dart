@@ -418,10 +418,13 @@ class _MessageTile extends StatelessWidget {
                   _ReactionChip(
                     reaction: r,
                     own: cubit.isOwnReaction(r),
-                    // Tapping someone else's adds the user's own.
-                    onTap: reactable && !cubit.isOwnReaction(r)
-                        ? () => cubit.react(m, r.emoji)
-                        : null,
+                    // Tapping someone else's adds the user's own; tapping
+                    // the user's own takes it off.
+                    onTap: !reactable
+                        ? null
+                        : cubit.isOwnReaction(r)
+                            ? () => cubit.unreact(m, r.emoji)
+                            : () => cubit.react(m, r.emoji),
                     child: r.imageUrl == null
                         ? Text(
                             r.count > 1 ? '${r.emoji} ${r.count}' : r.emoji,
@@ -653,8 +656,8 @@ class _ReactionGridState extends State<_ReactionGrid> {
   }
 }
 
-/// One reaction under a message: outlined when it includes the user's own,
-/// and — when [onTap] is given — a tap adds the user's.
+/// One reaction under a message: outlined when it includes the user's own.
+/// When [onTap] is given, a tap adds the user's, or — [own] — takes it off.
 class _ReactionChip extends StatelessWidget {
   const _ReactionChip({
     required this.reaction,
@@ -683,7 +686,9 @@ class _ReactionChip extends StatelessWidget {
     );
     if (onTap == null) return chip;
     return Tooltip(
-      message: 'React with ${reaction.emoji}',
+      message: own
+          ? 'Remove your ${reaction.emoji}'
+          : 'React with ${reaction.emoji}',
       child: InkWell(
         borderRadius: BorderRadius.circular(10),
         onTap: onTap,

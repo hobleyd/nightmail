@@ -566,6 +566,37 @@ class SlackChatDatasource implements ChatRemoteDatasource {
     }
   }
 
+  /// `reactions.remove`, by the same name and under the same scope as
+  /// [react]. `no_reaction` is the user's not being there (any more).
+  @override
+  Future<bool> unreact(
+    ChatConversation conversation,
+    ChatMessage message,
+    String emoji,
+  ) async {
+    final name = slackReactionName(emoji);
+    if (name == null) {
+      throw ServerException(message: 'Slack has no emoji for $emoji.');
+    }
+    final scopes = (await _workspaces.byTeam(teamId))?.scopes;
+    if (scopes == null || !scopes.contains('reactions:write')) {
+      throw const ServerException(
+          message: 'Connect this Slack workspace again in Settings to remove '
+              'reactions.');
+    }
+    try {
+      await _call(
+        'reactions.remove',
+        {'channel': conversation.id, 'timestamp': message.id, 'name': name},
+        post: true,
+      );
+      return true;
+    } on SlackApiException catch (e) {
+      if (e.error == 'no_reaction') return false;
+      throw ServerException(message: _readable(e.error));
+    }
+  }
+
   /// The name `reactions.add` wants for [emoji]: a custom emoji's `:name:`
   /// without its colons, else the standard emoji's (skin tone included).
   @visibleForTesting
@@ -1374,11 +1405,13 @@ class SlackChatDatasource implements ChatRemoteDatasource {
         if ((method == 'emoji.list' ||
                 method == 'conversations.mark' ||
                 method == 'conversations.rename' ||
-                method == 'reactions.add') &&
+                method == 'reactions.add' ||
+                method == 'reactions.remove') &&
             error == 'missing_scope') {
           throw SlackApiException(error);
         }
-        if (method == 'reactions.add' && error == 'already_reacted') {
+        if ((method == 'reactions.add' && error == 'already_reacted') ||
+            (method == 'reactions.remove' && error == 'no_reaction')) {
           throw SlackApiException(error);
         }
         if (_reconnectErrors.contains(error)) {

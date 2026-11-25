@@ -539,6 +539,40 @@ void main() {
       await expectLater(datasource().react(chat, message, '👍'),
           throwsA(isA<ServerException>()));
     });
+
+    test('the user\'s own is found by emoji and user, then deleted', () async {
+      routes['/spaces/D/members/un@example.com'] = (_) => {
+            'member': {'name': 'users/42'},
+          };
+      routes['spaces/D/messages/M1/reactions'] = (o) {
+        expect(o.method, 'GET');
+        expect(o.queryParameters['filter'],
+            'emoji.unicode = "👍" AND user.name = "users/42"');
+        return {
+          'reactions': [
+            {'name': 'spaces/D/messages/M1/reactions/R1'},
+          ],
+        };
+      };
+      routes['spaces/D/messages/M1/reactions/R1'] = (o) {
+        expect(o.method, 'DELETE');
+        return <String, Object?>{};
+      };
+      final ds = datasource(own: 'un@example.com');
+      expect(await ds.unreact(chat, message, '👍'), isTrue);
+      expect(requests.last.method, 'DELETE');
+    });
+
+    test('none of the user\'s to delete says so', () async {
+      routes['/spaces/D/members/un2@example.com'] = (_) => {
+            'member': {'name': 'users/43'},
+          };
+      routes['spaces/D/messages/M1/reactions'] = (_) => <String, Object?>{};
+      expect(
+          await datasource(own: 'un2@example.com').unreact(chat, message, '👍'),
+          isFalse);
+      expect(requests.where((r) => r.method == 'DELETE'), isEmpty);
+    });
   });
 
   test('only a threaded space threads; a DM does not', () {

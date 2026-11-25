@@ -304,6 +304,42 @@ class ChatMessage extends Equatable {
     );
   }
 
+  /// This message with [userId] known to be among [emoji]'s givers — the
+  /// server said the user's was already there — without counting it again.
+  ChatMessage withReactor(String emoji, String userId) => _copy(
+        reactions: [
+          for (final r in reactions)
+            r.emoji == emoji && !r.userIds.contains(userId)
+                ? ChatReaction(
+                    emoji: r.emoji,
+                    count: r.count,
+                    imageUrl: r.imageUrl,
+                    userIds: [...r.userIds, userId],
+                  )
+                : r,
+        ],
+      );
+
+  /// This message after [userId] (the user) took their [emoji] reaction
+  /// off: one fewer, gone at none.
+  ChatMessage withoutReaction(String emoji, String? userId) => _copy(
+        reactions: [
+          for (final r in reactions)
+            if (r.emoji != emoji)
+              r
+            else if (r.count > 1)
+              ChatReaction(
+                emoji: r.emoji,
+                count: r.count - 1,
+                imageUrl: r.imageUrl,
+                userIds: [
+                  for (final u in r.userIds)
+                    if (u != userId) u,
+                ],
+              ),
+        ],
+      );
+
   ChatMessage _copy({
     String? bodyHtml,
     String? editableText,

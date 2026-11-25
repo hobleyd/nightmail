@@ -915,6 +915,26 @@ void main() {
       expect(m.reactions.single,
           const ChatReaction(emoji: '🎉', count: 2, userIds: ['UME', 'UANN']));
     });
+
+    test('reactions.remove takes it off; no_reaction is it already gone',
+        () async {
+      await connected(scopes: SlackWorkspaces.userScopes.toSet());
+      routes['reactions.remove'] = (o) {
+        expect(o.data, {
+          'channel': 'C1',
+          'timestamp': '1700000000.000200',
+          'name': 'heart',
+        });
+        return {'ok': true};
+      };
+      expect(await datasource().unreact(general, message, '❤️'), isTrue);
+      routes['reactions.remove'] = (_) => {'ok': false, 'error': 'no_reaction'};
+      expect(await datasource().unreact(general, message, '❤️'), isFalse);
+      routes['reactions.remove'] = (_) => {'ok': false, 'error': 'missing_scope'};
+      await expectLater(datasource().unreact(general, message, '❤️'),
+          throwsA(isA<ServerException>()));
+      expect((await workspaces.byTeam('T1'))!.needsReconnect, isFalse);
+    });
   });
 
   test('a DM and a group DM thread as channels do', () {

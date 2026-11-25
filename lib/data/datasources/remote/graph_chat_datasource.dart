@@ -399,6 +399,19 @@ class GraphChatDatasource implements ChatRemoteDatasource {
     return true;
   }
 
+  /// `unsetReaction`, under the same access as `setReaction`. 204 either way:
+  /// Graph does not say whether there was one to remove.
+  @override
+  Future<bool> unreact(
+    ChatConversation conversation,
+    ChatMessage message,
+    String emoji,
+  ) async {
+    await _post('${_messagePath(conversation, message)}/unsetReaction',
+        {'reactionType': emoji});
+    return true;
+  }
+
   /// A group chat's topic (`Chat.ReadWrite`). A channel only on a NightMail
   /// Server: Microsoft wants `ChannelSettings.ReadWrite.All`, admin consent.
   /// A meeting chat's topic is the meeting's.

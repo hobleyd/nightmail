@@ -715,11 +715,41 @@ class ChatConversationCubit extends Cubit<ChatConversationState> {
               ? _messageOf(f)
               : 'Could not add the reaction: ${f.message}')),
       (added) {
-        if (!added) return;
+        final own = state.ownUserId;
+        if (!added) {
+          // Already the user's (Google names no one who reacted): say so,
+          // so the next tap takes it off.
+          if (own != null) _swap(m.id, (x) => x.withReactor(emoji, own));
+          return;
+        }
         // A poll may have brought the reaction in while the call ran.
         _swap(m.id,
             (x) => given(x) ? x : x.withReaction(emoji, state.ownUserId));
       },
+    );
+  }
+
+  /// Takes the user's own [emoji] reaction off [m] — only one known to be
+  /// theirs ([isOwnReaction]). Taken off here once the server has done it;
+  /// gone from the server already, it goes here too.
+  Future<void> unreact(ChatMessage m, String emoji) async {
+    final accountId = state.accountId;
+    final conversation = state.conversation;
+    if (!canReact(m) || accountId == null || conversation == null) return;
+    bool given(ChatMessage x) =>
+        x.reactions.any((r) => r.emoji == emoji && isOwnReaction(r));
+    if (!given(m)) return;
+    final gen = _generation;
+    final result = await _repo.unreact(accountId, conversation, m, emoji);
+    if (gen != _generation || isClosed) return;
+    result.match(
+      (f) => emit(state.copyWith(
+          error: () => f is AuthFailure || f is NetworkFailure
+              ? _messageOf(f)
+              : 'Could not remove the reaction: ${f.message}')),
+      // A poll may have taken it off while the call ran.
+      (_) => _swap(m.id,
+          (x) => given(x) ? x.withoutReaction(emoji, state.ownUserId) : x),
     );
   }
 

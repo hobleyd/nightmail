@@ -614,6 +614,15 @@ class ChatRepositoryImpl implements ChatRepository {
       _guard(accountId, (ds) => ds.react(conversation, message, emoji));
 
   @override
+  Future<Either<Failure, bool>> unreact(
+    String accountId,
+    ChatConversation conversation,
+    ChatMessage message,
+    String emoji,
+  ) =>
+      _guard(accountId, (ds) => ds.unreact(conversation, message, emoji));
+
+  @override
   bool canRename(String accountId, ChatConversation conversation) =>
       _ds(accountId)?.canRename(conversation) ?? false;
 

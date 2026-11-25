@@ -210,9 +210,33 @@ Google: the newest message the unread check already reads, remembered in
   `AppSettings.chat_sort_by_name`.
 - **The pane's dropdown** offers, under the email's people, the chosen
   system's unread chats (`ChatUnreadState.unreadChats`), less any
-  one-on-one with someone already listed. Picking one opens it in place;
-  once read it stays in the dropdown until something else is picked, and a
-  new email (or another system) goes back to the email's people.
+  one-on-one with someone already listed. Picking one opens it in place
+  until something else is picked; a new email (or another system) goes back
+  to the email's people.
+
+## Finding anyone from the pane
+
+The pane's dropdown is a menu (`ChatPanePicker`) with a field on top: typing
+matches the email's people, the address book and every listed chat and
+channel. It is always there once the system has chat access, even for one
+person or no email at all.
+
+- **People** come from the contacts typeahead (`SearchContacts` — local
+  SQL, never the network; see `lib/infrastructure/contacts/CLAUDE.md`), then
+  through `reachable`, the same gate as the email's people: an outsider
+  with no one-on-one is never offered. On Google each outsider is a
+  `findDirectMessage`, so answers are remembered for as long as the menu
+  is open, not asked per keystroke.
+- **Chats and channels** are matched in Dart on title, team and members
+  over `cachedConversations` (disk) and then one `conversations()` per
+  menu — in the main window that is often the first listing this isolate
+  has made, since the unread poll uses `listRecentChats`.
+- A person or chat picked here, like an unread chat, holds the pane until
+  another email or system is selected (`_picked`, `_chat`). Enter takes the
+  first match.
+- `MenuAnchor` maps every arrow key to focus traversal; the field maps
+  left/right back to cursor movement, or they would jump out of it
+  (`chat_pane_picker_test.dart`). Up/down still move into the list.
 
 The Chat button carries the Tasks button's red dot while any of the active
 account's recent chats is unread (`ChatUnreadCubit`, main window only).

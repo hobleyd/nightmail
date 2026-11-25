@@ -19,6 +19,7 @@ import '../../blocs/chat/chat_unread_cubit.dart';
 import '../../blocs/email_detail/email_detail_bloc.dart';
 import '../../blocs/email_detail/email_detail_state.dart';
 import 'chat_conversation_view.dart';
+import 'chat_pane_picker.dart';
 
 /// The Chat pane beside the reading pane: a one-on-one with the selected
 /// email's sender, or — from the dropdown — with anyone else on it who is in
@@ -36,8 +37,9 @@ import 'chat_conversation_view.dart';
 /// where the people on offer are the ones Slack finds by address.
 ///
 /// The dropdown also offers that system's unread chats
-/// ([ChatUnreadState.unreadChats]), under the people: picking one opens it
-/// in place until another email is selected.
+/// ([ChatUnreadState.unreadChats]), under the people, and a field that finds
+/// anyone in the address book or any chat or channel ([ChatPanePicker]):
+/// picking one of those opens it in place until another email is selected.
 class ChatPanel extends StatelessWidget {
   const ChatPanel({
     super.key,
@@ -82,9 +84,10 @@ class _ChatPanelBodyState extends State<_ChatPanelBody> {
   /// them.
   String? _chosen;
 
-  /// An unread chat picked from the dropdown, and the email it was picked
-  /// on: a new email goes back to its people.
+  /// A chat, or a person not on the email, picked from the dropdown, and
+  /// the email it was picked on: a new email goes back to its people.
   ChatConversation? _chat;
+  ChatPerson? _picked;
   String? _chatEmailId;
 
   /// What the conversation cubit was last pointed at: `account|address`.
@@ -167,7 +170,7 @@ class _ChatPanelBodyState extends State<_ChatPanelBody> {
     }
   }
 
-  /// The chat system [_chat] was picked on.
+  /// The chat system [_chat] or [_picked] was picked on.
   String? _chatSourceId;
 
   Future<void> _grant() async {
@@ -218,17 +221,19 @@ class _ChatPanelBodyState extends State<_ChatPanelBody> {
     final candidates = colleagues == null
         ? const <ChatPerson>[]
         : everyone.where((p) => colleagues.contains(p.email)).toList();
-    final person = candidates
-            .where((p) => p.email == _chosen)
-            .firstOrNull ??
-        candidates.firstOrNull;
-
-    // A chat picked on another email, or on another chat system, is let go.
-    if (_chat != null &&
+    // A chat or person picked on another email, or on another chat system,
+    // is let go.
+    if ((_chat != null || _picked != null) &&
         (_chatEmailId != email?.id || _chatSourceId != chatId)) {
       _chat = null;
+      _picked = null;
     }
     final chat = _chat;
+    final picked = _picked;
+    final person = picked ??
+        candidates.where((p) => p.email == _chosen).firstOrNull ??
+        candidates.firstOrNull;
+
     final people = {for (final p in everyone) p.email};
     final unreadChats = <ChatConversation>[
       for (final c in unreadState.unreadChats[chatId] ?? const [])
@@ -237,12 +242,6 @@ class _ChatPanelBodyState extends State<_ChatPanelBody> {
             c.members.any((m) => people.contains(m.email))))
           c,
     ];
-    // Once read — or filtered — the open one stays until something else is
-    // picked: the dropdown's value must always be one of its items.
-    if (chat != null && !unreadChats.any((c) => c.key == chat.key)) {
-      unreadChats.add(chat);
-    }
-
     if (chatId != null) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted) _sync(chatId, person, chat);
@@ -277,7 +276,7 @@ class _ChatPanelBodyState extends State<_ChatPanelBody> {
             ? source.label.replaceFirst('Slack · ', '')
             : null,
       );
-    } else if (chat != null) {
+    } else if (chat != null || picked != null) {
       body = const ChatConversationView();
     } else if (everyone.isNotEmpty && colleagues == null) {
       body = const Center(
@@ -291,7 +290,8 @@ class _ChatPanelBodyState extends State<_ChatPanelBody> {
     } else if (person == null) {
       body = _PaneNotice(
           text: everyone.isEmpty
-              ? 'Select an email to chat with the people on it.'
+              ? 'Select an email to chat with the people on it, or find '
+                  'anyone above.'
               : source != null && source.isSlack
                   ? 'Nobody on this email is in ${source.label}.'
                   : 'Nobody on this email is in your organisation or has '
@@ -332,19 +332,31 @@ class _ChatPanelBodyState extends State<_ChatPanelBody> {
                   ),
                   const SizedBox(width: 8),
                   Expanded(
-                    child: candidates.length + unreadChats.length > 1 ||
-                            (person == null && unreadChats.isNotEmpty)
-                        ? _PersonDropdown(
+                    child: chatId != null &&
+                            account != null &&
+                            (_access == ChatAccess.chatsOnly ||
+                                _access == ChatAccess.full)
+                        ? ChatPanePicker(
+                            chatId: chatId,
+                            account: account,
                             people: candidates,
                             chats: unreadChats,
                             selectedPerson: chat == null ? person : null,
                             selectedChat: chat,
                             onPerson: (p) => setState(() {
-                              _chosen = p.email;
                               _chat = null;
+                              if (candidates.any((c) => c.email == p.email)) {
+                                _chosen = p.email;
+                                _picked = null;
+                              } else {
+                                _picked = p;
+                                _chatEmailId = email?.id;
+                                _chatSourceId = chatId;
+                              }
                             }),
                             onChat: (c) => setState(() {
                               _chat = c;
+                              _picked = null;
                               _chatEmailId = email?.id;
                               _chatSourceId = chatId;
                             }),
@@ -381,121 +393,6 @@ class _ChatPanelBodyState extends State<_ChatPanelBody> {
           Divider(height: 1, color: c.separatorStrong),
           Expanded(child: body),
         ],
-      ),
-    );
-  }
-}
-
-/// The people on the email, then — under "Unread" — the chat system's
-/// unread chats. Values are `p:{address}` and `c:{conversation key}`.
-class _PersonDropdown extends StatelessWidget {
-  const _PersonDropdown({
-    required this.people,
-    required this.chats,
-    required this.selectedPerson,
-    required this.selectedChat,
-    required this.onPerson,
-    required this.onChat,
-  });
-
-  final List<ChatPerson> people;
-  final List<ChatConversation> chats;
-  final ChatPerson? selectedPerson;
-  final ChatConversation? selectedChat;
-  final ValueChanged<ChatPerson> onPerson;
-  final ValueChanged<ChatConversation> onChat;
-
-  @override
-  Widget build(BuildContext context) {
-    final c = context.colors;
-    final value = selectedChat != null
-        ? 'c:${selectedChat!.key}'
-        : selectedPerson != null
-            ? 'p:${selectedPerson!.email}'
-            : null;
-    return DropdownButtonHideUnderline(
-      child: DropdownButton<String>(
-        value: value,
-        hint: Text('${chats.length} unread',
-            style: TextStyle(color: c.textSecondary, fontSize: 14)),
-        isExpanded: true,
-        isDense: true,
-        dropdownColor: c.surfacePanel,
-        style: TextStyle(
-          color: c.textPrimary,
-          fontSize: 14,
-          fontWeight: FontWeight.w600,
-        ),
-        selectedItemBuilder: (_) => [
-          for (final p in people)
-            Text(p.label, overflow: TextOverflow.ellipsis),
-          if (chats.isNotEmpty) const SizedBox.shrink(),
-          for (final ch in chats)
-            Text(ch.title, overflow: TextOverflow.ellipsis),
-        ],
-        items: [
-          for (final p in people)
-            DropdownMenuItem(
-              value: 'p:${p.email}',
-              child: Tooltip(
-                message: p.email,
-                child: Text(p.label, overflow: TextOverflow.ellipsis),
-              ),
-            ),
-          if (chats.isNotEmpty)
-            DropdownMenuItem<String>(
-              enabled: false,
-              child: Text(
-                'UNREAD',
-                style: TextStyle(
-                  fontSize: 10.5,
-                  letterSpacing: 0.6,
-                  fontWeight: FontWeight.w700,
-                  color: c.textMuted,
-                ),
-              ),
-            ),
-          for (final ch in chats)
-            DropdownMenuItem(
-              value: 'c:${ch.key}',
-              child: Row(
-                children: [
-                  Icon(
-                    switch (ch.kind) {
-                      ChatKind.oneOnOne => Icons.person_outline,
-                      ChatKind.channel || ChatKind.space => Icons.tag,
-                      _ => Icons.people_outline,
-                    },
-                    size: 15,
-                    color: c.textTertiary,
-                  ),
-                  const SizedBox(width: 6),
-                  Expanded(
-                    child: Text(ch.title, overflow: TextOverflow.ellipsis),
-                  ),
-                  if (ch.unread)
-                    Container(
-                      width: 7,
-                      height: 7,
-                      decoration: const BoxDecoration(
-                        color: AppColors.accent,
-                        shape: BoxShape.circle,
-                      ),
-                    ),
-                ],
-              ),
-            ),
-        ],
-        onChanged: (v) {
-          if (v == null) return;
-          if (v.startsWith('p:')) {
-            final p = people.where((p) => 'p:${p.email}' == v).firstOrNull;
-            if (p != null) onPerson(p);
-          } else {
-            final ch = chats.where((ch) => 'c:${ch.key}' == v).firstOrNull;
-            if (ch != null) onChat(ch);
-          }
-        },
       ),
     );
   }

@@ -53,8 +53,11 @@ void main() {
     test('the paste path shares the same sanitiser', () {
       expect(functionBody('_sanitizeHtmlFragment'),
           contains('_parseSanitizedBody('));
-      expect(editor, contains("execCommand('insertHTML', false, "
-          '_sanitizeHtmlFragment(html))'));
+      // Pasted HTML is cleaned by the same parse, then has the source's
+      // unset-style markers dropped before it is serialised for insertHTML.
+      expect(editor, contains('const body = _parseSanitizedBody(html);\n'
+          '    _dropUnsetPastedStyles(body);\n'
+          "    document.execCommand('insertHTML', false, body.innerHTML);"));
     });
 
     test('the sanitiser parses in an inert document', () {

@@ -332,6 +332,34 @@ it. Measured: `<ul><li>one</li><li>two</li></ul>` → `<ul><li>one</li></ul>two`
 `test/presentation/widgets/editor_keyboard_shortcuts_test.dart` pins the
 binding table, since the behaviour itself only exists inside a real engine.
 
+## Pasting From the Reading Pane
+
+**NightMail's outgoing HTML declares no font** — the body is the editor's bare
+fragment, and the 13px system font lives only in the editor's stylesheet. So
+the reading pane shows NightMail mail at WebKit's default (16px), and WebKit's
+copy writes the source's inherited style onto every copied block: measured in
+WKWebView, `font-size: medium; color: rgb(0, 0, 0); font-family:
+-webkit-standard; caret-color: …`. Pasted as-is that is 16px text in a 13px
+composer, and black text in a dark one.
+
+The paste handler's HTML branch therefore drops the declarations that mean
+"the source set nothing" (`_dropUnsetPastedStyles`): `font-size: medium`,
+`font-family: -webkit-standard`, black, and any `caret-color`. An explicit
+`11pt`/Calibri from Outlook survives, measured. Paste only — `setContent` and
+quoted replies keep the sender's look. Compose-to-compose was already fine
+(the copy carries the editor's own 13px).
+
+**Blink is unverified.** Chrome's clipboard serialiser may write resolved
+values (`16px`, `"Times New Roman"`) instead of keywords, which this does not
+catch, so the reading-pane paste on Windows/Android may still come in large.
+The root-cause fix — declaring the editor's font on outgoing mail — changes
+every message recipients see, so it is a product decision, not done here.
+
+**The format painter copies from the caret too** when nothing is selected, as
+Word does. Text in the editor's own colour paints no colour: that colour is
+the theme's, and dark mode's near-white would otherwise be written into the
+message.
+
 ## Formatting As You Type
 
 Two Markdown-shaped habits a mail composer inherits from Word, Outlook, Docs

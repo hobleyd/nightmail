@@ -105,15 +105,49 @@ class _ChatPanelBodyState extends State<_ChatPanelBody> {
   static double? _savedSplit;
   double _split = _savedSplit ?? AppSettings.defaultChatPaneSplit;
 
+  /// What the pane had open when it was last closed — switching to
+  /// Meetings and back disposes it — so it reopens on the same chat or
+  /// channel. [build]'s usual rules then apply: a different chat system, or
+  /// (unless it came from the unread list) a different email, lets it go.
+  static ({
+    ChatConversation? chat,
+    ChatPerson? picked,
+    bool held,
+    String? emailId,
+    String? sourceId,
+    String? chosen,
+  })? _lastOpen;
+
   @override
   void initState() {
     super.initState();
+    if (_lastOpen case final last?) {
+      _chat = last.chat;
+      _picked = last.picked;
+      _held = last.held;
+      _chatEmailId = last.emailId;
+      _chatSourceId = last.sourceId;
+      _chosen = last.chosen;
+    }
     if (_savedSplit == null && sl.isRegistered<AppSettings>()) {
       sl<AppSettings>().loadChatPaneSplit().then((v) {
         _savedSplit ??= v;
         if (mounted) setState(() => _split = _savedSplit!);
       });
     }
+  }
+
+  @override
+  void dispose() {
+    _lastOpen = (
+      chat: _chat,
+      picked: _picked,
+      held: _held,
+      emailId: _chatEmailId,
+      sourceId: _chatSourceId,
+      chosen: _chosen,
+    );
+    super.dispose();
   }
 
   void _saveSplit() {

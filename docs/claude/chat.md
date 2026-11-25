@@ -245,6 +245,13 @@ Google: the newest message the unread check already reads, remembered in
   row (an older chat sorts below the rows in view); Escape clears. The first
   keystroke lists the system's conversations — the disk cache, then one
   `conversations()` per pane and system — never merely opening the pane.
+- **Switching away and back keeps the pick.** Meetings, Tasks or email
+  dispose the pane; its pick (`_chat`, `_picked`, `_held`, the email and
+  system it was made on, the chosen person) is kept in a static
+  `_lastOpen` on dispose and restored in `initState`, so it reopens on the
+  same chat or channel. The usual rules still apply on return: another
+  system lets it go, and a dropdown pick (not `_held`) lets go if another
+  email was selected meanwhile.
 
 ## Finding anyone from the pane
 

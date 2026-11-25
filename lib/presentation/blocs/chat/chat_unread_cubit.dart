@@ -125,19 +125,13 @@ class ChatUnreadCubit extends Cubit<ChatUnreadState> {
       chosenId: state.chosenId,
       unread: {
         for (var i = 0; i < sources.length; i++)
-          sources[i].id: chats[i].where((c) => _counts(sources[i], c)).length,
+          sources[i].id: chats[i].length,
       },
       unreadChats: {
         for (var i = 0; i < sources.length; i++) sources[i].id: chats[i],
       },
     ));
   }
-
-  /// Whether [chat] counts towards the dot. A Slack channel is bolded in
-  /// the window and offered in the pane, but — as on Slack's own badge —
-  /// a channel message is not something waiting on the user.
-  static bool _counts(ChatSource source, ChatConversation chat) =>
-      !(source.isSlack && chat.kind == ChatKind.space);
 
   /// Points the Chat pane at [sourceId] (from the button's menu).
   void choose(String sourceId) {

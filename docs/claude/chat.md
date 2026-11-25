@@ -494,9 +494,15 @@ than falling into an account lookup that answers null.
   People's, bots' (`bot_message`), file-share and broadcast messages
   count; joins, leaves and topic changes do not (`_unreadSubtypes`).
   Muted channels are bolded too: mute state is not in the Web API.
-- **The dot leaves Slack channels out** (`ChatUnreadCubit._counts`), as
-  Slack's badge does — a channel message is not waiting on the user. They
-  are bolded in the window and offered in the pane's dropdown.
+- **A poll's answer is remembered** (`_wasUnread`, per isolate): a
+  conversation not asked about this poll keeps its last answer, or an
+  unread channel blinked out whenever the rotation passed it by — the
+  dropdown said 2 while Slack said 5. Those last found unread take the
+  "newest" half of the slots first, so one read in Slack clears within a
+  poll; the rotating half is never given up to them.
+- **Slack channels light the dot**, as they dot Slack's own dock icon (1.58.1
+  left them out; the user expected the dot when the dropdown offered them).
+  Muted channels count too — mute state is not in the Web API.
 - **Marking a channel read** needs `channels:write` and `groups:write`
   (added 1.58.1). A workspace connected before lacks them: `markRead` skips
   the call when `SlackWorkspace.scopes` does not hold both, and a

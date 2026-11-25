@@ -549,6 +549,53 @@ void main() {
     expect(asked, hasLength(30));
   });
 
+  test('unread channels the poll passes by stay unread; one read elsewhere '
+      'clears at its next check', () async {
+    routes['users.conversations'] = (_) => {
+          'ok': true,
+          'channels': [
+            for (var i = 0; i < 30; i++)
+              {'id': 'C$i', 'is_channel': true, 'name': 'c$i'},
+          ],
+        };
+    // More unread than a poll's four re-check slots.
+    final unreadIds = {'C0', 'C1', 'C2', 'C3', 'C4', 'C5'};
+    final asked = <String>{};
+    routes['conversations.info'] = (o) {
+      final id = o.queryParameters['channel'] as String;
+      asked.add(id);
+      return {
+        'ok': true,
+        'channel': {
+          'id': id,
+          'last_read': unreadIds.contains(id) ? '1.0' : '99.0',
+        },
+      };
+    };
+    routes['conversations.history'] = (o) => {
+          'ok': true,
+          'messages': [
+            {'ts': '2.${o.queryParameters['channel']!.substring(1)}',
+              'user': 'UANN'},
+          ],
+        };
+    final ds = datasource();
+    Future<Set<String>> unread() async => {
+          for (final c in await ds.listRecentChats())
+            if (c.unread) c.id,
+        };
+    expect(await unread(), unreadIds);
+    for (var poll = 0; poll < 3; poll++) {
+      asked.clear();
+      expect(await unread(), unreadIds);
+      expect(asked.containsAll(unreadIds), isFalse,
+          reason: 'some were passed by, and kept their answer');
+    }
+    unreadIds.remove('C0');
+    expect(await unread(), unreadIds,
+        reason: 'one last found unread is asked about first');
+  });
+
   group('marking a channel read', () {
     const channel =
         ChatConversation(id: 'C1', kind: ChatKind.space, title: '#g');

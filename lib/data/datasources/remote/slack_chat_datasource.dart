@@ -52,6 +52,12 @@ class SlackChatDatasource implements ChatRemoteDatasource {
   /// has read it — what the unread poll orders its checks by.
   static final _latest = <String, String>{};
 
+  /// Conversations the last check of each found unread, per `team|id`. A
+  /// poll only asks about some of them, so one not asked about this time
+  /// keeps the answer it had — or an unread channel would blink out of the
+  /// count whenever the rotation passed it by.
+  static final _wasUnread = <String, ChatConversation>{};
+
   /// Direct messages by the other person's user id, per team, and when they
   /// were listed: [findOneOnOne] never opens one, so it looks here.
   static final _ims = <String, Map<String, String>>{};
@@ -92,6 +98,7 @@ class SlackChatDatasource implements ChatRemoteDatasource {
     _users.clear();
     _byEmail.clear();
     _latest.clear();
+    _wasUnread.clear();
     _ims.clear();
     _imsListedAt.clear();
     _rotation.clear();
@@ -146,11 +153,12 @@ class SlackChatDatasource implements ChatRemoteDatasource {
   }
 
   /// Direct and group messages, and channels — which Slack's sidebar bolds
-  /// too; the Chat button's dot leaves channels out (`ChatUnreadCubit`), as
-  /// Slack's badge does. Each poll asks about the most recently active of
-  /// each ([_unreadChecked], [_channelsChecked]); the other half of the
-  /// slots go round the rest in turn, so a channel that wakes after a quiet
-  /// spell is reached within a few polls, not never.
+  /// too, and its dock icon dots. Each poll asks about the ones last found
+  /// unread, then the most recently active, of each ([_unreadChecked],
+  /// [_channelsChecked]); the other half of the slots go round the rest in
+  /// turn, so a channel that wakes after a quiet spell is reached within a
+  /// few polls, not never. One not asked about keeps its last answer
+  /// ([_wasUnread]).
   @override
   Future<List<ChatConversation>> listRecentChats() async {
     final raw =
@@ -176,29 +184,49 @@ class SlackChatDatasource implements ChatRemoteDatasource {
           final state = await _readState(channel, own);
           final parsed = _parseConversation({...c, ...channel}, own);
           if (parsed == null) return;
-          out.add(parsed.copyWith(
+          final checked = parsed.copyWith(
             unread: state.unread,
             lastActivity: state.latest,
-          ));
+          );
+          final key = '$teamId|${checked.id}';
+          if (checked.unread) {
+            _wasUnread[key] = checked;
+          } else {
+            _wasUnread.remove(key);
+          }
+          out.add(checked);
         } on ServerException catch (e) {
           if (e is SlackReconnectException) rethrow;
           // One that cannot be asked leaves the rest counted.
         }
       }));
     }
+    // Still a member (a channel left drops out), not asked this time.
+    final asked = {for (final c in out) c.id};
+    for (final c in raw) {
+      final id = c['id'];
+      if (asked.contains(id)) continue;
+      if (_wasUnread['$teamId|$id'] case final last?) out.add(last);
+    }
     return out;
   }
 
-  /// [n] of [all]: half the most recently active, the rest in turn — in
+  /// [n] of [all]: half those last found unread (so one read elsewhere
+  /// clears soon) and then the most recently active, the rest in turn — in
   /// Slack's listing order, which holds still between polls where activity
   /// does not, so every one is reached within `all / (n / 2)` polls.
   List<Map<String, dynamic>> _pick(
       List<Map<String, dynamic>> all, int n, String kind) {
     if (all.length <= n) return all;
     String? latestOf(Map<String, dynamic> c) => _latest['$teamId|${c['id']}'];
+    bool wasUnread(Map<String, dynamic> c) =>
+        _wasUnread.containsKey('$teamId|${c['id']}');
     final known = all.where((c) => latestOf(c) != null).toList()
       ..sort((a, b) => latestOf(b)!.compareTo(latestOf(a)!));
-    final picked = known.take(n ~/ 2).toList();
+    final picked = [
+      ...all.where(wasUnread),
+      ...known.where((c) => !wasUnread(c)),
+    ].take(n ~/ 2).toList();
     final rest = all.where((c) => !picked.contains(c)).toList();
     final key = '$teamId|$kind';
     final start = (_rotation[key] ?? 0) % rest.length;
@@ -246,6 +274,7 @@ class SlackChatDatasource implements ChatRemoteDatasource {
   /// here until something newer arrives, it just stays unread in Slack.
   @override
   Future<void> markRead(ChatConversation chat) async {
+    _wasUnread.remove('$teamId|${chat.id}');
     if (chat.kind == ChatKind.space) {
       final scopes = (await _workspaces.byTeam(teamId))?.scopes;
       if (scopes == null ||

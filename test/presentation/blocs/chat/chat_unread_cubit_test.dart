@@ -39,11 +39,12 @@ void main() {
     expect(c.state.chosen, teams, reason: 'the account\'s own chat first');
   });
 
-  test('an unread Slack channel is offered but leaves the dot alone, as on '
-      'Slack\'s badge; a Google space still counts', () async {
+  test('an unread Slack channel lights the dot, as on Slack\'s dock icon — '
+      'the dropdown already offered it', () async {
     final c = await cubit(const [teams, slack],
         unread: const {'work': 1, 'slack:T1': 2}, kind: ChatKind.space);
-    expect(c.state.unreadIn('slack:T1'), 0);
+    expect(c.state.unreadIn('slack:T1'), 2);
+    expect(c.state.total, 3);
     expect(c.state.unreadChats['slack:T1'], hasLength(2));
     expect(c.state.unreadIn('work'), 1);
   });

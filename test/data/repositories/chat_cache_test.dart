@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:nightmail/core/error/exceptions.dart';
@@ -51,6 +52,17 @@ void main() {
     expect(list.map((c) => c.id), ['old', 'new'],
         reason: 'sorted by the cached activity, not by name');
     expect(list.first.lastMessagePreview, 'last week');
+  });
+
+  test('a sent picture shows from the pasted bytes, not a fetch that could '
+      'miss while the server processes it', () async {
+    final bytes = Uint8List.fromList([1, 2, 3]);
+    const chat = ChatConversation(id: 'c', kind: ChatKind.group, title: 'G');
+    await repo.sendMessage('acct', chat, 'look',
+        image: ChatOutgoingImage(
+            bytes: bytes, mimeType: 'image/png', name: 'a.png'));
+    expect(await repo.image('acct', 'https://x/a?b=1&c=2'), bytes);
+    expect(ds.imagesFetched, isEmpty);
   });
 
   test('a rename retitles the listed conversation without moving it',
@@ -245,6 +257,29 @@ class _Chats extends Fake implements ChatRemoteDatasource {
       channel.copyWith(
           lastActivity: DateTime.utc(2026, 11, 25, 8),
           lastMessagePreview: 'hi');
+
+  final imagesFetched = <String>[];
+
+  @override
+  Future<Uint8List?> image(String src) async {
+    imagesFetched.add(src);
+    return null;
+  }
+
+  @override
+  Future<ChatMessage> send(
+    ChatConversation conversation,
+    String text, {
+    ChatMessage? replyTo,
+    ChatOutgoingImage? image,
+  }) async =>
+      ChatMessage(
+        id: 'm',
+        createdAt: DateTime.utc(2026, 11, 25, 9),
+        senderName: 'Me',
+        bodyHtml: '<p>$text</p><img data-emoji src="https://e/x.png" '
+            'alt=":x:"><img src="https://x/a?b=1&amp;c=2" alt="a.png">',
+      );
 
   @override
   Future<ChatConversation> rename(

@@ -7,6 +7,8 @@ project(runner LANGUAGES CXX)
 #
 # Any new source files that you add to the application should be added here.
 add_executable(${BINARY_NAME}
+  "clipboard_channel.cc"
+  "clipboard_image.cc"
   "egl_shim.cc"
   "main.cc"
   "my_application.cc"

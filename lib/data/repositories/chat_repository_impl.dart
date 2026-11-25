@@ -572,12 +572,41 @@ class ChatRepositoryImpl implements ChatRepository {
     ChatConversation conversation,
     String text, {
     ChatMessage? replyTo,
+    ChatOutgoingImage? image,
   }) =>
       _guard(accountId, (ds) async {
-        final sent = await ds.send(conversation, text, replyTo: replyTo);
+        final sent = await ds.send(conversation, text,
+            replyTo: replyTo, image: image);
+        if (image != null) _seedImage(accountId, sent, image.bytes);
         _touch(accountId, conversation, sent);
         return sent;
       });
+
+  @override
+  bool canSendImage(String accountId, ChatConversation conversation) =>
+      _ds(accountId)?.canSendImage(conversation) ?? false;
+
+  /// The picture just sent, under the `src` its echo shows it by. Google and
+  /// Slack process an upload after answering, so fetching it at once can
+  /// miss — and a miss stays a miss until restart.
+  void _seedImage(String accountId, ChatMessage sent, Uint8List bytes) {
+    final srcs = [
+      for (final m in _imgTag.allMatches(sent.bodyHtml))
+        if (!m[0]!.contains('data-emoji')) _unescapeAttr(m[1]!),
+    ];
+    if (srcs.length != 1) return;
+    _images.remove('$accountId|img|${srcs.single}');
+    _cachedImage('$accountId|img|${srcs.single}', () => Future.value(bytes));
+  }
+
+  static final _imgTag = RegExp(r'<img\b[^>]*?\bsrc="([^"]*)"[^>]*>');
+
+  static String _unescapeAttr(String s) => s
+      .replaceAll('&quot;', '"')
+      .replaceAll('&#39;', "'")
+      .replaceAll('&lt;', '<')
+      .replaceAll('&gt;', '>')
+      .replaceAll('&amp;', '&');
 
   @override
   bool canEdit(String accountId, ChatConversation conversation) =>

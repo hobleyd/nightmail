@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:dio/dio.dart';
@@ -330,6 +331,7 @@ class GraphChatDatasource implements ChatRemoteDatasource {
     ChatConversation conversation,
     String text, {
     ChatMessage? replyTo,
+    ChatOutgoingImage? image,
   }) async {
     final path = !conversation.isChannel
         ? '/chats/${conversation.id}/messages'
@@ -337,11 +339,50 @@ class GraphChatDatasource implements ChatRemoteDatasource {
             ? '/teams/${conversation.teamId}/channels/${conversation.id}/messages'
             : '/teams/${conversation.teamId}/channels/${conversation.id}'
                 '/messages/${replyTo.id}/replies';
-    final data = await _post(path, {
-      'body': {'contentType': 'text', 'content': text},
-    });
+    final data = await _post(path, image == null
+        ? {'body': {'contentType': 'text', 'content': text}}
+        : imageMessageBody(text, image));
     return _parseMessage(data);
   }
+
+  /// A message carrying [image] as hosted content, the way Teams sends a
+  /// pasted picture: the body refers to it by a temporary id, and Graph
+  /// answers with the `…/hostedContents/{id}/$value` it was given.
+  @visibleForTesting
+  static Map<String, dynamic> imageMessageBody(
+      String text, ChatOutgoingImage image) {
+    var size = '';
+    final w = image.width, h = image.height;
+    if (w != null && h != null && w > 0 && h > 0) {
+      // Teams draws it at the size given; a screenshot's pixels would fill
+      // the conversation.
+      final scale = w > _imageWidth ? _imageWidth / w : 1.0;
+      final sw = (w * scale).round(), sh = (h * scale).round();
+      size = ' width="$sw" height="$sh"'
+          ' style="vertical-align:bottom; width:${sw}px; height:${sh}px"';
+    }
+    final caption = text.trim().isEmpty ? '' : '<p>${_escape(text)}</p>';
+    return {
+      'body': {
+        'contentType': 'html',
+        'content': '$caption<p><img src="../hostedContents/1/\$value"'
+            ' alt="${_escape(image.name)}"$size></p>',
+      },
+      'hostedContents': [
+        {
+          '@microsoft.graph.temporaryId': '1',
+          'contentBytes': base64Encode(image.bytes),
+          'contentType': image.mimeType,
+        },
+      ],
+    };
+  }
+
+  static const _imageWidth = 360;
+
+  /// Hosted contents are Graph's; nightware's chat API has none.
+  @override
+  bool canSendImage(ChatConversation conversation) => !isNightmailServer;
 
   /// Creates (or, as both servers do for an existing pair, returns) the
   /// one-on-one chat between the signed-in user and [email].

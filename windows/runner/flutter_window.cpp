@@ -3,6 +3,7 @@
 #include <optional>
 #include <string>
 
+#include "clipboard_channel.h"
 #include "flutter/generated_plugin_registrant.h"
 #include "window_relay.h"
 
@@ -34,6 +35,7 @@ bool FlutterWindow::OnCreate() {
   RegisterPlugins(flutter_controller_->engine());
   RegisterCalendarRefreshChannel(flutter_controller_->engine()->messenger());
   RegisterDraftsRefreshChannel(flutter_controller_->engine()->messenger());
+  RegisterClipboardChannel(flutter_controller_->engine()->messenger());
   SetChildContent(flutter_controller_->view()->GetNativeWindow());
 
   flutter_controller_->engine()->SetNextFrameCallback([&]() {

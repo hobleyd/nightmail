@@ -937,6 +937,128 @@ void main() {
     });
   });
 
+  group('sending a picture', () {
+    const dm = ChatConversation(id: 'D1', kind: ChatKind.oneOnOne, title: 'Ann');
+    final image = ChatOutgoingImage(
+      bytes: Uint8List.fromList([1, 2, 3]),
+      mimeType: 'image/png',
+      name: 'image.png',
+    );
+    late List<Duration> waits;
+
+    setUp(() {
+      waits = SlackChatDatasource.uploadWaits;
+      SlackChatDatasource.uploadWaits = const [Duration.zero, Duration.zero];
+    });
+    tearDown(() => SlackChatDatasource.uploadWaits = waits);
+
+    Map<String, dynamic> shared(String ts) => {
+          'ts': ts,
+          'user': 'UME',
+          'text': 'look',
+          'files': [
+            {
+              'id': 'F1',
+              'name': 'image.png',
+              'mimetype': 'image/png',
+              'url_private': 'https://files.slack.com/files-pri/T1-F1/image.png',
+            },
+          ],
+        };
+
+    test('uploads it, completes it into the DM with the text, and returns '
+        'the message Slack posted', () async {
+      await connected(scopes: SlackWorkspaces.userScopes.toSet());
+      routes['users.info'] = (_) => user('UME', 'Me');
+      routes['files.getUploadURLExternal'] = (o) {
+        expect(o.data, {'filename': 'image.png', 'length': '3'});
+        return {
+          'ok': true,
+          'upload_url': 'https://files.slack.com/upload/v1/ABC',
+          'file_id': 'F1',
+        };
+      };
+      routes['ABC'] = (o) {
+        expect(o.data, [1, 2, 3]);
+        expect(o.headers['Authorization'], isNull,
+            reason: 'the URL is the credential');
+        return 'OK - 3';
+      };
+      routes['files.completeUploadExternal'] = (o) {
+        expect(o.data, {
+          'files': jsonEncode([
+            {'id': 'F1', 'title': 'image.png'},
+          ]),
+          'channel_id': 'D1',
+          'initial_comment': 'look &lt;here&gt;',
+        });
+        return {'ok': true, 'files': [{'id': 'F1'}]};
+      };
+      var looks = 0;
+      routes['conversations.history'] = (_) => {
+            'ok': true,
+            'messages': [
+              if (++looks > 1) shared('1700000000.000900'),
+              {'ts': '1700000000.000100', 'user': 'UANN', 'text': 'older'},
+            ],
+          };
+      final sent =
+          await datasource().send(dm, 'look <here>', image: image);
+      expect(sent.id, '1700000000.000900');
+      expect(sent.bodyHtml, contains('<img src="https://files.slack.com/'));
+      expect(looks, 2, reason: 'looked again until it appeared');
+    });
+
+    test('a reply goes into the thread', () async {
+      await connected(scopes: SlackWorkspaces.userScopes.toSet());
+      routes['users.info'] = (_) => user('UME', 'Me');
+      routes['files.getUploadURLExternal'] = (_) => {
+            'ok': true,
+            'upload_url': 'https://files.slack.com/upload/v1/ABC',
+            'file_id': 'F1',
+          };
+      routes['ABC'] = (_) => 'OK';
+      routes['files.completeUploadExternal'] = (o) {
+        expect((o.data as Map)['thread_ts'], '1700000000.000100');
+        expect((o.data as Map).containsKey('initial_comment'), isFalse);
+        return {'ok': true};
+      };
+      routes['conversations.replies'] = (_) => {
+            'ok': true,
+            'messages': [
+              {'ts': '1700000000.000100', 'user': 'UANN', 'text': 'post'},
+              shared('1700000000.000900')
+                ..['thread_ts'] = '1700000000.000100',
+            ],
+          };
+      final post = ChatMessage(
+        id: '1700000000.000100',
+        createdAt: DateTime(2026),
+        senderName: 'Ann',
+        bodyHtml: 'post',
+      );
+      final sent = await datasource().send(dm, '', replyTo: post, image: image);
+      expect(sent.id, '1700000000.000900');
+    });
+
+    test('a workspace without files:write is asked to connect again, '
+        'not flagged', () async {
+      await connected(scopes: const {'chat:write'});
+      await expectLater(
+          datasource().send(dm, '', image: image),
+          throwsA(isA<ServerException>().having(
+              (e) => e.message, 'message', contains('send pictures'))));
+      expect(requests, isEmpty);
+
+      await connected(scopes: SlackWorkspaces.userScopes.toSet());
+      routes['files.getUploadURLExternal'] =
+          (_) => {'ok': false, 'error': 'missing_scope'};
+      await expectLater(datasource().send(dm, '', image: image),
+          throwsA(isA<ServerException>()));
+      expect((await workspaces.byTeam('T1'))!.needsReconnect, isFalse);
+    });
+  });
+
   test('a DM and a group DM thread as channels do', () {
     final ds = datasource();
     for (final kind in ChatKind.values) {

@@ -4,6 +4,7 @@
 
 #include <desktop_multi_window/desktop_multi_window_plugin.h>
 
+#include "clipboard_channel.h"
 #include "flutter/generated_plugin_registrant.h"
 #include "flutter_window.h"
 #include "utils.h"
@@ -26,6 +27,7 @@ int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE prev,
     RegisterPlugins(c->engine());
     RegisterCalendarRefreshChannel(c->engine()->messenger());
     RegisterDraftsRefreshChannel(c->engine()->messenger());
+    RegisterClipboardChannel(c->engine()->messenger());
   });
 
   flutter::DartProject project(L"data");

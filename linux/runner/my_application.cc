@@ -10,6 +10,7 @@
 #include <desktop_multi_window/desktop_multi_window_plugin.h>
 
 #include "flutter/generated_plugin_registrant.h"
+#include "clipboard_channel.h"
 #include "window_relay.h"
 
 struct _MyApplication {
@@ -99,11 +100,13 @@ static void my_application_activate(GApplication* application) {
 
   fl_register_plugins(FL_PLUGIN_REGISTRY(view));
   window_relay_register(FL_PLUGIN_REGISTRY(view));
+  clipboard_channel_register(FL_PLUGIN_REGISTRY(view));
 
   desktop_multi_window_plugin_set_window_created_callback(
       [](FlPluginRegistry* registry) {
         fl_register_plugins(registry);
         window_relay_register(registry);
+        clipboard_channel_register(registry);
       });
 
   gtk_widget_grab_focus(GTK_WIDGET(view));

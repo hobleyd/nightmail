@@ -162,8 +162,9 @@ class SlackWorkspaces {
   /// `groups:write` for channels, asked since channels are bolded when
   /// unread), `url_private` images
   /// (`files:read`), `search.messages` (`search:read`) and the workspace's own
-  /// emoji, `emoji.list` (`emoji:read`), and `reactions.add`
-  /// (`reactions:write`).
+  /// emoji, `emoji.list` (`emoji:read`), `reactions.add`
+  /// (`reactions:write`), and pasted pictures, `files.getUploadURLExternal`/
+  /// `files.completeUploadExternal` (`files:write`).
   static const userScopes = [
     'channels:read',
     'groups:read',
@@ -184,6 +185,7 @@ class SlackWorkspaces {
     'search:read',
     'emoji:read',
     'reactions:write',
+    'files:write',
   ];
 
   final _changes = StreamController<void>.broadcast();

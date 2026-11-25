@@ -74,12 +74,18 @@ abstract interface class ChatRemoteDatasource {
     ChatMessage post,
   );
 
-  /// Sends [text], as a reply in [replyTo]'s thread when given.
+  /// Sends [text], as a reply in [replyTo]'s thread when given, with
+  /// [image] under it when given ([text] may then be empty).
   Future<ChatMessage> send(
     ChatConversation conversation,
     String text, {
     ChatMessage? replyTo,
+    ChatOutgoingImage? image,
   });
+
+  /// Whether [send] takes an image in [conversation]: not on a NightMail
+  /// Server, whose chat API has no hosted contents.
+  bool canSendImage(ChatConversation conversation);
 
   /// Whether the user's own messages in [conversation] can be edited with the
   /// access this datasource holds — false for a Microsoft 365 channel, whose

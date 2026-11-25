@@ -563,6 +563,16 @@ class ChatConversationCubit extends Cubit<ChatConversationState> {
         _repo.canRename(accountId, conversation);
   }
 
+  /// Whether a pasted picture can be sent in the open conversation. Not
+  /// before it exists: a one-on-one is started with text.
+  bool get canSendImage {
+    final accountId = state.accountId;
+    final conversation = state.conversation;
+    return accountId != null &&
+        conversation != null &&
+        _repo.canSendImage(accountId, conversation);
+  }
+
   /// Renames the open conversation to [title]. Null when it was renamed
   /// ([ChatConversationState.conversation] then carries the new title),
   /// otherwise why not, for the rename dialog to show.
@@ -757,11 +767,25 @@ class ChatConversationCubit extends Cubit<ChatConversationState> {
   /// [inThread] (the thread's composer) — or starts the one-on-one with
   /// [ChatConversationState.person]. Never touches an edit in progress: the
   /// composer that holds it calls [saveEdit] instead. The list's composer
-  /// never answers in a thread, even with one open beside it.
-  Future<bool> send(String text, {bool inThread = false}) async {
+  /// never answers in a thread, even with one open beside it. [image] goes
+  /// with the text, which may then be empty; only where [canSendImage].
+  Future<bool> send(
+    String text, {
+    bool inThread = false,
+    ChatOutgoingImage? image,
+  }) async {
     final trimmed = text.trim();
     final accountId = state.accountId;
-    if (trimmed.isEmpty || accountId == null || state.sending) return false;
+    if ((trimmed.isEmpty && image == null) ||
+        accountId == null ||
+        state.sending) {
+      return false;
+    }
+    if (image != null && !canSendImage) {
+      emit(state.copyWith(
+          error: () => 'Pictures cannot be sent in this conversation.'));
+      return false;
+    }
     final gen = _generation;
     emit(state.copyWith(sending: true, error: () => null));
 
@@ -797,7 +821,7 @@ class ChatConversationCubit extends Cubit<ChatConversationState> {
     final threadPost = inThread && threads ? state.threadPost : null;
     final threadId = threadPost?.id;
     final sent = await _repo.sendMessage(accountId, conversation, trimmed,
-        replyTo: threadPost);
+        replyTo: threadPost, image: image);
     if (gen != _generation || isClosed) return false;
     return sent.match(
       (f) {

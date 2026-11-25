@@ -408,6 +408,70 @@ anything else in the conversation's (`ChatConversationState.editingInThread`).
   a message quote another (`quotedMessageMetadata`) — a possible quoted
   reply there, not built.
 
+## Pasting a picture
+
+Cmd+V (Ctrl+V on Windows and Linux) in a composer with a picture on the
+clipboard puts a thumbnail above the box (× or Esc drops it); Send or Enter
+sends it with whatever is typed, or alone. Anything else pastes as text, as
+before.
+
+- **Reading the clipboard is native:** `readImage` on the
+  `au.com.sharpblue.nightmail/clipboard` channel (`clipboard_image.dart`),
+  registered on every engine — the pane and the chat window both paste —
+  by `MainFlutterWindow.swift`, `windows/runner/clipboard_image.cpp` (GDI+)
+  and `linux/runner/clipboard_image.cc` (GTK). Not `super_clipboard`: an FFI
+  plugin, banned outside the main window (`lib/core/platform/CLAUDE.md`).
+  Mobile answers nothing and pastes text.
+- **One rule on every desktop, in this order:** one copied image file (Finder,
+  Explorer's `CF_HDROP`, a file manager's `text/uri-list`) pastes its
+  contents, never its icon — any other file is a text paste; then
+  **anything carrying text pastes as text**, even with a picture beside it
+  (Word's copy of a paragraph carries a picture of it); then the picture —
+  macOS `public.png`/`public.tiff`, Windows the registered `PNG` format
+  (Chrome, Office, Snipping Tool) or `CF_DIB` (PrtScn, read as a `.bmp` so
+  a screenshot's zero alpha is ignored), Linux any image target. PNG,
+  JPEG and GIF files under the limit go as they are; anything else is
+  PNG, or JPEG halved until it is under ~2.8 MB (Graph's 4 MB request
+  limit, with the bytes as base64).
+- **Linux reads asynchronously** (`gtk_clipboard_request_*`, answered when
+  GTK has the data): the `wait_for_*` calls spin a nested main loop inside
+  a platform-channel handler. When the clipboard is owned in-process GTK
+  answers synchronously, before `clipboard_image_read` returns.
+- **The paste is `PasteTextIntent`, overridden** around the `TextField`
+  (`_ImagePasteAction`): `EditableText`'s paste is overridable, and the
+  field's own action is only reachable as `callingAction` while `invoke`
+  runs, so it is taken before the clipboard is awaited. The right-click
+  menu's Paste calls the field directly and stays text-only.
+- **Where it is offered** (`ChatConversationCubit.canSendImage`): an open
+  conversation (a one-on-one not started yet begins with text), not while
+  editing, and `ChatRemoteDatasource.canSendImage` — every provider but a
+  NightMail Server, whose chat API (nightware) has no hosted contents.
+  Elsewhere the paste falls through to text.
+- **Teams:** one `POST` with `contentType: html`, the picture in
+  `hostedContents` under temporary id 1 and referred to as
+  `../hostedContents/1/$value` (`imageMessageBody`), drawn at most 360 px
+  wide — Teams uses the `<img>`'s size, and a screenshot's pixels would fill
+  the conversation. `Chat.ReadWrite`/`ChannelMessage.Send` cover it.
+- **Google:** `media.upload` to `/upload/v1/{space}/attachments:upload`
+  (multipart/related: `{filename}` then the bytes; a whole URL beside the
+  client's `/v1` base, sent as bytes so a 401 retry can resend it), then
+  `messages.create` with the returned `attachmentDataRef`. The
+  `chat.messages` scope NightMail holds covers the upload.
+- **Slack:** `files.getUploadURLExternal`, the bytes POSTed to its
+  `upload_url` (no token — the URL is the credential), then
+  `files.completeUploadExternal` with `channel_id`, `thread_ts` and the text
+  as `initial_comment`. Slack posts the message itself afterwards and names
+  no `ts`, so `_uploaded` looks for the file id in the newest history (or
+  the thread) a few times (`uploadWaits`, ~5 s in all). Failing that, a
+  stand-in is shown; the next full page read drops it for the real one.
+  Needs `files:write` (added after 1.62.0): a workspace connected before is told to
+  connect again rather than flagged, and a `missing_scope` from either
+  method is not a reconnect (`_call`).
+- **Your own picture shows at once.** The repository seeds the image cache
+  with the pasted bytes under the `src` the sent message carries
+  (`_seedImage`): Google and Slack process an upload after answering, and a
+  miss would otherwise stay a miss until restart.
+
 ## Reacting to a message
 
 - **Anyone's message**, not a deleted or system one
@@ -628,7 +692,8 @@ than falling into an account lookup that answers null.
   `chat:write`, `im:write`/`mpim:write` (`conversations.open`, and
   `conversations.mark` on DMs), `channels:write`/`groups:write`
   (`conversations.mark` on channels, `conversations.rename`), `files:read`
-  (images), `search:read`, `reactions:write` (`reactions.add`).
+  (images), `search:read`, `reactions:write` (`reactions.add`),
+  `files:write` (pasted pictures).
   A scope added later surfaces as `missing_scope` → reconnect, which grants
   it — except where noted below.
 - **Mapping:** `im` → one-on-one (titled by the other person), `mpim` →

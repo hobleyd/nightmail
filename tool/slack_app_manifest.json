@@ -29,7 +29,8 @@
         "files:read",
         "search:read",
         "emoji:read",
-        "reactions:write"
+        "reactions:write",
+        "files:write"
       ]
     },
     "pkce_enabled": true

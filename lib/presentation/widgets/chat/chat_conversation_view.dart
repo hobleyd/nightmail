@@ -4,6 +4,7 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:intl/intl.dart';
 
 import '../../../core/platform/touch_metrics.dart';
+import '../../../core/platform/clipboard_image.dart';
 import '../../../core/text/emoji.dart';
 import '../../../core/theme/app_colors.dart';
 import '../../../domain/entities/chat.dart';
@@ -852,18 +853,45 @@ class _ComposerState extends State<_Composer> {
   bool _mine(ChatConversationState s) =>
       s.editing != null && s.editingInThread == widget.inThread;
 
+  /// A pasted picture waiting to go with the next send.
+  ChatOutgoingImage? _image;
+
   Future<void> _send() async {
     final text = _controller.text;
-    if (text.trim().isEmpty) return;
     final cubit = context.read<ChatConversationCubit>();
     // Decided before the await: only this box's own edit is saved from it.
     if (_mine(cubit.state)) {
+      if (text.trim().isEmpty) return;
       // A saved edit hands the box back through the listener below.
       await cubit.saveEdit(text);
-    } else if (await cubit.send(text, inThread: widget.inThread) && mounted) {
-      _controller.clear();
+    } else {
+      final image = _image;
+      if (text.trim().isEmpty && image == null) return;
+      if (await cubit.send(text, inThread: widget.inThread, image: image) &&
+          mounted) {
+        _controller.clear();
+        setState(() => _image = null);
+      }
     }
     _focus.requestFocus();
+  }
+
+  /// Cmd+V with a picture on the clipboard stages it under the box, where
+  /// the conversation can take one; anything else pastes as text. An edit
+  /// is text only.
+  Future<bool> _pasteImage() async {
+    final cubit = context.read<ChatConversationCubit>();
+    if (_mine(cubit.state) || !cubit.canSendImage) return false;
+    final found = await readClipboardImage();
+    if (found == null || !mounted) return false;
+    setState(() => _image = ChatOutgoingImage(
+          bytes: found.bytes,
+          mimeType: found.mimeType,
+          name: found.name,
+          width: found.width,
+          height: found.height,
+        ));
+    return true;
   }
 
   /// Up in an empty box edits the user's newest message, as Slack and Teams
@@ -905,11 +933,24 @@ class _ComposerState extends State<_Composer> {
     final c = context.colors;
     final editing = context.select<ChatConversationCubit, bool>(
         (cubit) => _mine(cubit.state));
-    return BlocListener<ChatConversationCubit, ChatConversationState>(
-      listenWhen: (a, b) =>
-          a.editing?.id != b.editing?.id ||
-          a.editingInThread != b.editingInThread,
-      listener: _onEditing,
+    return MultiBlocListener(
+      listeners: [
+        BlocListener<ChatConversationCubit, ChatConversationState>(
+          listenWhen: (a, b) =>
+              a.editing?.id != b.editing?.id ||
+              a.editingInThread != b.editingInThread,
+          listener: _onEditing,
+        ),
+        // A picture pasted for one conversation never goes to the next.
+        BlocListener<ChatConversationCubit, ChatConversationState>(
+          listenWhen: (a, b) =>
+              _image != null &&
+              (a.accountId != b.accountId ||
+                  a.conversation?.id != b.conversation?.id ||
+                  a.threadPostId != b.threadPostId && widget.inThread),
+          listener: (_, _) => setState(() => _image = null),
+        ),
+      ],
       child: Container(
       padding: const EdgeInsets.fromLTRB(8, 6, 8, 8),
       decoration: BoxDecoration(
@@ -945,6 +986,11 @@ class _ComposerState extends State<_Composer> {
                 ],
               ),
             ),
+          if (_image case final image?)
+            _PendingImage(
+              image: image,
+              onRemove: () => setState(() => _image = null),
+            ),
           Row(
         crossAxisAlignment: CrossAxisAlignment.end,
         children: [
@@ -956,9 +1002,14 @@ class _ComposerState extends State<_Composer> {
                 const SingleActivator(LogicalKeyboardKey.numpadEnter): _send,
                 if (editing)
                   const SingleActivator(LogicalKeyboardKey.escape):
-                      context.read<ChatConversationCubit>().cancelEdit,
+                      context.read<ChatConversationCubit>().cancelEdit
+                else if (_image != null)
+                  const SingleActivator(LogicalKeyboardKey.escape): () =>
+                      setState(() => _image = null),
               },
-              child: Focus(
+              child: Actions(
+                actions: {PasteTextIntent: _ImagePasteAction(_pasteImage)},
+                child: Focus(
                 onKeyEvent: _onKey,
                 child: TextField(
                 controller: _controller,
@@ -987,6 +1038,7 @@ class _ComposerState extends State<_Composer> {
                 ),
               ),
               ),
+              ),
             ),
           ),
           const SizedBox(width: 4),
@@ -1005,6 +1057,99 @@ class _ComposerState extends State<_Composer> {
       ),
         ],
       ),
+      ),
+    );
+  }
+}
+
+/// Cmd+V in the composer: asks [onPaste] for a picture first and, when it
+/// takes none, pastes text as the field always does. The field's own paste
+/// is overridable; it is only reachable while [invoke] runs, so it is taken
+/// before the clipboard is read.
+class _ImagePasteAction extends Action<PasteTextIntent> {
+  _ImagePasteAction(this.onPaste);
+
+  final Future<bool> Function() onPaste;
+
+  @override
+  Object? invoke(PasteTextIntent intent) {
+    final text = callingAction;
+    onPaste().then((taken) {
+      if (!taken && text != null && text.isEnabled(intent)) {
+        text.invoke(intent);
+      }
+    });
+    return null;
+  }
+}
+
+/// The pasted picture above the box, with × to drop it.
+class _PendingImage extends StatelessWidget {
+  const _PendingImage({required this.image, required this.onRemove});
+
+  final ChatOutgoingImage image;
+  final VoidCallback onRemove;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.colors;
+    return Padding(
+      padding: const EdgeInsets.only(left: 2, bottom: 6),
+      child: Align(
+        alignment: Alignment.centerLeft,
+        // The × overlaps the corner from inside the Stack: a child outside
+        // its bounds is drawn but never hit.
+        child: Stack(
+          children: [
+            Padding(
+              padding: const EdgeInsets.only(top: 7, right: 7),
+              child: ClipRRect(
+              borderRadius: BorderRadius.circular(6),
+              child: Container(
+                decoration: BoxDecoration(
+                  border: Border.all(color: c.separator),
+                  borderRadius: BorderRadius.circular(6),
+                ),
+                // Never smaller than the × it carries, even a 1-pixel image.
+                constraints: const BoxConstraints(
+                    minWidth: 36, minHeight: 36, maxHeight: 96, maxWidth: 200),
+                child: Image.memory(
+                  image.bytes,
+                  fit: BoxFit.contain,
+                  semanticLabel: 'Pasted picture',
+                  errorBuilder: (_, _, _) => Padding(
+                    padding: const EdgeInsets.all(8),
+                    child: Text(image.name,
+                        style: TextStyle(
+                            fontSize: 11.5, color: c.textSecondary)),
+                  ),
+                ),
+              ),
+              ),
+            ),
+            Positioned(
+              top: 0,
+              right: 0,
+              child: Tooltip(
+                message: 'Remove picture',
+                child: InkWell(
+                  onTap: onRemove,
+                  customBorder: const CircleBorder(),
+                  child: Container(
+                    padding: const EdgeInsets.all(2),
+                    decoration: BoxDecoration(
+                      color: c.surfaceBase,
+                      shape: BoxShape.circle,
+                      border: Border.all(color: c.separator),
+                    ),
+                    child: Icon(Icons.close,
+                        size: touchIcon(12), color: c.textSecondary),
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }

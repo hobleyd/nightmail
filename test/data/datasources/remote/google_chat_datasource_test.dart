@@ -15,7 +15,11 @@ void main() {
   late Map<String, Object? Function(RequestOptions)> routes;
 
   GoogleChatDatasource datasource({String own = 'me@example.com'}) {
-    final dio = Dio(BaseOptions(baseUrl: 'https://chat.googleapis.com/v1'))
+    final dio = Dio(BaseOptions(
+      baseUrl: 'https://chat.googleapis.com/v1',
+      // As GoogleChatHttpClient sets them.
+      headers: {'Content-Type': 'application/json'},
+    ))
       ..httpClientAdapter = _StubAdapter((o) async {
         requests.add(o);
         final path = Uri.decodeComponent(o.uri.path);
@@ -451,6 +455,68 @@ void main() {
         'see <a href="https://x.example/a">https://x.example/a</a>');
     expect(GoogleChatDatasource.chatTextToHtml('snake_case_name'),
         'snake_case_name');
+  });
+
+  group('sending a picture', () {
+    const space =
+        ChatConversation(id: 'spaces/D', kind: ChatKind.oneOnOne, title: 'Ann');
+    final image = ChatOutgoingImage(
+      bytes: Uint8List.fromList([1, 2, 3]),
+      mimeType: 'image/png',
+      name: 'image.png',
+    );
+
+    test('uploads it under /upload/v1, then attaches the ref it gave',
+        () async {
+      routes['spaces/D/attachments:upload'] = (o) {
+        expect(o.uri.toString(),
+            startsWith('https://chat.googleapis.com/upload/v1/spaces/D/'));
+        expect(o.queryParameters['uploadType'], 'multipart');
+        final type = o.headers[Headers.contentTypeHeader] as String;
+        expect(type, startsWith('multipart/related; boundary='));
+        final body = o.data as Uint8List;
+        final text = latin1.decode(body);
+        expect(text, contains('{"filename":"image.png"}'));
+        expect(text, contains('Content-Type: image/png\r\n\r\n\x01\x02\x03\r\n'));
+        return {
+          'attachmentDataRef': {'resourceName': 'R1'},
+        };
+      };
+      routes['spaces/D/messages'] = (o) {
+        expect(o.data, {
+          'text': 'look',
+          'attachment': [
+            {
+              'attachmentDataRef': {'resourceName': 'R1'},
+            },
+          ],
+        });
+        return {
+          'name': 'spaces/D/messages/M1',
+          'createTime': '2026-11-25T10:00:00Z',
+          'text': 'look',
+          'attachment': [
+            {
+              'contentType': 'image/png',
+              'attachmentDataRef': {'resourceName': 'R1'},
+            },
+          ],
+        };
+      };
+      final sent = await datasource().send(space, 'look', image: image);
+      expect(sent.bodyHtml, contains('gchat-media:'));
+    });
+
+    test('a picture alone sends no text', () async {
+      routes['spaces/D/attachments:upload'] = (_) => {
+            'attachmentDataRef': {'resourceName': 'R1'},
+          };
+      routes['spaces/D/messages'] = (o) {
+        expect((o.data as Map).containsKey('text'), isFalse);
+        return {'name': 'spaces/D/messages/M1'};
+      };
+      await datasource().send(space, '', image: image);
+    });
   });
 
   group('editing', () {

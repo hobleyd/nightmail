@@ -1,3 +1,5 @@
+import 'dart:typed_data';
+
 import 'package:equatable/equatable.dart';
 
 /// What kind of conversation a [ChatConversation] is.
@@ -388,6 +390,33 @@ class ChatMessage extends Equatable {
         threadId,
         editableText,
       ];
+}
+
+/// A picture sent with a message — pasted into the composer.
+class ChatOutgoingImage extends Equatable {
+  const ChatOutgoingImage({
+    required this.bytes,
+    required this.mimeType,
+    required this.name,
+    this.width,
+    this.height,
+  });
+
+  final Uint8List bytes;
+
+  /// `image/png`, `image/jpeg` or `image/gif`.
+  final String mimeType;
+
+  /// A file name for providers that keep one (Google, Slack).
+  final String name;
+
+  /// Pixels, when known — Teams draws a hosted picture at the size its
+  /// `<img>` gives.
+  final int? width;
+  final int? height;
+
+  @override
+  List<Object?> get props => [bytes, mimeType, name, width, height];
 }
 
 /// A page of a conversation's history, newest first, and how to read on.

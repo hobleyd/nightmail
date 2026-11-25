@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:dio/dio.dart';
@@ -324,13 +325,19 @@ class GoogleChatDatasource implements ChatRemoteDatasource {
     ChatConversation conversation,
     String text, {
     ChatMessage? replyTo,
+    ChatOutgoingImage? image,
   }) async {
     final thread = replyTo?.threadId;
+    final ref = image == null ? null : await _upload(conversation, image);
     final data = await _post(
       '/${conversation.id}/messages',
       {
-        'text': text,
+        if (text.isNotEmpty) 'text': text,
         if (thread != null) 'thread': {'name': thread},
+        if (ref != null)
+          'attachment': [
+            {'attachmentDataRef': ref},
+          ],
       },
       query: {
         if (thread != null)
@@ -338,6 +345,53 @@ class GoogleChatDatasource implements ChatRemoteDatasource {
       },
     );
     return _parseMessage(data);
+  }
+
+  /// `media.upload` takes the `chat.messages` NightMail already holds.
+  @override
+  bool canSendImage(ChatConversation conversation) => true;
+
+  /// Uploads [image] into [conversation] (`media.upload`, one multipart
+  /// request: the file name, then the bytes) and returns the
+  /// `attachmentDataRef` a message attaches it by. A whole URL: the upload
+  /// lives under `/upload/v1`, beside the client's `/v1` base.
+  Future<Map<String, dynamic>> _upload(
+    ChatConversation conversation,
+    ChatOutgoingImage image,
+  ) async {
+    final base = Uri.parse(_dio.options.baseUrl);
+    final url = base.replace(
+        path: '/upload${base.path}/${conversation.id}/attachments:upload');
+    final boundary = 'nightmail-${DateTime.now().microsecondsSinceEpoch}';
+    final body = BytesBuilder(copy: false)
+      ..add(utf8.encode('--$boundary\r\n'
+          'Content-Type: application/json; charset=UTF-8\r\n\r\n'
+          '${jsonEncode({'filename': image.name})}\r\n'
+          '--$boundary\r\n'
+          'Content-Type: ${image.mimeType}\r\n\r\n'))
+      ..add(image.bytes)
+      ..add(utf8.encode('\r\n--$boundary--\r\n'));
+    final bytes = body.takeBytes();
+    try {
+      final r = await _dio.post<Map<String, dynamic>>(
+        url.toString(),
+        // Bytes, not a stream: a 401 retry sends the request again.
+        data: bytes,
+        queryParameters: {'uploadType': 'multipart'},
+        options: Options(headers: {
+          Headers.contentTypeHeader: 'multipart/related; boundary=$boundary',
+          Headers.contentLengthHeader: bytes.length,
+        }),
+      );
+      final ref = r.data?['attachmentDataRef'];
+      if (ref is! Map<String, dynamic>) {
+        throw const ServerException(
+            message: 'Google Chat did not accept the picture.');
+      }
+      return ref;
+    } on DioException catch (e) {
+      throw _map(e);
+    }
   }
 
   @override

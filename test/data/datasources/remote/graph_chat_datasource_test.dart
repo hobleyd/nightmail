@@ -557,6 +557,44 @@ void main() {
     });
   });
 
+  group('sending a picture', () {
+    final image = ChatOutgoingImage(
+      bytes: Uint8List.fromList([1, 2, 3]),
+      mimeType: 'image/png',
+      name: 'shot.png',
+      width: 1440,
+      height: 900,
+    );
+
+    test('as hosted content the body refers to, drawn at a readable size',
+        () {
+      final body = GraphChatDatasource.imageMessageBody('a <b>\nc', image);
+      expect(body['body'], {
+        'contentType': 'html',
+        'content': '<p>a &lt;b&gt;<br>c</p><p><img '
+            'src="../hostedContents/1/\$value" alt="shot.png" width="360" '
+            'height="225" style="vertical-align:bottom; width:360px; '
+            'height:225px"></p>',
+      });
+      expect(body['hostedContents'], [
+        {
+          '@microsoft.graph.temporaryId': '1',
+          'contentBytes': 'AQID',
+          'contentType': 'image/png',
+        },
+      ]);
+    });
+
+    test('a picture alone has no caption', () {
+      final body = GraphChatDatasource.imageMessageBody(
+          ' ',
+          ChatOutgoingImage(
+              bytes: image.bytes, mimeType: 'image/png', name: 'x.png'));
+      expect((body['body'] as Map)['content'],
+          '<p><img src="../hostedContents/1/\$value" alt="x.png"></p>');
+    });
+  });
+
   group('editing', () {
     ChatMessage mine(String id, {String? replyToId}) => ChatMessage(
           id: id,

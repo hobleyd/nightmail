@@ -2,6 +2,7 @@ import Cocoa
 @preconcurrency import Contacts
 import EventKit
 import FlutterMacOS
+import UniformTypeIdentifiers
 import UserNotifications
 import desktop_multi_window
 
@@ -129,6 +130,7 @@ class MainFlutterWindow: NSWindow, UNUserNotificationCenterDelegate {
 
     registerWindowUtilsChannel(messenger: flutterViewController.engine.binaryMessenger) { [weak self] in self }
     registerBrowserLauncherChannel(messenger: flutterViewController.engine.binaryMessenger)
+    registerClipboardChannel(messenger: flutterViewController.engine.binaryMessenger)
 
     // Register contacts + plugins for every secondary window too.
     FlutterMultiWindowPlugin.setOnWindowCreatedCallback { [weak self] controller in
@@ -152,6 +154,7 @@ class MainFlutterWindow: NSWindow, UNUserNotificationCenterDelegate {
         windowProvider: { [weak controller] in controller?.view.window }
       )
       self?.registerBrowserLauncherChannel(messenger: controller.engine.binaryMessenger)
+      self?.registerClipboardChannel(messenger: controller.engine.binaryMessenger)
       self?.registerDesktopDrop(on: controller)
       if let self {
         self.tearDownEngineWhenClosed(
@@ -978,6 +981,113 @@ class MainFlutterWindow: NSWindow, UNUserNotificationCenterDelegate {
       }
     }
     allChannels.append(channel)
+  }
+
+  // MARK: - Clipboard pictures (chat paste)
+
+  /// `readImage`: the picture a paste would give, for the chat composer —
+  /// Flutter's `Clipboard` reads text only. Same channel and answer on
+  /// Windows (`windows/runner/clipboard_image.cpp`) and Linux
+  /// (`linux/runner/clipboard_image.cc`).
+  private func registerClipboardChannel(messenger: FlutterBinaryMessenger) {
+    let channel = FlutterMethodChannel(
+      name: "au.com.sharpblue.nightmail/clipboard",
+      binaryMessenger: messenger
+    )
+    channel.setMethodCallHandler { call, result in
+      if call.method == "readImage" {
+        result(MainFlutterWindow.clipboardImage())
+      } else {
+        result(FlutterMethodNotImplemented)
+      }
+    }
+    allChannels.append(channel)
+  }
+
+  /// Largest picture handed to a chat paste. Graph takes a whole request of
+  /// 4 MB with the bytes as base64, so a bigger one is re-encoded as JPEG
+  /// and, failing that, scaled down.
+  private static let clipboardImageLimit = 2_800_000
+
+  /// The picture on the general pasteboard as `{bytes, mimeType, name,
+  /// width, height}`, or nil when a paste there is text: anything carrying
+  /// a plain string (Word's copy also holds a PDF and PNG rendition of the
+  /// text) pastes as text. A file copied in Finder pastes its contents when
+  /// it is a picture, never its icon.
+  private static func clipboardImage() -> [String: Any]? {
+    let pb = NSPasteboard.general
+    if let urls = pb.readObjects(forClasses: [NSURL.self],
+                                 options: [.urlReadingFileURLsOnly: true]) as? [URL],
+       let url = urls.first {
+      guard urls.count == 1,
+            let type = UTType(filenameExtension: url.pathExtension),
+            type.conforms(to: .image),
+            let data = try? Data(contentsOf: url),
+            let rep = NSBitmapImageRep(data: data) else { return nil }
+      let passThrough = type.conforms(to: .png) || type.conforms(to: .jpeg)
+        || type.conforms(to: .gif)
+      if passThrough && data.count <= clipboardImageLimit {
+        return [
+          "bytes": FlutterStandardTypedData(bytes: data),
+          "mimeType": type.preferredMIMEType ?? "image/png",
+          "name": url.lastPathComponent,
+          "width": rep.pixelsWide,
+          "height": rep.pixelsHigh,
+        ]
+      }
+      return encoded(rep, name: url.deletingPathExtension().lastPathComponent)
+    }
+    if pb.string(forType: .string) != nil { return nil }
+    guard let data = pb.data(forType: .png) ?? pb.data(forType: .tiff),
+          let rep = NSBitmapImageRep(data: data) else { return nil }
+    return encoded(rep, name: "image")
+  }
+
+  /// [rep] as PNG, or as JPEG — halved until it fits — when the PNG is over
+  /// [clipboardImageLimit].
+  private static func encoded(_ rep: NSBitmapImageRep, name: String) -> [String: Any]? {
+    if let png = rep.representation(using: .png, properties: [:]),
+       png.count <= clipboardImageLimit {
+      return [
+        "bytes": FlutterStandardTypedData(bytes: png),
+        "mimeType": "image/png",
+        "name": "\(name).png",
+        "width": rep.pixelsWide,
+        "height": rep.pixelsHigh,
+      ]
+    }
+    var current = rep
+    for _ in 0..<4 {
+      if let jpeg = current.representation(
+           using: .jpeg, properties: [.compressionFactor: 0.82]),
+         jpeg.count <= clipboardImageLimit {
+        return [
+          "bytes": FlutterStandardTypedData(bytes: jpeg),
+          "mimeType": "image/jpeg",
+          "name": "\(name).jpg",
+          "width": current.pixelsWide,
+          "height": current.pixelsHigh,
+        ]
+      }
+      guard let half = halved(current) else { return nil }
+      current = half
+    }
+    return nil
+  }
+
+  private static func halved(_ rep: NSBitmapImageRep) -> NSBitmapImageRep? {
+    let w = max(1, rep.pixelsWide / 2), h = max(1, rep.pixelsHigh / 2)
+    guard let out = NSBitmapImageRep(
+      bitmapDataPlanes: nil, pixelsWide: w, pixelsHigh: h,
+      bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
+      colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0)
+    else { return nil }
+    NSGraphicsContext.saveGraphicsState()
+    defer { NSGraphicsContext.restoreGraphicsState() }
+    NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: out)
+    NSGraphicsContext.current?.imageInterpolation = .high
+    rep.draw(in: NSRect(x: 0, y: 0, width: w, height: h))
+    return out
   }
 
   // MARK: - Browser launcher (OAuth sign-in)

@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:dio/dio.dart';
@@ -478,7 +479,9 @@ class SlackChatDatasource implements ChatRemoteDatasource {
     ChatConversation conversation,
     String text, {
     ChatMessage? replyTo,
+    ChatOutgoingImage? image,
   }) async {
+    if (image != null) return _sendImage(conversation, text, replyTo, image);
     final data = await _call(
       'chat.postMessage',
       {
@@ -495,6 +498,134 @@ class SlackChatDatasource implements ChatRemoteDatasource {
       if (message is Map<String, dynamic>) ...message,
       'ts': ?ts,
     });
+  }
+
+  /// `files:write`, checked when sending: a workspace connected before
+  /// pictures could be sent is told to connect again.
+  @override
+  bool canSendImage(ChatConversation conversation) => true;
+
+  /// Slack's external upload: ask for an upload URL, send the bytes there,
+  /// then complete it into the conversation with [text] as its comment.
+  /// Slack posts the message itself, after the call returns, and names no
+  /// `ts` for it, so it is looked for in the newest messages — a few tries,
+  /// while Slack processes the file.
+  Future<ChatMessage> _sendImage(
+    ChatConversation conversation,
+    String text,
+    ChatMessage? replyTo,
+    ChatOutgoingImage image,
+  ) async {
+    const reconnect = ServerException(
+        message: 'Connect this Slack workspace again in Settings to send '
+            'pictures.');
+    final scopes = (await _workspaces.byTeam(teamId))?.scopes;
+    if (scopes == null || !scopes.contains('files:write')) throw reconnect;
+    try {
+      return await _upload(conversation, text, replyTo, image);
+    } on SlackApiException {
+      // `missing_scope`, the only answer `_call` hands back for these two:
+      // granted as far as NightMail knew, refused by Slack.
+      throw reconnect;
+    }
+  }
+
+  Future<ChatMessage> _upload(
+    ChatConversation conversation,
+    String text,
+    ChatMessage? replyTo,
+    ChatOutgoingImage image,
+  ) async {
+    final thread = replyTo == null ? null : replyTo.replyToId ?? replyTo.id;
+    final ticket = await _call(
+      'files.getUploadURLExternal',
+      {'filename': image.name, 'length': '${image.bytes.length}'},
+      post: true,
+    );
+    final uploadUrl = ticket['upload_url'] as String?;
+    final fileId = ticket['file_id'] as String?;
+    if (uploadUrl == null || fileId == null) {
+      throw const ServerException(message: 'Slack did not accept the picture.');
+    }
+    try {
+      // Slack's own upload host; the URL is the credential, not the token.
+      await _dio.post<void>(
+        uploadUrl,
+        data: image.bytes,
+        options: Options(headers: {
+          Headers.contentTypeHeader: image.mimeType,
+          Headers.contentLengthHeader: image.bytes.length,
+        }),
+      );
+    } on DioException catch (e) {
+      final status = e.response?.statusCode;
+      if (status == null) {
+        throw NetworkException(message: e.message ?? 'Network error');
+      }
+      throw ServerException(
+          message: 'Slack error ($status)', statusCode: status);
+    }
+    final done = await _call(
+      'files.completeUploadExternal',
+      {
+        'files': jsonEncode([
+          {'id': fileId, 'title': image.name},
+        ]),
+        'channel_id': conversation.id,
+        if (text.isNotEmpty) 'initial_comment': escapeText(text),
+        'thread_ts': ?thread,
+      },
+      post: true,
+    );
+    final file = _list(done['files']).firstOrNull ?? {'id': fileId};
+    for (final wait in uploadWaits) {
+      await Future<void>.delayed(wait);
+      final found = await _uploaded(conversation, thread, fileId);
+      if (found != null) return found;
+    }
+    // Not posted yet: shown as sent from what is known. The conversation's
+    // next full page read has the real one (its `ts`) and drops this.
+    debugPrint('[Slack] uploaded $fileId; its message has not appeared yet');
+    return _parseMessage({
+      'ts': (DateTime.now().microsecondsSinceEpoch / 1e6).toStringAsFixed(6),
+      'user': ?await _ownId(),
+      'text': text.isEmpty ? '' : escapeText(text),
+      'files': [file],
+      'thread_ts': ?thread,
+    });
+  }
+
+  /// How long to wait before each look for an upload's message.
+  @visibleForTesting
+  static List<Duration> uploadWaits = const [
+    Duration(milliseconds: 400),
+    Duration(milliseconds: 800),
+    Duration(milliseconds: 1500),
+    Duration(milliseconds: 2500),
+  ];
+
+  /// The newest message in [conversation] (or in [thread]) sharing [fileId].
+  Future<ChatMessage?> _uploaded(
+    ChatConversation conversation,
+    String? thread,
+    String fileId,
+  ) async {
+    final data = thread == null
+        ? await _call('conversations.history',
+            {'channel': conversation.id, 'limit': '5'})
+        : await _call('conversations.replies', {
+            'channel': conversation.id,
+            'ts': thread,
+            'limit': '200',
+          });
+    final raw = _list(data['messages']);
+    final m = (thread == null ? raw : raw.reversed).where((m) =>
+        _list(m['files']).any((f) => f['id'] == fileId)).firstOrNull;
+    if (m == null) return null;
+    final ts = m['ts'] as String?;
+    if (thread == null && ts != null) _latest['$teamId|${conversation.id}'] = ts;
+    await _resolveUsers(_userIdsIn([m]));
+    return _parseMessage(m);
   }
 
   /// Opens (or returns the existing) direct message with [email]. Slack shows
@@ -1406,7 +1537,9 @@ class SlackChatDatasource implements ChatRemoteDatasource {
                 method == 'conversations.mark' ||
                 method == 'conversations.rename' ||
                 method == 'reactions.add' ||
-                method == 'reactions.remove') &&
+                method == 'reactions.remove' ||
+                method == 'files.getUploadURLExternal' ||
+                method == 'files.completeUploadExternal') &&
             error == 'missing_scope') {
           throw SlackApiException(error);
         }

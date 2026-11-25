@@ -187,6 +187,8 @@ Settings → Accounts.
 - Edit your own chat messages on Teams, NightMail Server, Google Chat and Slack
 - Open the chat window straight onto the conversation in the Chat pane
 - React to anyone's chat message with an emoji on Teams (chats and channels), NightMail Server, Google Chat and Slack, or tap an existing reaction to add yours
+- Tap a reaction you gave to take it off
+- Paste a picture into a chat message (Cmd/Ctrl+V) to send it on Teams, Google Chat and Slack
 - Rename group chats and channels on Teams, NightMail Server and Slack
 - Reply in a thread from Slack direct messages and group DMs, as in channels
 

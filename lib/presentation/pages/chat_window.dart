@@ -1,6 +1,8 @@
 import 'dart:async';
 
+import 'package:desktop_multi_window/desktop_multi_window.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:intl/intl.dart';
 
@@ -17,6 +19,7 @@ import '../blocs/chat/chat_conversation_cubit.dart';
 import '../blocs/chat/chat_list_cubit.dart';
 import '../blocs/theme/theme_cubit.dart';
 import '../blocs/theme/theme_state.dart';
+import '../widgets/chat/chat_window_target.dart';
 import '../widgets/chat/chat_conversation_view.dart';
 
 /// The chat window, opened by double-clicking the Chat button: every chat
@@ -26,8 +29,12 @@ import '../widgets/chat/chat_conversation_view.dart';
 /// It opens on the active account's own chat (Teams, Google Chat, NightMail
 /// Server); connected Slack workspaces are further entries in its picker,
 /// and the one it opens on when the account has no chat of its own.
+/// Opened from the Chat pane it starts on the pane's system and
+/// conversation instead ([initial]); an open window is pointed there too.
 class ChatWindowApp extends StatelessWidget {
-  const ChatWindowApp({super.key});
+  const ChatWindowApp({super.key, this.initial});
+
+  final ChatWindowTarget? initial;
 
   static final _darkTheme = ThemeData(
     colorScheme: ColorScheme.fromSeed(
@@ -65,7 +72,7 @@ class ChatWindowApp extends StatelessWidget {
               AppThemeMode.dark => ThemeMode.dark,
               AppThemeMode.system => ThemeMode.system,
             },
-            home: const _ChatWindowPage(),
+            home: _ChatWindowPage(initial: initial),
           );
         },
       ),
@@ -74,7 +81,9 @@ class ChatWindowApp extends StatelessWidget {
 }
 
 class _ChatWindowPage extends StatefulWidget {
-  const _ChatWindowPage();
+  const _ChatWindowPage({this.initial});
+
+  final ChatWindowTarget? initial;
 
   @override
   State<_ChatWindowPage> createState() => _ChatWindowPageState();
@@ -89,12 +98,37 @@ class _ChatWindowPageState extends State<_ChatWindowPage> {
   List<ChatSource>? _slack;
   StreamSubscription<void>? _slackChanges;
 
+  /// Where the Chat pane asked this window to go, until its system is in
+  /// the picker — a Slack workspace only once the Keychain has been read.
+  late ChatWindowTarget? _target = widget.initial;
+
   @override
   void initState() {
     super.initState();
     final repo = sl<ChatRepository>();
     _slackChanges = repo.sourcesChanged.listen((_) => _loadSlack());
     _loadSlack();
+    unawaited(_listenForTargets());
+  }
+
+  /// The Chat pane points a window that is already open with
+  /// [ChatWindowTarget.openMethod].
+  Future<void> _listenForTargets() async {
+    try {
+      final controller = await WindowController.fromCurrentEngine();
+      await controller.setWindowMethodHandler((MethodCall call) async {
+        if (call.method == ChatWindowTarget.openMethod && mounted) {
+          final target = ChatWindowTarget.fromJson(call.arguments);
+          if (target != null) {
+            _target = target;
+            _ensureAccount(context.read<AccountCubit>().state);
+          }
+        }
+        return null;
+      });
+    } catch (e) {
+      debugPrint('[Chat] window handler failed: $e');
+    }
   }
 
   @override
@@ -139,6 +173,7 @@ class _ChatWindowPageState extends State<_ChatWindowPage> {
   /// Starts on the active account's own chat — the platform chat — and only
   /// on Slack when the account has none.
   void _ensureAccount(AccountState s) {
+    if (_goToTarget(s)) return;
     final entries = _entries(s);
     if (entries.isEmpty) return;
     if (_accountId != null && entries.any((e) => e.id == _accountId)) return;
@@ -154,6 +189,34 @@ class _ChatWindowPageState extends State<_ChatWindowPage> {
     final slack = _slack;
     if (slack == null) return;
     setState(() => _switchTo(slack.firstOrNull?.id ?? entries.first.id));
+  }
+
+  /// Goes to [_target] once its system is offered; true while it is
+  /// pending, so the default choice does not win the race. A system no
+  /// longer offered (a workspace disconnected) falls back to the default.
+  bool _goToTarget(AccountState s) {
+    final target = _target;
+    if (target == null) return false;
+    if (!_entries(s).any((e) => e.id == target.sourceId)) {
+      if (s is! AccountsLoaded || _slack == null) return true;
+      _target = null;
+      return false;
+    }
+    _target = null;
+    if (_accountId != target.sourceId) {
+      setState(() => _switchTo(target.sourceId));
+    }
+    if (target.conversation case final c?) {
+      unawaited(_openTarget(target.sourceId, c));
+    }
+    return true;
+  }
+
+  /// [c] as this window's list knows it — with its members — when it does.
+  Future<void> _openTarget(String sourceId, ChatConversation c) async {
+    final known = await sl<ChatRepository>().cachedConversations(sourceId);
+    if (!mounted || _accountId != sourceId) return;
+    _open(known.where((k) => k.key == c.key).firstOrNull ?? c);
   }
 
   void _switchTo(String accountId) {

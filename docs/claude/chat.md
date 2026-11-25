@@ -38,6 +38,13 @@ second system exists.
 - **The double-click** still opens the chat window, which starts on the
   active account's platform chat; Slack workspaces are further entries in
   its picker (and where it starts when the account has no chat).
+- **The pane's "Open chat window"** opens it on the pane's system and
+  open conversation (`ChatWindowTarget`): in the creation arguments, or
+  pushed to a window already open (`openTarget`, its
+  `setWindowMethodHandler`). The window waits for the system to be in its
+  picker — a Slack workspace only after its Keychain read — before the
+  default choice, and opens the conversation as its cached list knows it
+  (members included). A person with no chat yet opens just the system.
 
 `ChatUnreadCubit` is now the button's whole model: the systems, unread per
 system (`unreadCount` for each), and the choice. An account switch re-reads

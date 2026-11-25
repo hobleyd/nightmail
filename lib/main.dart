@@ -38,6 +38,7 @@ import 'presentation/pages/event_edit_window.dart';
 import 'presentation/pages/image_view_window.dart';
 import 'presentation/pages/meeting_reminders_window.dart';
 import 'presentation/pages/chat_window.dart';
+import 'presentation/widgets/chat/chat_window_target.dart';
 import 'presentation/pages/tasks_window.dart';
 import 'presentation/pages/home_page.dart';
 
@@ -236,7 +237,9 @@ void main(List<String> args) async {
       await showSubWindow(
         const WindowOptions(size: Size(1000, 680), center: true, title: 'Chat'),
       );
-      runApp(const ChatWindowApp());
+      runApp(ChatWindowApp(
+        initial: ChatWindowTarget.fromJson(arguments[ChatWindowTarget.argument]),
+      ));
       return;
     }
 

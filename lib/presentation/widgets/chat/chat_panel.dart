@@ -20,6 +20,7 @@ import '../../blocs/email_detail/email_detail_bloc.dart';
 import '../../blocs/email_detail/email_detail_state.dart';
 import 'chat_conversation_view.dart';
 import 'chat_pane_picker.dart';
+import 'chat_window_target.dart';
 
 /// The Chat pane beside the reading pane: a one-on-one with the selected
 /// email's sender, or — from the dropdown — with anyone else on it who is in
@@ -135,6 +136,19 @@ class _ChatPanelBodyState extends State<_ChatPanelBody> {
             name: (a.name ?? '').trim(),
           ),
     ];
+  }
+
+  /// The chat window, on this pane's system and — when one is open — its
+  /// conversation (a person with no chat yet opens just the system).
+  void _openWindow() {
+    final state = context.read<ChatConversationCubit>().state;
+    final sourceId = state.accountId ?? _accountId;
+    if (sourceId == null) {
+      unawaited(showOrCreateSubWindow(ChatWindowTarget.windowType));
+      return;
+    }
+    unawaited(openChatWindow(ChatWindowTarget(
+        sourceId: sourceId, conversation: state.conversation)));
   }
 
   Future<void> _sync(
@@ -377,7 +391,7 @@ class _ChatPanelBodyState extends State<_ChatPanelBody> {
                       icon: Icon(Icons.open_in_new_rounded,
                           size: touchIcon(15), color: c.textMuted),
                       tooltip: 'Open chat window',
-                      onPressed: () => showOrCreateSubWindow('chat'),
+                      onPressed: _openWindow,
                     ),
                   if (!widget.useBackNavigation)
                     IconButton(

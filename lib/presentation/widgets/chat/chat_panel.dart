@@ -1,11 +1,13 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 
 import '../../../core/platform/touch_metrics.dart';
+import '../../../core/settings/app_settings.dart';
 import '../../../core/platform/window_utils.dart';
 import '../../../core/theme/app_colors.dart';
 import '../../../domain/entities/chat.dart';
@@ -95,6 +97,30 @@ class _ChatPanelBodyState extends State<_ChatPanelBody> {
   ChatConversation? _chat;
   ChatPerson? _picked;
   String? _chatEmailId;
+
+  /// The unread list's share of the pane under the header, dragged at the
+  /// divider; [AppSettings.loadChatPaneSplit] across launches, and held here
+  /// so a pane reopened this session needs no read.
+  static double? _savedSplit;
+  double _split = _savedSplit ?? AppSettings.defaultChatPaneSplit;
+
+  @override
+  void initState() {
+    super.initState();
+    if (_savedSplit == null && sl.isRegistered<AppSettings>()) {
+      sl<AppSettings>().loadChatPaneSplit().then((v) {
+        _savedSplit ??= v;
+        if (mounted) setState(() => _split = _savedSplit!);
+      });
+    }
+  }
+
+  void _saveSplit() {
+    _savedSplit = _split;
+    if (sl.isRegistered<AppSettings>()) {
+      unawaited(sl<AppSettings>().saveChatPaneSplit(_split));
+    }
+  }
 
   /// [_chat] came from the unread list: it stays open across emails until
   /// something else is picked or the system changes.
@@ -398,10 +424,17 @@ class _ChatPanelBodyState extends State<_ChatPanelBody> {
             child: !ready
                 ? body
                 : LayoutBuilder(
-                    builder: (context, box) => Column(
+                    builder: (context, box) {
+                      // At least a row of the list; the conversation keeps
+                      // room for its bar, a message and the composer.
+                      final hi = math.max(
+                          _minUnread, box.maxHeight - _minConversation);
+                      final top =
+                          (box.maxHeight * _split).clamp(_minUnread, hi);
+                      return Column(
                       children: [
                         SizedBox(
-                          height: box.maxHeight * 0.3,
+                          height: top,
                           child: _UnreadList(
                             chats: unreadChats,
                             selected: chat,
@@ -414,7 +447,12 @@ class _ChatPanelBodyState extends State<_ChatPanelBody> {
                             }),
                           ),
                         ),
-                        Divider(height: 1, color: c.separatorStrong),
+                        _SplitHandle(
+                          onDrag: (dy) => setState(() => _split =
+                              ((top + dy).clamp(_minUnread, hi)) /
+                                  box.maxHeight),
+                          onEnd: _saveSplit,
+                        ),
                         _conversationBar(
                           c: c,
                           chatId: chatId,
@@ -427,7 +465,8 @@ class _ChatPanelBodyState extends State<_ChatPanelBody> {
                         Divider(height: 1, color: c.separator),
                         Expanded(child: body),
                       ],
-                    ),
+                    );
+                    },
                   ),
           ),
         ],
@@ -496,6 +535,56 @@ class _ChatPanelBodyState extends State<_ChatPanelBody> {
                       : const SizedBox.shrink(),
             ),
           ],
+        ),
+      ),
+    );
+  }
+}
+
+const double _minUnread = 56;
+const double _minConversation = 180;
+
+/// The divider between the unread list and the conversation: drag it up or
+/// down (mouse or touch); the split is saved when the drag ends.
+class _SplitHandle extends StatefulWidget {
+  const _SplitHandle({required this.onDrag, required this.onEnd});
+
+  final ValueChanged<double> onDrag;
+  final VoidCallback onEnd;
+
+  @override
+  State<_SplitHandle> createState() => _SplitHandleState();
+}
+
+class _SplitHandleState extends State<_SplitHandle> {
+  bool _hovered = false;
+  bool _dragging = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.colors;
+    final active = _hovered || _dragging;
+    return MouseRegion(
+      cursor: SystemMouseCursors.resizeRow,
+      onEnter: (_) => setState(() => _hovered = true),
+      onExit: (_) => setState(() => _hovered = false),
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onVerticalDragStart: (_) => setState(() => _dragging = true),
+        onVerticalDragUpdate: (d) => widget.onDrag(d.delta.dy),
+        onVerticalDragEnd: (_) {
+          setState(() => _dragging = false);
+          widget.onEnd();
+        },
+        onVerticalDragCancel: () => setState(() => _dragging = false),
+        child: SizedBox(
+          height: isTouchPlatform ? 20 : 8,
+          child: Center(
+            child: Container(
+              height: active ? 2 : 1,
+              color: active ? c.textDimmed : c.separatorStrong,
+            ),
+          ),
         ),
       ),
     );

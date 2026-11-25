@@ -43,6 +43,28 @@ class AppSettings {
     } catch (_) {}
   }
 
+  static const double defaultChatPaneSplit = 0.3;
+  static const String _chatPaneSplitFile = 'chat_pane_split';
+
+  /// How much of the Chat pane, under its header, the unread list takes.
+  Future<double> loadChatPaneSplit() async {
+    try {
+      final file = await _file(_chatPaneSplitFile);
+      if (await file.exists()) {
+        final v = double.tryParse((await file.readAsString()).trim());
+        if (v != null && v > 0 && v < 1) return v;
+      }
+    } catch (_) {}
+    return defaultChatPaneSplit;
+  }
+
+  Future<void> saveChatPaneSplit(double value) async {
+    try {
+      final file = await _file(_chatPaneSplitFile);
+      await file.writeAsString(value.toStringAsFixed(3));
+    } catch (_) {}
+  }
+
   Future<File> _file(String name) async {
     final dir = await appDataDirectory();
     return File('${dir.path}/$name');

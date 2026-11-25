@@ -228,7 +228,10 @@ Google: the newest message the unread check already reads, remembered in
   it at once (`select`). The sort — most recent first or by name — is a menu
   beside search (`ChatListState.sortByName`), remembered in
   `AppSettings.chat_sort_by_name`.
-- **The pane's unread list** is the top 30% of the pane: the chosen
+- **The pane's unread list** is the top of the pane — 30% to start; drag
+  the divider below it (`_SplitHandle`) to resize, kept as a fraction in
+  `AppSettings.chat_pane_split`, clamped so a row of the list and room for
+  the composer always show: the chosen
   system's unread chats and channels (`ChatUnreadState.unreadChats`), newest
   first, in the chat window's row (`ChatConversationRow`). Clicking one opens
   it in the rest of the pane and holds it there across emails (`_held`)

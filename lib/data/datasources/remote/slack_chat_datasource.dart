@@ -289,7 +289,7 @@ class SlackChatDatasource implements ChatRemoteDatasource {
     await _resolveUsers(_userIdsIn([newest]));
     return channel.copyWith(
       lastActivity: _ts(ts),
-      lastMessagePreview: _plain(newest['text'] as String? ?? ''),
+      lastMessagePreview: _plain(_previewText(newest)),
     );
   }
 
@@ -633,7 +633,7 @@ class SlackChatDatasource implements ChatRemoteDatasource {
       createdAt: _ts(ts) ?? DateTime.now(),
       senderName: name,
       senderUserId: user,
-      bodyHtml: mrkdwnToHtml(m['text'] as String? ?? '',
+      bodyHtml: messageHtml(m,
               userName: (id) => _users['$teamId|$id']?.name,
               customEmoji: (name) => _customEmoji[teamId]?[name]) +
           _imagesHtml(files),
@@ -736,6 +736,18 @@ class SlackChatDatasource implements ChatRemoteDatasource {
       ? v.whereType<Map<String, dynamic>>().toList()
       : const [];
 
+  /// A message's text, or — an app's message that has none — its first
+  /// attachment's summary.
+  static String _previewText(Map<String, dynamic> m) {
+    final text = m['text'] as String? ?? '';
+    if (text.trim().isNotEmpty) return text;
+    final a = _list(m['attachments']).firstOrNull;
+    for (final k in const ['fallback', 'pretext', 'title', 'text']) {
+      if (a?[k] case final String s when s.trim().isNotEmpty) return s;
+    }
+    return text;
+  }
+
   String _plain(String text) => replaceShortcodes(text)
       .replaceAllMapped(_mention,
           (m) => '@${_users['$teamId|${m[1]}']?.name ?? m[1]}')
@@ -780,6 +792,214 @@ class SlackChatDatasource implements ChatRemoteDatasource {
     out.write(_format(text.substring(last), customEmoji));
     return out.toString();
   }
+
+  /// A whole message as the HTML `ChatMessageBody` renders: its text, or the
+  /// layout blocks Slack shows in its place, then any attachments.
+  ///
+  /// An app's message (a CrowdStrike Falcon workflow, say) often carries
+  /// only a headline in `text` — the notification fallback — and the detail
+  /// in `blocks` or in `attachments`, each of which may hold blocks of its
+  /// own. A person's message is a single `rich_text` block saying what its
+  /// text does, so text stays the source whenever it has any and every block
+  /// is `rich_text`.
+  static String messageHtml(
+    Map<String, dynamic> m, {
+    String? Function(String userId)? userName,
+    SlackCustomEmoji? Function(String name)? customEmoji,
+  }) {
+    String md(String s) =>
+        mrkdwnToHtml(s, userName: userName, customEmoji: customEmoji);
+    final text = m['text'] as String? ?? '';
+    final blocks = _list(m['blocks']);
+    final useBlocks = blocks.isNotEmpty &&
+        (text.trim().isEmpty || blocks.any((b) => b['type'] != 'rich_text'));
+    var body = useBlocks ? _blocksHtml(blocks, md, userName, customEmoji) : '';
+    if (body.isEmpty) body = md(text);
+    final parts = [
+      body,
+      for (final a in _list(m['attachments']))
+        _attachmentHtml(a, md, userName, customEmoji),
+    ].where((s) => s.isNotEmpty).toList();
+    // A plain message stays exactly the HTML its text makes.
+    if (parts.length <= 1) return parts.firstOrNull ?? '';
+    return parts.map((s) => '<div>$s</div>').join();
+  }
+
+  /// A legacy attachment: its blocks when it has them, else `pretext`, a
+  /// `title` (linked), `text` and `title: value` fields.
+  static String _attachmentHtml(
+    Map<String, dynamic> a,
+    String Function(String) md,
+    String? Function(String userId)? userName,
+    SlackCustomEmoji? Function(String name)? customEmoji,
+  ) {
+    final blocks = _list(a['blocks']);
+    if (blocks.isNotEmpty) {
+      final html = _blocksHtml(blocks, md, userName, customEmoji);
+      if (html.isNotEmpty) return html;
+    }
+    String? str(String k) {
+      final v = a[k];
+      return v is String && v.trim().isNotEmpty ? v : null;
+    }
+
+    final title = str('title');
+    final link = str('title_link');
+    return [
+      if (str('pretext') case final p?) md(p),
+      if (str('author_name') case final n?) '<b>${md(n)}</b>',
+      if (title != null)
+        link != null &&
+                (link.startsWith('https://') || link.startsWith('http://'))
+            ? '<b><a href="${_escape(link)}">${md(title)}</a></b>'
+            : '<b>${md(title)}</b>',
+      if (str('text') case final t?) md(t),
+      for (final f in _list(a['fields']))
+        if (f['title'] is String || f['value'] is String)
+          [
+            if (f['title'] case final String t when t.isNotEmpty)
+              '<b>${md(t)}</b>',
+            if (f['value'] case final String v when v.isNotEmpty) md(v),
+          ].join(': '),
+      if (str('footer') case final f?) '<i>${md(f)}</i>',
+      // Nothing above, but a summary of itself: better than nothing.
+      if (title == null &&
+          str('text') == null &&
+          str('pretext') == null &&
+          _list(a['fields']).isEmpty)
+        if (str('fallback') case final f?) md(f),
+    ].map((s) => '<div>$s</div>').join();
+  }
+
+  /// Block Kit as the renderer's HTML: one `<div>` per block. Images,
+  /// dividers, inputs and buttons without a link have nothing to say here.
+  static String _blocksHtml(
+    List<Map<String, dynamic>> blocks,
+    String Function(String) md,
+    String? Function(String userId)? userName,
+    SlackCustomEmoji? Function(String name)? customEmoji,
+  ) {
+    String textObject(Object? t) {
+      if (t is! Map) return '';
+      final s = t['text'];
+      if (s is! String || s.isEmpty) return '';
+      return t['type'] == 'mrkdwn'
+          ? md(s)
+          : _escape(_unescape(s)).replaceAll('\n', '<br>');
+    }
+
+    final out = <String>[];
+    for (final b in blocks) {
+      final html = switch (b['type']) {
+        'section' => [
+            textObject(b['text']),
+            for (final f in _list(b['fields'])) textObject(f),
+          ].where((s) => s.isNotEmpty).join('<br>'),
+        'header' => switch (textObject(b['text'])) {
+            '' => '',
+            final h => '<b>$h</b>',
+          },
+        'context' => [
+            for (final e in _list(b['elements'])) textObject(e),
+          ].where((s) => s.isNotEmpty).join(' '),
+        'actions' => [
+            for (final e in _list(b['elements']))
+              if (e['url'] case final String url
+                  when url.startsWith('https://') || url.startsWith('http://'))
+                '<a href="${_escape(url)}">'
+                    '${switch (textObject(e['text'])) {
+                  '' => _escape(url),
+                  final t => t,
+                }}</a>',
+          ].join(' · '),
+        'rich_text' => _richTextHtml(_list(b['elements']), userName, customEmoji),
+        'markdown' => b['text'] is String ? md(b['text'] as String) : '',
+        _ => '',
+      };
+      if (html.isNotEmpty) out.add('<div>$html</div>');
+    }
+    return out.join();
+  }
+
+  /// A `rich_text` block's sections, lists, quotes and code. Its text, unlike
+  /// mrkdwn, arrives unescaped.
+  static String _richTextHtml(
+    List<Map<String, dynamic>> elements,
+    String? Function(String userId)? userName,
+    SlackCustomEmoji? Function(String name)? customEmoji,
+  ) {
+    String inline(List<Map<String, dynamic>> items) {
+      final out = StringBuffer();
+      for (final e in items) {
+        final style = e['style'] is Map ? e['style'] as Map : const {};
+        var html = switch (e['type']) {
+          'text' => _escape(e['text'] as String? ?? ''),
+          'link' => switch (e['url']) {
+              final String url
+                  when url.startsWith('https://') ||
+                      url.startsWith('http://') ||
+                      url.startsWith('mailto:') =>
+                '<a href="${_escape(url)}">'
+                    '${_escape((e['text'] as String?) ?? url)}</a>',
+              _ => _escape(e['text'] as String? ?? ''),
+            },
+          'user' => switch (e['user_id']) {
+              final String id =>
+                '<b>@${_escape(userName?.call(id) ?? id)}</b>',
+              _ => '',
+            },
+          'channel' => '<b>#channel</b>',
+          'usergroup' => '<b>@group</b>',
+          'broadcast' => '<b>@${_escape(e['range'] as String? ?? 'here')}</b>',
+          'emoji' => switch (e['name']) {
+              final String name => shortcodeEmoji(name) ??
+                  customEmoji?.call(name)?.text ??
+                  (e['unicode'] is String
+                      ? String.fromCharCodes([
+                          for (final cp in (e['unicode'] as String).split('-'))
+                            int.tryParse(cp, radix: 16) ?? 0x3F,
+                        ])
+                      : ':${_escape(name)}:'),
+              _ => '',
+            },
+          'date' => _escape(e['fallback'] as String? ?? ''),
+          _ => _escape(e['text'] as String? ?? ''),
+        };
+        if (style['code'] == true) html = '<code>$html</code>';
+        if (style['bold'] == true) html = '<b>$html</b>';
+        if (style['italic'] == true) html = '<i>$html</i>';
+        if (style['strike'] == true) html = '<s>$html</s>';
+        out.write(html);
+      }
+      return out.toString().replaceAll('\n', '<br>');
+    }
+
+    final out = StringBuffer();
+    for (final e in elements) {
+      final items = _list(e['elements']);
+      switch (e['type']) {
+        case 'rich_text_section':
+          out.write('<div>${inline(items)}</div>');
+        case 'rich_text_list':
+          final tag = e['style'] == 'ordered' ? 'ol' : 'ul';
+          out.write('<$tag>');
+          for (final item in items) {
+            out.write('<li>${inline(_list(item['elements']))}</li>');
+          }
+          out.write('</$tag>');
+        case 'rich_text_quote':
+          out.write('<blockquote>${inline(items)}</blockquote>');
+        case 'rich_text_preformatted':
+          out.write('<pre>${inline(items)}</pre>');
+      }
+    }
+    return out.toString();
+  }
+
+  static String _unescape(String s) => s
+      .replaceAll('&lt;', '<')
+      .replaceAll('&gt;', '>')
+      .replaceAll('&amp;', '&');
 
   static String _control(
       String inner, String? Function(String userId)? userName) {

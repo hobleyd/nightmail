@@ -134,6 +134,153 @@ void main() {
     expect(page.nextLink, 'abc');
   });
 
+  group('an app\'s message', () {
+    test('shows its attachment\'s blocks, not just the headline', () {
+      // The shape of a CrowdStrike Falcon workflow alert.
+      final html = SlackChatDatasource.messageHtml({
+        'text': 'Falcon Alert: Detection',
+        'attachments': [
+          {
+            'fallback': 'Falcon Alert: Detection',
+            'blocks': [
+              {
+                'type': 'section',
+                'text': {'type': 'mrkdwn', 'text': '*Trigger*'},
+              },
+              {
+                'type': 'rich_text',
+                'elements': [
+                  {
+                    'type': 'rich_text_list',
+                    'style': 'bullet',
+                    'elements': [
+                      {
+                        'type': 'rich_text_section',
+                        'elements': [
+                          {
+                            'type': 'text',
+                            'text': 'Detection name:',
+                            'style': {'bold': true},
+                          },
+                          {'type': 'text', 'text': ' DLP: File Upload <x>'},
+                        ],
+                      },
+                      {
+                        'type': 'rich_text_section',
+                        'elements': [
+                          {'type': 'text', 'text': 'Source event URL: '},
+                          {'type': 'link', 'url': 'https://falcon.test/d?a=1&b=2'},
+                        ],
+                      },
+                    ],
+                  },
+                ],
+              },
+              {
+                'type': 'actions',
+                'elements': [
+                  {
+                    'type': 'button',
+                    'text': {'type': 'plain_text', 'text': 'See in Falcon'},
+                    'url': 'https://falcon.test/d',
+                  },
+                  {
+                    'type': 'button',
+                    'text': {'type': 'plain_text', 'text': 'Ack'},
+                  },
+                ],
+              },
+              {
+                'type': 'context',
+                'elements': [
+                  {
+                    'type': 'mrkdwn',
+                    'text': 'Your <https://falcon.test/w|workflow> generated '
+                        'this message.',
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+      });
+      expect(html, contains('Falcon Alert: Detection'));
+      expect(html, contains('<b>Trigger</b>'));
+      expect(html,
+          contains('<li><b>Detection name:</b> DLP: File Upload &lt;x&gt;</li>'));
+      expect(
+          html,
+          contains('<a href="https://falcon.test/d?a=1&amp;b=2">'
+              'https://falcon.test/d?a=1&amp;b=2</a>'));
+      expect(html, contains('<a href="https://falcon.test/d">See in Falcon</a>'));
+      expect(html, isNot(contains('Ack')));
+      expect(html, contains('<a href="https://falcon.test/w">workflow</a>'));
+    });
+
+    test('layout blocks replace the fallback text; a person\'s rich_text '
+        'block does not', () {
+      final laidOut = SlackChatDatasource.messageHtml({
+        'text': 'fallback only',
+        'blocks': [
+          {
+            'type': 'header',
+            'text': {'type': 'plain_text', 'text': 'Deploy & done'},
+          },
+          {
+            'type': 'section',
+            'fields': [
+              {'type': 'mrkdwn', 'text': '*Env:* prod'},
+              {'type': 'mrkdwn', 'text': '*By:* Ann'},
+            ],
+          },
+        ],
+      });
+      expect(laidOut, isNot(contains('fallback only')));
+      expect(laidOut, contains('<b>Deploy &amp; done</b>'));
+      expect(laidOut, contains('<b>Env:</b> prod<br><b>By:</b> Ann'));
+
+      final person = SlackChatDatasource.messageHtml({
+        'text': 'hi *there*',
+        'blocks': [
+          {
+            'type': 'rich_text',
+            'elements': [
+              {
+                'type': 'rich_text_section',
+                'elements': [
+                  {'type': 'text', 'text': 'hi '},
+                  {'type': 'text', 'text': 'there', 'style': {'bold': true}},
+                ],
+              },
+            ],
+          },
+        ],
+      });
+      expect(person, 'hi <b>there</b>');
+    });
+
+    test('a classic attachment shows its title, text and fields', () {
+      final html = SlackChatDatasource.messageHtml({
+        'text': '',
+        'attachments': [
+          {
+            'fallback': 'Build failed',
+            'title': 'Build #12',
+            'title_link': 'https://ci.test/12',
+            'text': 'failed on `main`',
+            'fields': [
+              {'title': 'Branch', 'value': 'main'},
+            ],
+          },
+        ],
+      });
+      expect(html, contains('<a href="https://ci.test/12">Build #12</a>'));
+      expect(html, contains('failed on <code>main</code>'));
+      expect(html, contains('<b>Branch</b>: main'));
+      expect(html, isNot(contains('Build failed')));
+    });
+  });
+
   group('mrkdwn', () {
     String html(String s) => SlackChatDatasource.mrkdwnToHtml(s);
 

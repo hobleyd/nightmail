@@ -844,6 +844,15 @@ class _ComposerState extends State<_Composer> {
   void initState() {
     super.initState();
     _controller.addListener(_onTyped);
+    // Reply opens the thread with its box ready to type in. Beside the
+    // list the thread composer already exists, so a newly opened thread
+    // (the listener below) focuses it too; on a narrow screen it is built
+    // as the thread opens.
+    if (widget.inThread) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _focus.requestFocus();
+      });
+    }
   }
 
   @override
@@ -1119,6 +1128,12 @@ class _ComposerState extends State<_Composer> {
               a.editingInThread != b.editingInThread,
           listener: _onEditing,
         ),
+        if (widget.inThread)
+          BlocListener<ChatConversationCubit, ChatConversationState>(
+            listenWhen: (a, b) =>
+                b.threadPostId != null && a.threadPostId != b.threadPostId,
+            listener: (_, _) => _focus.requestFocus(),
+          ),
         // A picture pasted for one conversation never goes to the next,
         // nor do the people tagged for it.
         BlocListener<ChatConversationCubit, ChatConversationState>(

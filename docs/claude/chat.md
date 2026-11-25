@@ -457,7 +457,8 @@ deleted or retyped goes as the text it now is.
   have redrawn every DM as cards.
 - **The link** is the channels' Reply / "N replies", always shown, under the
   bubble; never on a tile inside the thread panel. The message whose thread
-  is open is highlighted. A reply sent from the thread bumps its parent's
+  is open is highlighted. Opening a thread puts the caret in its own
+  composer ("Reply"), narrow or beside the list. A reply sent from the thread bumps its parent's
   count at once (`withOneMoreReply`) and stays out of the DM's list.
 - **Two composers, one target each.** `send(text, inThread:)`: only the
   thread's composer answers in the thread. Before this, the wide view's list

@@ -234,6 +234,19 @@ void main() {
       await cubit.close();
     });
 
+    for (final wide in [false, true]) {
+      testWidgets('Reply puts the caret in the thread\'s box '
+          '(${wide ? 'beside the list' : 'in place of it'})', (tester) async {
+        final (_, cubit) = await pump(tester, slack: true, wide: wide);
+        await tester.tap(find.text('Reply'));
+        await tester.pumpAndSettle();
+        final box = find.byType(TextField).last;
+        expect(tester.widget<TextField>(box).decoration!.hintText, 'Reply');
+        expect(tester.widget<TextField>(box).focusNode!.hasFocus, isTrue);
+        await cubit.close();
+      });
+    }
+
     testWidgets('a Teams chat has no threads: no Reply', (tester) async {
       final (_, cubit) = await pump(tester, slack: false);
       expect(find.text('Reply'), findsNothing);

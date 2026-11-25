@@ -176,13 +176,13 @@ Settings → Accounts.
 - Each sender has an avatar (directory photo, or initials) and their own pastel colour — yours is always blue, so who is talking stands out at a glance
 - A red dot on the Chat button when someone has written in a chat you haven't read; opening the chat marks it read in Teams or Google Chat too
 - Slack: connect one or more workspaces under Settings > General — direct messages, group messages and channels with threads, search, pictures and avatars, in the same pane and window
-- With Slack beside your account's own chat, the Chat button becomes a menu of chat systems, each with its own unread dot and count; an IMAP account with Slack opens Slack directly
+- With Slack beside your account's own chat, the Chat pane's header switches between chat systems, each with its own unread dot and count, and the Chat button's tooltip says where the unread chats are; an IMAP account with Slack opens Slack directly
 - Chats open instantly from an encrypted local cache, then fetch only what changed since (Teams, Slack and Google Chat)
 - Slack messages and reactions show every emoji, including the workspace's own custom emoji
 - The chat window bolds only chats with unread messages and sorts by most recent or by name
 - Chats, spaces and channels quiet for a week tuck away behind a "Show N older" row; unread ones always show
 - On a NightMail Server, the Chat button's unread dot appears within seconds of a new message, not at the next minute's check
-- The Chat pane's dropdown also offers your unread chats, beside the people on the email
+- The top of the Chat pane lists your unread chats and channels, newest first; click one to read it below
 - Search from the Chat pane's dropdown to message anyone in your address book you can chat with, or any chat or channel, by name
 - Edit your own chat messages on Teams, NightMail Server, Google Chat and Slack
 - Open the chat window straight onto the conversation in the Chat pane

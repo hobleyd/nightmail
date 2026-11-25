@@ -228,6 +228,70 @@ void main() {
       await cubit.close();
     });
 
+    Future<(_Repo, ChatConversationCubit)> pumpThread(WidgetTester tester,
+        {required bool wide}) async {
+      final repo = _Repo([mine('p1', 'my post', 1)], ownId: 'u-me')
+        ..threadReplies = [msg('r1', 'Ann Lee', 'u-ann', 2)];
+      final cubit = ChatConversationCubit(repository: repo);
+      await cubit.open(
+          'a',
+          const ChatConversation(
+              id: 'ch', kind: ChatKind.channel, title: 'General', teamId: 'T'));
+      await cubit.openThread('p1');
+      await tester.binding.setSurfaceSize(const Size(1200, 800));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      await tester.pumpWidget(MaterialApp(
+        home: Scaffold(
+          body: BlocProvider.value(
+            value: cubit,
+            child: ChatConversationView(wideThreads: wide),
+          ),
+        ),
+      ));
+      await tester.pumpAndSettle();
+      return (repo, cubit);
+    }
+
+    testWidgets('the post\'s pencil in a thread edits in the thread\'s '
+        'composer, the one on screen', (tester) async {
+      final (repo, cubit) = await pumpThread(tester, wide: false);
+      expect(find.byType(TextField), findsOneWidget,
+          reason: 'the thread covers the posts and their composer');
+      await tester.tap(find.byTooltip('Edit'));
+      await tester.pumpAndSettle();
+      expect(find.textContaining('Editing message'), findsOneWidget);
+      expect(tester.widget<TextField>(find.byType(TextField)).controller!.text,
+          'my post');
+      await tester.enterText(find.byType(TextField), 'my post, fixed');
+      await tester.tap(find.byTooltip('Save'));
+      await tester.pumpAndSettle();
+      expect(repo.edits, [('p1', 'my post, fixed')]);
+      expect(repo.sent, isEmpty);
+      await cubit.close();
+    });
+
+    testWidgets('an edit open in one composer is never saved from the other',
+        (tester) async {
+      final (repo, cubit) = await pumpThread(tester, wide: true);
+      expect(find.byType(TextField), findsNWidgets(2));
+      // The post's pencil in the list, not the one in the thread.
+      await tester.tap(find.byTooltip('Edit').first);
+      await tester.pumpAndSettle();
+      expect(cubit.state.editingInThread, isFalse);
+      final main = find.byType(TextField).first;
+      final reply = find.byType(TextField).last;
+      expect(tester.widget<TextField>(main).controller!.text, 'my post');
+      expect(tester.widget<TextField>(reply).controller!.text, isEmpty);
+
+      await tester.enterText(reply, 'a reply');
+      await tester.tap(find.byTooltip('Send').last);
+      await tester.pumpAndSettle();
+      expect(repo.sent, [('a reply', 'p1')]);
+      expect(repo.edits, isEmpty);
+      expect(cubit.state.editing?.id, 'p1', reason: 'still open where it was');
+      await cubit.close();
+    });
+
     testWidgets('Up in an empty box edits the last one; Esc leaves it',
         (tester) async {
       final (repo, cubit) = await pump(tester);
@@ -295,6 +359,30 @@ class _Repo extends Fake implements ChatRepository {
       List<ChatMessage> messages) async {}
 
   final edits = <(String, String)>[];
+  final sent = <(String, String?)>[];
+  List<ChatMessage> threadReplies = const [];
+
+  @override
+  Future<Either<Failure, List<ChatMessage>>> replies(String accountId,
+          ChatConversation conversation, ChatMessage post) async =>
+      Right(threadReplies);
+
+  @override
+  Future<Either<Failure, ChatMessage>> sendMessage(
+    String accountId,
+    ChatConversation conversation,
+    String text, {
+    ChatMessage? replyTo,
+  }) async {
+    sent.add((text, replyTo?.id));
+    return Right(ChatMessage(
+      id: 'new-${sent.length}',
+      createdAt: DateTime(2026, 11, 25, 11),
+      senderName: 'Me',
+      senderUserId: 'u-me',
+      bodyHtml: text,
+    ));
+  }
 
   @override
   bool canEdit(String accountId, ChatConversation conversation) => true;

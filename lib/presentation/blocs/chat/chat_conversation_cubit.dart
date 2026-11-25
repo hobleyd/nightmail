@@ -43,6 +43,7 @@ class ChatConversationState extends Equatable {
     this.threadLoading = false,
     this.ownUserId,
     this.editing,
+    this.editingInThread = false,
   });
 
   final String? accountId;
@@ -77,13 +78,13 @@ class ChatConversationState extends Equatable {
   /// wear one colour in every conversation.
   final String? ownUserId;
 
-  /// The user's own message the composer is editing, or null when it sends.
-  /// A thread reply is edited in the thread's composer, anything else in the
-  /// conversation's.
+  /// The user's own message a composer is editing, or null when both send.
   final ChatMessage? editing;
 
-  bool get editingInThread =>
-      editing != null && threadReplies.any((m) => m.id == editing!.id);
+  /// Whether [editing] belongs to the open thread's composer — the pencil
+  /// was pressed in the thread — rather than the conversation's. Only that
+  /// composer saves it; the other one goes on sending.
+  final bool editingInThread;
 
   ChatMessage? get threadPost => threadPostId == null
       ? null
@@ -106,6 +107,7 @@ class ChatConversationState extends Equatable {
     bool? threadLoading,
     String? ownUserId,
     ChatMessage? Function()? editing,
+    bool? editingInThread,
   }) =>
       ChatConversationState(
         accountId: accountId ?? this.accountId,
@@ -124,6 +126,7 @@ class ChatConversationState extends Equatable {
         threadLoading: threadLoading ?? this.threadLoading,
         ownUserId: ownUserId ?? this.ownUserId,
         editing: editing != null ? editing() : this.editing,
+        editingInThread: editingInThread ?? this.editingInThread,
       );
 
   @override
@@ -144,6 +147,7 @@ class ChatConversationState extends Equatable {
         threadLoading,
         ownUserId,
         editing,
+        editingInThread,
       ];
 }
 
@@ -550,10 +554,12 @@ class ChatConversationCubit extends Cubit<ChatConversationState> {
         _repo.canEdit(accountId, conversation);
   }
 
-  /// Points the composer at [m]: its next [send] replaces [m]'s text.
-  void startEdit(ChatMessage m) {
+  /// Points a composer — the thread's when [inThread] — at [m]: its next
+  /// [saveEdit] replaces [m]'s text.
+  void startEdit(ChatMessage m, {bool inThread = false}) {
     if (!canEdit(m) || state.sending) return;
-    emit(state.copyWith(editing: () => m, error: () => null));
+    emit(state.copyWith(
+        editing: () => m, editingInThread: inThread, error: () => null));
   }
 
   void cancelEdit() {
@@ -561,14 +567,33 @@ class ChatConversationCubit extends Cubit<ChatConversationState> {
   }
 
   /// The newest of the user's messages that can be edited — in the open
-  /// thread when [inThread] — for Up in an empty composer.
+  /// thread (its replies, then its post) when [inThread] — for Up in an
+  /// empty composer.
   ChatMessage? lastEditable({required bool inThread}) => inThread
-      ? state.threadReplies.reversed.where(canEdit).firstOrNull
+      ? [...state.threadReplies.reversed, ?state.threadPost]
+          .where(canEdit)
+          .firstOrNull
       : state.messages.where(canEdit).firstOrNull;
 
-  Future<bool> _saveEdit(String accountId, ChatMessage target, String text) async {
+  /// Replaces the text of the message being edited
+  /// ([ChatConversationState.editing]) with [text].
+  Future<bool> saveEdit(String text) async {
+    final trimmed = text.trim();
+    final accountId = state.accountId;
     final conversation = state.conversation;
-    if (conversation == null) return false;
+    final target = state.editing;
+    if (trimmed.isEmpty ||
+        accountId == null ||
+        conversation == null ||
+        target == null ||
+        state.sending) {
+      return false;
+    }
+    return _saveEdit(accountId, conversation, target, trimmed);
+  }
+
+  Future<bool> _saveEdit(String accountId, ChatConversation conversation,
+      ChatMessage target, String text) async {
     if (text == target.editableText?.trim()) {
       cancelEdit();
       return true;
@@ -609,14 +634,12 @@ class ChatConversationCubit extends Cubit<ChatConversationState> {
 
   /// Sends [text] to the open conversation — to the open thread when one is
   /// open — or starts the one-on-one with [ChatConversationState.person].
-  /// While a message is being edited ([ChatConversationState.editing]),
-  /// replaces its text instead.
+  /// Never touches an edit in progress: the composer that holds it calls
+  /// [saveEdit] instead.
   Future<bool> send(String text) async {
     final trimmed = text.trim();
     final accountId = state.accountId;
     if (trimmed.isEmpty || accountId == null || state.sending) return false;
-    final editing = state.editing;
-    if (editing != null) return _saveEdit(accountId, editing, trimmed);
     final gen = _generation;
     emit(state.copyWith(sending: true, error: () => null));
 
@@ -694,6 +717,7 @@ class ChatConversationCubit extends Cubit<ChatConversationState> {
       threadReplies: post?.replies ?? const [],
       threadLoading: true,
       editing: state.editingInThread ? () => null : null,
+      editingInThread: false,
     ));
     await _reloadThread(_generation);
   }
@@ -702,7 +726,8 @@ class ChatConversationCubit extends Cubit<ChatConversationState> {
       threadPostId: () => null,
       threadReplies: const [],
       threadLoading: false,
-      editing: state.editingInThread ? () => null : null));
+      editing: state.editingInThread ? () => null : null,
+      editingInThread: false));
 
   Future<void> _reloadThread(int gen) async {
     final accountId = state.accountId;

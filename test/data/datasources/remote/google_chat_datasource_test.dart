@@ -479,6 +479,15 @@ void main() {
               {'text': '<https://x.test|doc>'}),
           isNull);
       expect(GoogleChatDatasource.editableTextOf({'text': ''}), isNull);
+      expect(
+          GoogleChatDatasource.editableTextOf({
+            'text': 'thanks @Ann Lee',
+            'annotations': [
+              {'type': 'USER_MENTION', 'startIndex': 7, 'length': 8},
+            ],
+          }),
+          isNull,
+          reason: 'a read mention is plain text with an annotation over it');
     });
   });
 }

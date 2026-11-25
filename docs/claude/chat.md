@@ -342,8 +342,11 @@ anything else in the conversation's (`ChatConversationState.editingInThread`).
     card), or HTML beyond `<p>`/`<div>`/`<br>`, `<emoji alt>` and a link whose
     label is its own address — the wrapping Teams gives typed text. Saved as
     `contentType: text`.
-  - Google (`editableTextOf`): `<users/…>` mentions and `<url|label>` links.
-    `*bold*` and the like are typed text there, and round-trip.
+  - Google (`editableTextOf`): any `annotations` (a read mention is plain
+    `@Name` in `text` with a `USER_MENTION` annotation over it; Drive chips
+    and custom emoji are annotations too), a card, or `<users/…>`/
+    `<url|label>` markup. `*bold*` and the like are typed text there, and
+    round-trip.
 - **Calls:** Graph `PATCH` on the chat message, channel post or
   `…/messages/{replyToId}/replies/{id}` (204, no body — the edit is what was
   sent); Google `messages.patch?updateMask=text` (echoes the message; its
@@ -351,6 +354,11 @@ anything else in the conversation's (`ChatConversationState.editingInThread`).
   Every provider's result is merged onto the message shown
   (`ChatMessage.withEdit`) rather than re-parsed, so reactions and replies the
   response leaves out stay.
+- **Two composers, one edit.** The pencil records which composer owns the
+  edit (`startEdit(m, inThread:)` — a tile in the thread panel says so), and
+  only that composer calls `saveEdit`; the other keeps calling `send`, which
+  never looks at `editing`. Deciding by `state.editing` alone let a reply
+  typed in the thread overwrite a post being edited in the list.
 - **Microsoft 365 channels can't be edited.** Graph wants
   `ChannelMessage.ReadWrite` (admin consent) for a channel edit; NightMail
   asks for `ChannelMessage.Read.All` + `ChannelMessage.Send` only, so

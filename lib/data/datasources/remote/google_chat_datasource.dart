@@ -545,13 +545,19 @@ class GoogleChatDatasource implements ChatRemoteDatasource {
     }
   }
 
-  /// A message's `text` to edit, or null when there is none or it holds
-  /// Chat's `<users/…>` mentions or `<url|label>` links — markup the edit box
+  /// A message's `text` to edit, or null when plain text would lose part of
+  /// it: an annotation (a read mention is `@Name` in `text` with a
+  /// `USER_MENTION` annotation over it; a Drive chip or custom emoji is one
+  /// too), a card, or Chat's `<users/…>`/`<url|label>` markup the edit box
   /// would show raw.
   @visibleForTesting
   static String? editableTextOf(Map<String, dynamic> raw) {
     final text = raw['text'] as String? ?? '';
-    if (text.trim().isEmpty || RegExp(r'<[^<>\s]+>').hasMatch(text)) {
+    if (text.trim().isEmpty ||
+        _list(raw['annotations']).isNotEmpty ||
+        _list(raw['cardsV2']).isNotEmpty ||
+        _list(raw['cards']).isNotEmpty ||
+        RegExp(r'<[^<>\s]+>').hasMatch(text)) {
       return null;
     }
     return text;

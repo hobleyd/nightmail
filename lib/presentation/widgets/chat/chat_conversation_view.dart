@@ -258,7 +258,11 @@ class _MessageTile extends StatelessWidget {
     required this.showHeader,
     required this.isPost,
     required this.selected,
+    this.inThread = false,
   });
+
+  /// Shown in the open thread: its pencil edits in the thread's composer.
+  final bool inThread;
 
   final ChatMessage message;
   final bool showHeader;
@@ -508,7 +512,7 @@ class _MessageTile extends StatelessWidget {
               constraints: BoxConstraints.tightFor(
                   width: isTouchPlatform ? 36 : 24,
                   height: isTouchPlatform ? 36 : 24),
-              onPressed: () => cubit.startEdit(m),
+              onPressed: () => cubit.startEdit(m, inThread: inThread),
             ),
           ),
       ],
@@ -632,7 +636,8 @@ class _ThreadPanel extends StatelessWidget {
                       message: post!,
                       showHeader: true,
                       isPost: false,
-                      selected: false),
+                      selected: false,
+                      inThread: true),
                 if (post != null)
                   Padding(
                     padding:
@@ -644,7 +649,8 @@ class _ThreadPanel extends StatelessWidget {
                       message: r,
                       showHeader: true,
                       isPost: false,
-                      selected: false),
+                      selected: false,
+                      inThread: true),
               ],
             ),
           ),
@@ -693,9 +699,12 @@ class _ComposerState extends State<_Composer> {
   Future<void> _send() async {
     final text = _controller.text;
     if (text.trim().isEmpty) return;
-    final ok = await context.read<ChatConversationCubit>().send(text);
-    // A saved edit hands the box back through the listener below.
-    if (ok && mounted && !_mine(context.read<ChatConversationCubit>().state)) {
+    final cubit = context.read<ChatConversationCubit>();
+    // Decided before the await: only this box's own edit is saved from it.
+    if (_mine(cubit.state)) {
+      // A saved edit hands the box back through the listener below.
+      await cubit.saveEdit(text);
+    } else if (await cubit.send(text) && mounted) {
       _controller.clear();
     }
     _focus.requestFocus();
@@ -713,7 +722,7 @@ class _ComposerState extends State<_Composer> {
     final cubit = context.read<ChatConversationCubit>();
     final last = cubit.lastEditable(inThread: widget.inThread);
     if (last == null) return KeyEventResult.ignored;
-    cubit.startEdit(last);
+    cubit.startEdit(last, inThread: widget.inThread);
     return KeyEventResult.handled;
   }
 

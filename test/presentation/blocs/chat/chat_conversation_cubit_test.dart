@@ -197,7 +197,7 @@ void main() {
       expect(cubit.lastEditable(inThread: false)?.id, 'm2');
       cubit.startEdit(cubit.state.messages[2]);
       expect(cubit.state.editing?.id, 'm0');
-      expect(await cubit.send('  fixed '), isTrue);
+      expect(await cubit.saveEdit('  fixed '), isTrue);
       expect(repo.edits, [('m0', 'fixed')]);
       expect(cubit.state.editing, isNull);
       expect(ids(), ['m2', 'a', 'm0'], reason: 'it keeps its place');
@@ -210,13 +210,13 @@ void main() {
     test('an unchanged edit just closes; a refused one stays open', () async {
       await opened([mine('m2', 2)]);
       cubit.startEdit(cubit.state.messages[0]);
-      expect(await cubit.send('typo'), isTrue);
+      expect(await cubit.saveEdit('typo'), isTrue);
       expect(repo.edits, isEmpty);
       expect(cubit.state.editing, isNull);
 
       repo.editFailure = const ServerFailure(message: 'Too late to edit');
       cubit.startEdit(cubit.state.messages[0]);
-      expect(await cubit.send('better'), isFalse);
+      expect(await cubit.saveEdit('better'), isFalse);
       expect(cubit.state.editing?.id, 'm2');
       expect(cubit.state.error, contains('Too late to edit'));
       cubit.cancelEdit();

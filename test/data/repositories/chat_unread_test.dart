@@ -61,9 +61,36 @@ void main() {
         slack: SlackWorkspaces(storage: MemorySecureStorage()),
         local: MemoryChatLocalDatasource());
     final reads = repo.reads.first;
+    final keys = repo.readKeys.first;
     await repo.markRead('acct', chat('a', unread: true));
     expect(ds.marked, ['a']);
     expect(await reads, 'acct');
+    expect(await keys, (accountId: 'acct', key: 'a', here: true));
+  });
+
+  test('a chat read in the other window stays read here, unasked', () async {
+    final before = DateTime.now().subtract(const Duration(minutes: 1));
+    final later = DateTime.now().add(const Duration(minutes: 1));
+    ChatConversation at(DateTime t) => ChatConversation(
+        id: 'a', kind: ChatKind.oneOnOne, title: 'a',
+        unread: true, lastActivity: t);
+    final ds = _Chats([at(before)]);
+    final repo = ChatRepositoryImpl(
+        accountManager: _Accounts(ds, chats: true), contacts: _NoContacts(),
+        slack: SlackWorkspaces(storage: MemorySecureStorage()),
+        local: MemoryChatLocalDatasource());
+    var polls = 0;
+    repo.reads.listen((_) => polls++);
+    final keys = repo.readKeys.first;
+    repo.readElsewhere('acct', 'a');
+    expect(await keys, (accountId: 'acct', key: 'a', here: false),
+        reason: 'never passed back');
+    expect(ds.marked, isEmpty, reason: 'the other window told the server');
+    expect(polls, 0, reason: 'nothing re-polls every system for it');
+    expect(await repo.unreadCount('acct'), 0);
+
+    ds.recent = [at(later)];
+    expect(await repo.unreadCount('acct'), 1);
   });
 }
 

@@ -360,6 +360,31 @@ class ChatRepositoryImpl implements ChatRepository {
   @override
   Stream<String> get reads => _reads.stream;
 
+  final _readKeys =
+      StreamController<({String accountId, String key, bool here})>.broadcast();
+
+  @override
+  Stream<({String accountId, String key, bool here})> get readKeys =>
+      _readKeys.stream;
+
+  /// Not on [reads]: what listens there re-polls every system, and the
+  /// listeners of [readKeys] can drop the one conversation instead.
+  @override
+  void readElsewhere(String accountId, String key) {
+    _markedAt['$accountId|$key'] = DateTime.now();
+    _countRead(accountId, key);
+    _readKeys.add((accountId: accountId, key: key, here: false));
+  }
+
+  void _countRead(String accountId, String key) {
+    final list = _conversations[accountId];
+    if (list != null) {
+      _conversations[accountId] = [
+        for (final c in list) c.key == key ? c.copyWith(unread: false) : c,
+      ];
+    }
+  }
+
   @override
   Future<void> markRead(
     String accountId,
@@ -372,14 +397,9 @@ class ChatRepositoryImpl implements ChatRepository {
       (f) => debugPrint('[Chat] mark read failed: ${f.message}'),
       (_) {},
     );
-    final list = _conversations[accountId];
-    if (list != null) {
-      _conversations[accountId] = [
-        for (final c in list)
-          c.key == conversation.key ? c.copyWith(unread: false) : c,
-      ];
-    }
+    _countRead(accountId, conversation.key);
     _reads.add(accountId);
+    _readKeys.add((accountId: accountId, key: conversation.key, here: true));
   }
 
   @override

@@ -21,6 +21,7 @@ import '../blocs/theme/theme_cubit.dart';
 import '../blocs/theme/theme_state.dart';
 import '../widgets/chat/chat_window_target.dart';
 import '../widgets/chat/chat_conversation_view.dart';
+import '../widgets/chat/chat_read_relay.dart';
 
 /// The chat window, opened by double-clicking the Chat button: every chat
 /// and channel on the left, grouped and newest first, the open one's history
@@ -108,6 +109,7 @@ class _ChatWindowPageState extends State<_ChatWindowPage> {
     final repo = sl<ChatRepository>();
     _slackChanges = repo.sourcesChanged.listen((_) => _loadSlack());
     _loadSlack();
+    ChatReadRelay.start(repo);
     unawaited(_listenForTargets());
   }
 
@@ -117,6 +119,7 @@ class _ChatWindowPageState extends State<_ChatWindowPage> {
     try {
       final controller = await WindowController.fromCurrentEngine();
       await controller.setWindowMethodHandler((MethodCall call) async {
+        if (ChatReadRelay.handle(call, sl<ChatRepository>())) return null;
         if (call.method == ChatWindowTarget.openMethod && mounted) {
           final target = ChatWindowTarget.fromJson(call.arguments);
           if (target != null) {

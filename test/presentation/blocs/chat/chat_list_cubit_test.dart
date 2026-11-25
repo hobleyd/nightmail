@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:fpdart/fpdart.dart';
 import 'package:nightmail/core/error/failures.dart';
@@ -58,6 +60,20 @@ void main() {
     expect(cubit.state.chats.map((c) => c.title), ['Ann', 'Mia', 'zed']);
     cubit.setSortByName(false);
     expect(cubit.state.chats.map((c) => c.title), ['zed', 'Mia', 'Ann']);
+  });
+
+  test('a chat read in the other window un-bolds here at once', () async {
+    repo.list = [chat('a', 'Ann', 9), chat('b', 'Bob', 8)];
+    repo.unread = [chat('a', 'Ann', 9, unread: true)];
+    await cubit.load('slack:T1');
+    await pumpEventQueue();
+    expect(unread(), {'a': true, 'b': false});
+    repo.readEvents.add((accountId: 'other', key: 'a', here: false));
+    await pumpEventQueue();
+    expect(unread()['a'], isTrue, reason: 'another system');
+    repo.readEvents.add((accountId: 'slack:T1', key: 'a', here: false));
+    await pumpEventQueue();
+    expect(unread(), {'a': false, 'b': false});
   });
 
   test('a Slack lookup that fails is asked again next poll, once done never',
@@ -130,6 +146,13 @@ class _Repo implements ChatRepository {
   @override
   Future<List<ChatConversation>> unreadConversations(String accountId) async =>
       unread;
+
+  final readEvents =
+      StreamController<({String accountId, String key, bool here})>.broadcast();
+
+  @override
+  Stream<({String accountId, String key, bool here})> get readKeys =>
+      readEvents.stream;
 
   /// Each lookup's key, and whether the next one of each is refused.
   final looked = <String>[];

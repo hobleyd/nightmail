@@ -292,8 +292,15 @@ account's recent chats is unread (`ChatUnreadCubit`, main window only).
   Nightware takes the id alone. `ChatRepository.reads` clears the dot at
   once in the same isolate — the repository also counts a chat it marked as
   read until something newer arrives, since Microsoft's read state can trail
-  the mark. A chat read in the chat window (its own isolate) or in Teams
-  clears on the next poll. A mark that fails (offline) is not retried for
+  the mark. A chat read in the chat window (its own isolate) clears at once
+  too, and one read in the pane un-bolds in the window: `ChatReadRelay`
+  passes each `markRead` (`readKeys`, `here`) to the other window — main to
+  the open window through its method handler, the window to main over the
+  `chat_read` channel — which takes it as `readElsewhere` (counted read until
+  something newer, never passed back). This matters for Slack: a channel
+  whose workspace lacks `channels:write` stays unread on Slack's side, so
+  the other window's poll alone would bold it again. One read in Teams or
+  Slack itself clears on the next poll. A mark that fails (offline) is not retried for
   that message; the next message from someone else marks it again.
 - **No dot** for Teams channels: Graph has no per-user read state on
   channel messages.

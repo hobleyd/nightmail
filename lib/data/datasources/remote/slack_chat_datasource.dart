@@ -280,6 +280,8 @@ class SlackChatDatasource implements ChatRemoteDatasource {
       if (scopes == null ||
           !scopes.contains('channels:write') ||
           !scopes.contains('groups:write')) {
+        debugPrint('[Slack] $teamId: not marking a channel read in Slack — '
+            'connect the workspace again to grant channels:write');
         return;
       }
     }

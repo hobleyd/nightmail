@@ -55,8 +55,9 @@ class ChatUnreadState extends Equatable {
 ///
 /// This polls: one page of recent chats per system every [pollInterval]
 /// ([ChatRepository.unreadCount]). A chat read in this window clears at once
-/// ([ChatRepository.reads]); one read in the chat window — its own isolate —
-/// or in Teams or Slack clears on the next poll. A NightMail Server account
+/// ([ChatRepository.reads]), and so does one read in the chat window — its
+/// own isolate — passed here by `ChatReadRelay`; one read in Teams or Slack
+/// itself clears on the next poll. A NightMail Server account
 /// also refreshes when its change stream says `chat` (nightware ADR 0007 D5):
 /// a new message or a read elsewhere shows within seconds, not a minute.
 class ChatUnreadCubit extends Cubit<ChatUnreadState> {
@@ -74,6 +75,7 @@ class ChatUnreadCubit extends Cubit<ChatUnreadState> {
 
   Timer? _timer;
   StreamSubscription<String>? _reads;
+  StreamSubscription<void>? _readElsewhere;
   StreamSubscription<void>? _sourcesChanged;
   StreamSubscription<ChangeSignal>? _changes;
 
@@ -86,6 +88,12 @@ class ChatUnreadCubit extends Cubit<ChatUnreadState> {
     _reads ??= _repository.reads.listen((id) {
       if (state.sources.any((s) => s.id == id)) unawaited(refresh());
     });
+    // One read in the chat window is dropped here as it is, not re-polled:
+    // a refresh asks every system, and clicking down a row of Slack
+    // channels would spend that many polls of Slack's quota.
+    _readElsewhere ??= _repository.readKeys
+        .where((r) => !r.here)
+        .listen((r) => _dropRead(r.accountId, r.key));
     _sourcesChanged ??=
         _repository.sourcesChanged.listen((_) => unawaited(refresh()));
     // `ready` names `chat` too, so a (re)connected stream refreshes once —
@@ -155,10 +163,23 @@ class ChatUnreadCubit extends Cubit<ChatUnreadState> {
     return switched;
   }
 
+  void _dropRead(String sourceId, String key) {
+    final chats = state.unreadChats[sourceId];
+    if (chats == null || !chats.any((c) => c.key == key)) return;
+    final left = [for (final c in chats) if (c.key != key) c];
+    emit(ChatUnreadState(
+      sources: state.sources,
+      chosenId: state.chosenId,
+      unread: {...state.unread, sourceId: left.length},
+      unreadChats: {...state.unreadChats, sourceId: left},
+    ));
+  }
+
   @override
   Future<void> close() {
     _timer?.cancel();
     _reads?.cancel();
+    _readElsewhere?.cancel();
     _sourcesChanged?.cancel();
     _changes?.cancel();
     return super.close();

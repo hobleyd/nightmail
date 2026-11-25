@@ -95,6 +95,15 @@ abstract interface class ChatRepository {
   /// clear without waiting for its next poll.
   Stream<String> get reads;
 
+  /// Each conversation read, by [ChatConversation.key]: [markRead] here
+  /// (`here`), or [readElsewhere].
+  Stream<({String accountId, String key, bool here})> get readKeys;
+
+  /// A conversation read in the other window (its own isolate): counted read
+  /// here until something newer arrives, as one [markRead] here is — the
+  /// server's state may trail the mark, or a Slack channel stay unread there.
+  void readElsewhere(String accountId, String key);
+
   /// The user's own id as [ChatMessage.senderUserId] carries it, or null.
   /// Google names it per space, hence [conversation].
   Future<String?> ownUserId(

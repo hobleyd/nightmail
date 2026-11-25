@@ -115,6 +115,23 @@ void main() {
     });
   });
 
+  test('a chat read in the chat window drops out here, without a re-poll',
+      () async {
+    final repo = _Repo(const [teams, slack], const {'slack:T1': 2},
+        ChatKind.space);
+    final c = ChatUnreadCubit(accountManager: _Accounts(), repository: repo);
+    c.start();
+    await c.refresh();
+    final polled = repo.listings;
+    repo.readEvents
+        .add((accountId: 'slack:T1', key: 'slack:T1-0', here: false));
+    await pumpEventQueue();
+    expect(c.state.unreadIn('slack:T1'), 1);
+    expect(c.state.unreadChats['slack:T1']!.map((x) => x.key), ['slack:T1-1']);
+    expect(repo.listings, polled);
+    await c.close();
+  });
+
   test('a choice no longer offered falls back to the first', () async {
     final c = await cubit(const [teams, slack]);
     c.choose('slack:T9');
@@ -142,6 +159,16 @@ class _Repo extends Fake implements ChatRepository {
 
   @override
   Stream<String> get reads => const Stream.empty();
+
+  final readEvents =
+      StreamController<({String accountId, String key, bool here})>.broadcast();
+
+  @override
+  Stream<({String accountId, String key, bool here})> get readKeys =>
+      readEvents.stream;
+
+  @override
+  void readElsewhere(String accountId, String key) {}
 
   @override
   Stream<void> get sourcesChanged => const Stream.empty();

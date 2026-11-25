@@ -155,9 +155,18 @@ class ChatListCubit extends Cubit<ChatListState> {
         _settings = settings,
         super(const ChatListState()) {
     unawaited(_loadSort());
+    // A conversation read in the Chat pane (another window) un-bolds here at
+    // once, not on the next unread poll.
+    _readKeys = _repo.readKeys.listen((r) {
+      if (r.accountId == state.accountId && _unread.contains(r.key)) {
+        _unread = {..._unread}..remove(r.key);
+        emit(state.copyWith(conversations: _withUnread(state.conversations)));
+      }
+    });
   }
 
   final ChatRepository _repo;
+  late final StreamSubscription<void> _readKeys;
 
   /// Where the sort is remembered; none in tests.
   final AppSettings? _settings;
@@ -356,6 +365,7 @@ class ChatListCubit extends Cubit<ChatListState> {
   @override
   Future<void> close() {
     _poll?.cancel();
+    _readKeys.cancel();
     return super.close();
   }
 }

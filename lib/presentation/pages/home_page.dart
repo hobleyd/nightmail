@@ -53,7 +53,9 @@ import '../widgets/contacts_access_notice.dart';
 import '../widgets/meeting_reminder_host.dart';
 import '../widgets/ai_day_panel.dart';
 import '../widgets/chat/chat_panel.dart';
+import '../widgets/chat/chat_read_relay.dart';
 import '../../infrastructure/accounts/account_manager.dart';
+import '../../domain/repositories/chat_repository.dart';
 import '../../infrastructure/accounts/chat_consent_channel.dart';
 import '../widgets/email_list_panel.dart';
 import '../widgets/email_selection.dart';
@@ -100,6 +102,8 @@ class HomePage extends StatelessWidget {
     }));
     // The chat window's consent sign-ins run here, where the accounts live.
     unawaited(ChatConsentChannel.listen(sl<AccountManager>().requestChatAccess));
+    // A chat read here un-bolds in the chat window at once, and the reverse.
+    ChatReadRelay.start(sl<ChatRepository>());
     return MultiBlocProvider(
       providers: [
         BlocProvider.value(value: sl<AccountCubit>()),

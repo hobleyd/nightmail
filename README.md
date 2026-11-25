@@ -150,6 +150,7 @@ Settings → Accounts.
 ### Commitments
 - Commitments pane beside Calendar, Tasks and AI: mail, calendar and tasks read as one stream of obligations
 - Today view of the day's meetings, the tasks falling due, and every commitment due or overdue
+- The meeting in progress, or the next to start when none is, is highlighted in Today
 - The tasks-due row in Today expands in place to list the tasks themselves, in the pane and the detached window alike
 - You owe: promises detected in your sent mail ("I'll send it Friday"), most urgent first
 - Waiting on: what you asked others for, or they promised you, with how long it has been outstanding
@@ -174,6 +175,8 @@ Settings → Accounts.
 - Pictures show in the conversation (Teams pasted images, GIFs and stickers; Google Chat uploads) and open full size on click
 - Each sender has an avatar (directory photo, or initials) and their own pastel colour — yours is always blue, so who is talking stands out at a glance
 - A red dot on the Chat button when someone has written in a chat you haven't read; opening the chat marks it read in Teams or Google Chat too
+- Slack: connect one or more workspaces under Settings > General — direct messages, group messages and channels with threads, search, pictures and avatars, in the same pane and window
+- With Slack beside your account's own chat, the Chat button becomes a menu of chat systems, each with its own unread dot and count; an IMAP account with Slack opens Slack directly
 
 ### Contacts
 - Typeahead in the compose window drawing from three sources:

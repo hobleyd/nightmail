@@ -186,6 +186,9 @@ Settings → Accounts.
 - Search from the Chat pane's dropdown to message anyone in your address book you can chat with, or any chat or channel, by name
 - Edit your own chat messages on Teams, NightMail Server, Google Chat and Slack
 - Open the chat window straight onto the conversation in the Chat pane
+- React to anyone's chat message with an emoji on Teams (chats and channels), NightMail Server, Google Chat and Slack, or tap an existing reaction to add yours
+- Rename group chats and channels on Teams, NightMail Server and Slack
+- Reply in a thread from Slack direct messages and group DMs, as in channels
 
 ### Contacts
 - Typeahead in the compose window drawing from three sources:

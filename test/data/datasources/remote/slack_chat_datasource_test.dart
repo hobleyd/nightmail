@@ -912,6 +912,14 @@ void main() {
           const ChatReaction(emoji: '🎉', count: 2, userIds: ['UME', 'UANN']));
     });
   });
+
+  test('a DM and a group DM thread as channels do', () {
+    final ds = datasource();
+    for (final kind in ChatKind.values) {
+      expect(ds.canThread(ChatConversation(id: 'D1', kind: kind, title: 'x')),
+          isTrue, reason: '$kind');
+    }
+  });
 }
 
 const _json = {

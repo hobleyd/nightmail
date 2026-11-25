@@ -540,6 +540,21 @@ void main() {
           throwsA(isA<ServerException>()));
     });
   });
+
+  test('only a threaded space threads; a DM does not', () {
+    final ds = datasource();
+    expect(
+        ds.canThread(const ChatConversation(
+            id: 'spaces/D', kind: ChatKind.oneOnOne, title: 'A')),
+        isFalse);
+    expect(
+        ds.canThread(const ChatConversation(
+            id: 'spaces/S',
+            kind: ChatKind.space,
+            title: 'S',
+            threaded: true)),
+        isTrue);
+  });
 }
 
 const _json = {

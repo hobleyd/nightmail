@@ -597,6 +597,10 @@ class ChatRepositoryImpl implements ChatRepository {
       });
 
   @override
+  bool canThread(String accountId, ChatConversation conversation) =>
+      _ds(accountId)?.canThread(conversation) ?? conversation.hasThreads;
+
+  @override
   bool canReact(String accountId, ChatConversation conversation) =>
       _ds(accountId)?.canReact(conversation) ?? false;
 

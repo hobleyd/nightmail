@@ -175,6 +175,73 @@ void main() {
     });
   });
 
+  group('replying in a chat', () {
+    const dm =
+        ChatConversation(id: 'D1', kind: ChatKind.oneOnOne, title: 'Ann Lee');
+
+    Future<(_Repo, ChatConversationCubit)> pump(WidgetTester tester,
+        {required bool slack, bool wide = false}) async {
+      final repo = _Repo([msg('1', 'Ann Lee', 'u-ann', 1)], ownId: 'u-me')
+        ..threadsChats = slack;
+      final cubit = ChatConversationCubit(repository: repo);
+      await cubit.open('a', dm);
+      await tester.binding.setSurfaceSize(const Size(1200, 800));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      await tester.pumpWidget(MaterialApp(
+        home: Scaffold(
+          body: BlocProvider.value(
+            value: cubit,
+            child: ChatConversationView(wideThreads: wide),
+          ),
+        ),
+      ));
+      await tester.pumpAndSettle();
+      return (repo, cubit);
+    }
+
+    testWidgets('a Slack DM\'s message opens its thread like a post; the '
+        'reply goes there and is counted', (tester) async {
+      final (repo, cubit) = await pump(tester, slack: true);
+      expect(find.byType(ChatAvatar), findsOneWidget,
+          reason: 'still a chat\'s bubbles, not post cards');
+      await tester.tap(find.text('Reply'));
+      await tester.pumpAndSettle();
+      expect(find.text('Thread'), findsOneWidget);
+      expect(find.byTooltip('Back to messages'), findsOneWidget);
+      await tester.enterText(find.byType(TextField), 'on it');
+      await tester.tap(find.byTooltip('Send'));
+      await tester.pumpAndSettle();
+      expect(repo.sent, [('on it', '1')]);
+      expect(cubit.state.threadReplies.map((m) => m.bodyHtml), ['on it']);
+      await tester.tap(find.byTooltip('Back to messages'));
+      await tester.pumpAndSettle();
+      expect(find.text('1 reply'), findsOneWidget);
+      expect(cubit.state.messages.map((m) => m.id), ['1'],
+          reason: 'the reply is in the thread, not the DM');
+      await cubit.close();
+    });
+
+    testWidgets('beside an open thread, the list\'s box writes to the DM',
+        (tester) async {
+      final (repo, cubit) = await pump(tester, slack: true, wide: true);
+      await tester.tap(find.text('Reply'));
+      await tester.pumpAndSettle();
+      expect(find.byType(TextField), findsNWidgets(2));
+      await tester.enterText(find.byType(TextField).first, 'new topic');
+      await tester.tap(find.byTooltip('Send').first);
+      await tester.pumpAndSettle();
+      expect(repo.sent, [('new topic', null)]);
+      expect(cubit.state.threadReplies, isEmpty);
+      await cubit.close();
+    });
+
+    testWidgets('a Teams chat has no threads: no Reply', (tester) async {
+      final (_, cubit) = await pump(tester, slack: false);
+      expect(find.text('Reply'), findsNothing);
+      await cubit.close();
+    });
+  });
+
   group('reactions', () {
     Future<(_Repo, ChatConversationCubit)> pump(
         WidgetTester tester, ChatMessage m) async {
@@ -476,6 +543,13 @@ class _Repo extends Fake implements ChatRepository {
   bool canEdit(String accountId, ChatConversation conversation) => true;
 
   final reactions = <(String, String)>[];
+
+  /// A Slack DM's answer: its messages thread though it is not a channel.
+  bool threadsChats = false;
+
+  @override
+  bool canThread(String accountId, ChatConversation conversation) =>
+      conversation.hasThreads || threadsChats;
 
   @override
   bool canReact(String accountId, ChatConversation conversation) => true;

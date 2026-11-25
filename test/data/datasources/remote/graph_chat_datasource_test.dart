@@ -707,6 +707,18 @@ void main() {
           const ChatReaction(emoji: '👍', count: 2, userIds: ['u-me', 'u-ann']));
     });
   });
+
+  test('a Teams chat has no threads; a channel does', () {
+    final ds = datasource(server: false);
+    expect(
+        ds.canThread(const ChatConversation(
+            id: '19:c', kind: ChatKind.group, title: 'G')),
+        isFalse);
+    expect(
+        ds.canThread(const ChatConversation(
+            id: '19:ch', kind: ChatKind.channel, title: 'G', teamId: 'T')),
+        isTrue);
+  });
 }
 
 const _json = {

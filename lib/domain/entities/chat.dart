@@ -284,6 +284,9 @@ class ChatMessage extends Equatable {
   /// This post with [replies] in place of its own.
   ChatMessage withReplies(List<ChatMessage> replies) => _copy(replies: replies);
 
+  /// This post with one more reply than it had.
+  ChatMessage withOneMoreReply() => _copy(replyCount: totalReplies + 1);
+
   /// This message after [userId] (the user) reacted with [emoji]: one more
   /// on that reaction, or a new one at the end.
   ChatMessage withReaction(String emoji, String? userId) {
@@ -307,6 +310,7 @@ class ChatMessage extends Equatable {
     DateTime? editedAt,
     List<ChatMessage>? replies,
     List<ChatReaction>? reactions,
+    int? replyCount,
   }) =>
       ChatMessage(
         id: id,
@@ -321,7 +325,7 @@ class ChatMessage extends Equatable {
         isSystem: isSystem,
         reactions: reactions ?? this.reactions,
         replies: replies ?? this.replies,
-        replyCount: replyCount,
+        replyCount: replyCount ?? this.replyCount,
         attachmentNames: attachmentNames,
         conversationTitle: conversationTitle,
         threadId: threadId,

@@ -185,6 +185,10 @@ abstract interface class ChatRepository {
     String text,
   );
 
+  /// Whether a message in [conversation] can be answered in its own thread —
+  /// see `ChatRemoteDatasource.canThread`.
+  bool canThread(String accountId, ChatConversation conversation);
+
   /// Whether messages in [conversation] can take the user's reactions — see
   /// `ChatRemoteDatasource.canReact`.
   bool canReact(String accountId, ChatConversation conversation);

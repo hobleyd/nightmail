@@ -304,6 +304,9 @@ class GraphChatDatasource implements ChatRemoteDatasource {
   }
 
   @override
+  bool canThread(ChatConversation conversation) => conversation.hasThreads;
+
+  @override
   Future<List<ChatMessage>> replies(
     ChatConversation channel,
     ChatMessage post,

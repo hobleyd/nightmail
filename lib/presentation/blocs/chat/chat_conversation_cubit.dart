@@ -723,11 +723,12 @@ class ChatConversationCubit extends Cubit<ChatConversationState> {
     );
   }
 
-  /// Sends [text] to the open conversation — to the open thread when one is
-  /// open — or starts the one-on-one with [ChatConversationState.person].
-  /// Never touches an edit in progress: the composer that holds it calls
-  /// [saveEdit] instead.
-  Future<bool> send(String text) async {
+  /// Sends [text] to the open conversation — to the open thread when
+  /// [inThread] (the thread's composer) — or starts the one-on-one with
+  /// [ChatConversationState.person]. Never touches an edit in progress: the
+  /// composer that holds it calls [saveEdit] instead. The list's composer
+  /// never answers in a thread, even with one open beside it.
+  Future<bool> send(String text, {bool inThread = false}) async {
     final trimmed = text.trim();
     final accountId = state.accountId;
     if (trimmed.isEmpty || accountId == null || state.sending) return false;
@@ -763,7 +764,7 @@ class ChatConversationCubit extends Cubit<ChatConversationState> {
       );
     }
 
-    final threadPost = conversation.hasThreads ? state.threadPost : null;
+    final threadPost = inThread && threads ? state.threadPost : null;
     final threadId = threadPost?.id;
     final sent = await _repo.sendMessage(accountId, conversation, trimmed,
         replyTo: threadPost);
@@ -774,11 +775,15 @@ class ChatConversationCubit extends Cubit<ChatConversationState> {
         return false;
       },
       (m) {
-        emit(threadId != null
-            ? state.copyWith(
-                sending: false, threadReplies: [...state.threadReplies, m])
-            : state.copyWith(sending: false, messages: [m, ...state.messages]));
-        if (threadId == null) _cache();
+        if (threadId != null) {
+          // The post counts it at once; its "N replies" was the server's.
+          _swap(threadId, (p) => p.withOneMoreReply(),
+              (s) => s.copyWith(
+                  sending: false, threadReplies: [...s.threadReplies, m]));
+        } else {
+          emit(state.copyWith(sending: false, messages: [m, ...state.messages]));
+          _cache();
+        }
         return true;
       },
     );
@@ -800,7 +805,17 @@ class ChatConversationCubit extends Cubit<ChatConversationState> {
         : _repo.photo(accountId, userId);
   }
 
-  /// Opens a channel post's replies.
+  /// Whether a message in the open conversation can be answered in a thread
+  /// of its own: a channel's post, a threaded space's, and a Slack DM's.
+  bool get threads {
+    final accountId = state.accountId;
+    final conversation = state.conversation;
+    if (conversation == null) return false;
+    return conversation.hasThreads ||
+        (accountId != null && _repo.canThread(accountId, conversation));
+  }
+
+  /// Opens a post's (or, where [threads], a message's) replies.
   Future<void> openThread(String postId) async {
     final post = state.messages.where((m) => m.id == postId).firstOrNull;
     emit(state.copyWith(

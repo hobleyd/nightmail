@@ -441,6 +441,12 @@ class SlackChatDatasource implements ChatRemoteDatasource {
     );
   }
 
+  /// A DM and a group DM thread as channels do: `conversations.history`
+  /// leaves the replies out, `reply_count` counts them, `conversations.replies`
+  /// reads them and `thread_ts` answers in them.
+  @override
+  bool canThread(ChatConversation conversation) => true;
+
   @override
   Future<List<ChatMessage>> replies(
     ChatConversation conversation,

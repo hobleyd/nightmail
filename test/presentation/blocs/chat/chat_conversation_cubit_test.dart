@@ -420,6 +420,12 @@ class _Repo implements ChatRepository {
           {ChatConversation? conversation}) async =>
       'UME';
 
+  bool threadsChats = false;
+
+  @override
+  bool canThread(String accountId, ChatConversation conversation) =>
+      conversation.hasThreads || threadsChats;
+
   bool reactable = true;
   bool reactAdds = true;
   Failure? reactFailure;

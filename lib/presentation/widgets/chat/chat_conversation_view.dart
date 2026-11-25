@@ -42,7 +42,9 @@ class ChatConversationView extends StatelessWidget {
           );
         }
         final isChannel = state.conversation?.hasThreads ?? false;
-        final threadOpen = isChannel && state.threadPostId != null;
+        // A Slack DM threads too, but keeps its bubbles.
+        final threads = context.read<ChatConversationCubit>().threads;
+        final threadOpen = threads && state.threadPostId != null;
 
         final history = Column(
           children: [
@@ -75,6 +77,7 @@ class ChatConversationView extends StatelessWidget {
                   : _History(
                       messages: state.messages,
                       isChannel: isChannel,
+                      threads: threads,
                       canLoadOlder: state.nextLink != null,
                       loadingOlder: state.loadingOlder,
                       selectedPostId: state.threadPostId,
@@ -107,6 +110,7 @@ class ChatConversationView extends StatelessWidget {
           loading: state.threadLoading,
           sending: state.sending,
           showBack: !wideThreads,
+          backLabel: isChannel ? 'Back to posts' : 'Back to messages',
         );
         if (!wideThreads) return colored(thread);
         return colored(Row(
@@ -125,6 +129,7 @@ class _History extends StatefulWidget {
   const _History({
     required this.messages,
     required this.isChannel,
+    required this.threads,
     required this.canLoadOlder,
     required this.loadingOlder,
     this.selectedPostId,
@@ -132,6 +137,10 @@ class _History extends StatefulWidget {
 
   final List<ChatMessage> messages;
   final bool isChannel;
+
+  /// Each message can open a thread (a channel's posts, a Slack DM's
+  /// messages).
+  final bool threads;
   final bool canLoadOlder;
   final bool loadingOlder;
   final String? selectedPostId;
@@ -206,6 +215,7 @@ class _HistoryState extends State<_History> {
                 message: m,
                 showHeader: !grouped,
                 isPost: widget.isChannel,
+                threads: widget.threads,
                 selected: m.id == widget.selectedPostId,
               ),
             ],
@@ -259,8 +269,13 @@ class _MessageTile extends StatelessWidget {
     required this.showHeader,
     required this.isPost,
     required this.selected,
+    this.threads = false,
     this.inThread = false,
   });
+
+  /// Offers a Reply / "N replies" link that opens this message's thread — a
+  /// post's always; a chat message's where the provider threads chats.
+  final bool threads;
 
   /// Shown in the open thread: its pencil edits in the thread's composer.
   final bool inThread;
@@ -303,7 +318,7 @@ class _MessageTile extends StatelessWidget {
                     fontSize: 12,
                     color: c.textMuted,
                     fontStyle: FontStyle.italic)),
-            if (isPost && m.totalReplies > 0) ...[
+            if ((isPost || threads) && !inThread && m.totalReplies > 0) ...[
               const SizedBox(width: 8),
               InkWell(
                 onTap: () =>
@@ -450,7 +465,7 @@ class _MessageTile extends StatelessWidget {
             ),
             child: bubbleContent,
           ),
-        if (isPost)
+        if ((isPost || threads) && !inThread)
           Padding(
             padding: const EdgeInsets.only(top: 4),
             child: InkWell(
@@ -568,7 +583,7 @@ class _MessageTile extends StatelessWidget {
                       : c.separator),
               borderRadius: BorderRadius.circular(8),
             )
-          : beingEdited
+          : beingEdited || selected
               ? BoxDecoration(color: c.selectionBg)
               : null,
       child: (editable || reactable) && !isTouchPlatform
@@ -706,8 +721,10 @@ class _ThreadPanel extends StatelessWidget {
     required this.loading,
     required this.sending,
     required this.showBack,
+    required this.backLabel,
   });
 
+  final String backLabel;
   final ChatMessage? post;
   final List<ChatMessage> replies;
   final bool loading;
@@ -729,7 +746,7 @@ class _ThreadPanel extends StatelessWidget {
                 IconButton(
                   icon: Icon(Icons.arrow_back_ios_new_rounded,
                       size: touchIcon(14), color: c.textMuted),
-                  tooltip: 'Back to posts',
+                  tooltip: backLabel,
                   onPressed: cubit.closeThread,
                 )
               else
@@ -838,7 +855,7 @@ class _ComposerState extends State<_Composer> {
     if (_mine(cubit.state)) {
       // A saved edit hands the box back through the listener below.
       await cubit.saveEdit(text);
-    } else if (await cubit.send(text) && mounted) {
+    } else if (await cubit.send(text, inThread: widget.inThread) && mounted) {
       _controller.clear();
     }
     _focus.requestFocus();

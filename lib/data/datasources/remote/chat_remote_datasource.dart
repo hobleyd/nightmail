@@ -61,6 +61,13 @@ abstract interface class ChatRemoteDatasource {
     DateTime since,
   );
 
+  /// Whether a message in [conversation] can be answered in a thread of its
+  /// own: every [ChatConversation.hasThreads] one, and on Slack a DM or
+  /// group DM too, which thread exactly as channels do. A Teams chat has no
+  /// threads (Graph documents no quoted reply either), nor does a Google DM
+  /// (`messageReplyOption` is for named spaces only).
+  bool canThread(ChatConversation conversation);
+
   /// [post]'s replies, oldest first.
   Future<List<ChatMessage>> replies(
     ChatConversation conversation,

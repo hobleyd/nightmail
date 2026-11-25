@@ -383,6 +383,31 @@ anything else in the conversation's (`ChatConversationState.editingInThread`).
 - An edit of the newest message updates the list's preview
   (`ChatRepositoryImpl._retouch`) without moving the conversation.
 
+## Replying in a thread from a chat
+
+- **Where:** `ChatConversationCubit.threads` — every `hasThreads`
+  conversation as before, plus whatever `ChatRemoteDatasource.canThread`
+  allows: on Slack a DM and a group DM, which thread exactly as channels do
+  (`conversations.replies`, `thread_ts`, `reply_count`; `conversations.history`
+  leaves replies out). The DM keeps its bubbles; `hasThreads` (post cards,
+  Google's reply stitching, the null delta) is untouched — flipping it would
+  have redrawn every DM as cards.
+- **The link** is the channels' Reply / "N replies", always shown, under the
+  bubble; never on a tile inside the thread panel. The message whose thread
+  is open is highlighted. A reply sent from the thread bumps its parent's
+  count at once (`withOneMoreReply`) and stays out of the DM's list.
+- **Two composers, one target each.** `send(text, inThread:)`: only the
+  thread's composer answers in the thread. Before this, the wide view's list
+  composer also posted into whichever thread was open — a new channel post
+  became a reply.
+- **Not offered:** Teams and NightMail Server chats (Graph documents no
+  threads in a chat and no way to send a quoted reply — `messageReference`
+  is not a documented attachment type; nightware has no support either);
+  Google DMs and group chats (`messageReplyOption` is "only supported in
+  named spaces"; a threaded named space already has Reply). Google does let
+  a message quote another (`quotedMessageMetadata`) — a possible quoted
+  reply there, not built.
+
 ## Reacting to a message
 
 - **Anyone's message**, not a deleted or system one

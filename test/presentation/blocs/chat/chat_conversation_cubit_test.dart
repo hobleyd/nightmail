@@ -161,6 +161,34 @@ void main() {
     });
   });
 
+  group('marking read', () {
+    test('a message that came in while away is marked once the user is back',
+        () async {
+      var foreground = true;
+      final c = ChatConversationCubit(
+          repository: repo, isForeground: () => foreground);
+      addTearDown(c.close);
+      repo.page = ChatMessagePage(messages: [msg('a', 1)]);
+      await c.open('acct', chat);
+      expect(repo.marked, ['c1'], reason: 'read on opening');
+
+      foreground = false;
+      repo.delta = ChatMessageDelta(
+          messages: [msg('b', 2)], complete: true,
+          watermark: t0.add(const Duration(minutes: 2)));
+      await c.pollNow();
+      expect(repo.marked, ['c1'], reason: 'not read while the app is away');
+
+      foreground = true;
+      repo.delta = const ChatMessageDelta(messages: [], complete: true);
+      await c.pollNow();
+      expect(repo.marked, ['c1', 'c1'],
+          reason: 'nothing new arrived, but b is now on screen');
+      await c.pollNow();
+      expect(repo.marked, ['c1', 'c1'], reason: 'once per newest message');
+    });
+  });
+
   group('editing', () {
     ChatMessage mine(String id, int minute, {String? text = 'typo'}) =>
         ChatMessage(
@@ -466,6 +494,14 @@ class _Repo implements ChatRepository {
   Future<String?> ownUserId(String accountId,
           {ChatConversation? conversation}) async =>
       'UME';
+
+  final marked = <String>[];
+
+  @override
+  Future<void> markRead(
+      String accountId, ChatConversation conversation) async {
+    marked.add(conversation.id);
+  }
 
   bool threadsChats = false;
 

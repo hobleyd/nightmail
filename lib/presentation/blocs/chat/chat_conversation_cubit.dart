@@ -3,7 +3,8 @@ import 'dart:typed_data';
 
 import 'package:equatable/equatable.dart';
 import 'package:flutter/foundation.dart' show visibleForTesting;
-import 'package:flutter/widgets.dart' show AppLifecycleState, WidgetsBinding;
+import 'package:flutter/widgets.dart'
+    show AppLifecycleListener, AppLifecycleState, WidgetsBinding;
 import 'package:flutter_bloc/flutter_bloc.dart';
 
 import '../../../core/error/failures.dart';
@@ -164,7 +165,10 @@ class ChatConversationState extends Equatable {
 /// A chat on screen is read: when its newest message is someone else's, the
 /// server is told ([ChatRepository.markRead]) — once per newest message, and
 /// only while the app is in the foreground, or a message that lands while
-/// the user is away would be marked read in Teams too.
+/// the user is away would be marked read in Teams too. One skipped while
+/// away is marked when the app comes back, and every poll tries again: the
+/// polls after it are often empty deltas, and the chat stayed lit (the
+/// dropdown's dot with it) until it was opened again.
 class ChatConversationCubit extends Cubit<ChatConversationState> {
   ChatConversationCubit({
     required ChatRepository repository,
@@ -173,7 +177,13 @@ class ChatConversationCubit extends Cubit<ChatConversationState> {
   })  : _repo = repository,
         _isForeground = isForeground ?? _appInForeground,
         drafts = drafts ?? ChatDrafts(),
-        super(const ChatConversationState());
+        super(const ChatConversationState()) {
+    if (isForeground == null) {
+      _lifecycle = AppLifecycleListener(onResume: _markReadIfSeen);
+    }
+  }
+
+  AppLifecycleListener? _lifecycle;
 
   final ChatRepository _repo;
 
@@ -435,13 +445,14 @@ class ChatConversationCubit extends Cubit<ChatConversationState> {
         return true;
       });
       if (applied) {
+        _markReadIfSeen();
         if (state.threadPostId != null) unawaited(_reloadThread(gen));
         return;
       }
     }
     final page = await _repo.messages(accountId, conversation);
     if (gen != _generation || isClosed) return;
-    page.match((_) {}, (p) {
+    page.match((_) => _markReadIfSeen(), (p) {
       final stamp = newestStamp(p.messages);
       if (stamp != null && (_watermark == null || stamp.isAfter(_watermark!))) {
         _watermark = stamp;
@@ -987,6 +998,7 @@ class ChatConversationCubit extends Cubit<ChatConversationState> {
 
   @override
   Future<void> close() {
+    _lifecycle?.dispose();
     _poll?.cancel();
     return super.close();
   }

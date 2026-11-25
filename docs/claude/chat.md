@@ -305,7 +305,11 @@ account's recent chats is unread (`ChatUnreadCubit`, main window only).
 - **Marking read**: `ChatConversationCubit` marks a chat read
   (`markChatReadForUser`) when its newest message is someone else's — once
   per newest message, and only while the app is in the foreground, or a
-  message arriving while the user is away would turn read in Teams too.
+  message arriving while the user is away would turn read in Teams too. One
+  skipped while away is marked on resume (`AppLifecycleListener`) and on
+  every poll, whatever it brought: the polls after it are usually empty
+  deltas, and before 1.64.3 the chat — and the pane dropdown's dot — stayed
+  lit until it was opened again.
   Microsoft wants `user {id, tenantId}` (tenant from `/organization`);
   Nightware takes the id alone. `ChatRepository.reads` clears the dot at
   once in the same isolate — the repository also counts a chat it marked as

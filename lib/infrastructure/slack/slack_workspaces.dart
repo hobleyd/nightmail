@@ -194,17 +194,26 @@ class SlackWorkspaces {
   /// this isolate. Another window's changes are seen on its next read.
   Stream<void> get changes => _changes.stream;
 
+  /// Every stored workspace; none while the Keychain cannot be read (a
+  /// locked Mac answers -25308, "User interaction is not allowed").
   Future<List<SlackWorkspace>> all() async {
     try {
-      final raw = await _storage.read(key: _storageKey);
-      if (raw == null || raw.isEmpty) return const [];
-      final list = jsonDecode(raw);
-      if (list is! List) return const [];
-      return [for (final w in list) ?SlackWorkspace.fromJson(w)];
+      return await _read();
     } catch (e) {
       debugPrint('[Slack] workspaces unreadable: $e');
       return const [];
     }
+  }
+
+  /// Throws when the Keychain cannot be read. Everything that writes the
+  /// list back reads it through this, never [all]: a write built on an
+  /// unreadable list would keep only the workspace being written.
+  Future<List<SlackWorkspace>> _read() async {
+    final raw = await _storage.read(key: _storageKey);
+    if (raw == null || raw.isEmpty) return const [];
+    final list = jsonDecode(raw);
+    if (list is! List) return const [];
+    return [for (final w in list) ?SlackWorkspace.fromJson(w)];
   }
 
   Future<SlackWorkspace?> byTeam(String teamId) async =>
@@ -212,7 +221,7 @@ class SlackWorkspaces {
 
   Future<void> _put(SlackWorkspace workspace) async {
     final list = [
-      for (final w in await all())
+      for (final w in await _read())
         if (w.teamId != workspace.teamId) w,
       workspace,
     ];
@@ -229,7 +238,7 @@ class SlackWorkspaces {
 
   /// Forgets [teamId] and asks Slack to revoke its token (best effort).
   Future<void> remove(String teamId) async {
-    final list = await all();
+    final list = await _read();
     final gone = list.where((w) => w.teamId == teamId).firstOrNull;
     await _write([
       for (final w in list)
@@ -294,12 +303,18 @@ class SlackWorkspaces {
       await flagReconnect(w.teamId);
       throw SlackReconnectException(w.teamName);
     }
-    await _put(w.copyWith(
-      accessToken: token.accessToken,
-      refreshToken: token.refreshToken,
-      expiresAt: token.expiresAt,
-      needsReconnect: false,
-    ));
+    try {
+      await _put(w.copyWith(
+        accessToken: token.accessToken,
+        refreshToken: token.refreshToken,
+        expiresAt: token.expiresAt,
+        needsReconnect: false,
+      ));
+    } catch (e) {
+      // The new token still works for this call; storing it waits for a
+      // Keychain that can be read, rather than overwriting every workspace.
+      debugPrint('[Slack] refreshed token not stored: $e');
+    }
     return token.accessToken;
   }
 

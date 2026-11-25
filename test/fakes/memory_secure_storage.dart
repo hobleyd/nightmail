@@ -1,3 +1,4 @@
+import 'package:flutter/services.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -5,6 +6,11 @@ import 'package:flutter_test/flutter_test.dart';
 /// workspace store uses.
 class MemorySecureStorage extends Fake implements FlutterSecureStorage {
   final values = <String, String>{};
+
+  /// Reads from this one on (counting from 0) throw, as a locked Mac's
+  /// Keychain does (-25308); null never.
+  int? failReadsFrom;
+  var _reads = 0;
 
   @override
   Future<String?> read({
@@ -15,8 +21,15 @@ class MemorySecureStorage extends Fake implements FlutterSecureStorage {
     WebOptions? webOptions,
     AppleOptions? mOptions,
     WindowsOptions? wOptions,
-  }) async =>
-      values[key];
+  }) async {
+    final failFrom = failReadsFrom;
+    if (failFrom != null && _reads++ >= failFrom) {
+      throw PlatformException(
+          code: 'Unexpected security result code',
+          message: 'User interaction is not allowed.');
+    }
+    return values[key];
+  }
 
   @override
   Future<void> write({

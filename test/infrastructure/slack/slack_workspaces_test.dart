@@ -1,7 +1,7 @@
 import 'dart:convert';
-import 'dart:typed_data';
 
 import 'package:dio/dio.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:nightmail/data/datasources/remote/chat_remote_datasource.dart';
 import 'package:nightmail/data/repositories/chat_repository_impl.dart';
@@ -84,6 +84,44 @@ void main() {
     expect(form['client_id'], '1.2', reason: 'the app that issued it');
     expect(form.containsKey('client_secret'), isFalse, reason: 'PKCE');
     expect((await s.byTeam('T1'))!.refreshToken, 'xoxe-1-new');
+  });
+
+  test('a refresh stored while the Keychain is locked keeps every workspace',
+      () async {
+    final other = SlackWorkspace(
+      teamId: 'T2',
+      teamName: 'Other',
+      userId: 'UME2',
+      clientId: '3.4',
+      accessToken: 'xoxp-other',
+    );
+    await storage.write(key: 'slack_workspaces', value: jsonEncode([
+      workspace(expiresAt: DateTime.now().add(const Duration(minutes: 1)))
+          .toJson(),
+      other.toJson(),
+    ]));
+    final before = storage.values['slack_workspaces'];
+    answers.add({
+      'ok': true,
+      'token_type': 'user',
+      'access_token': 'xoxe.xoxp-new',
+      'refresh_token': 'xoxe-1-new',
+      'expires_in': 43200,
+    });
+    // The first read finds the token; the Mac locks before it is stored.
+    storage.failReadsFrom = 1;
+    expect(await store().accessToken('T1'), 'xoxe.xoxp-new');
+    expect(storage.values['slack_workspaces'], before,
+        reason: 'not overwritten with T1 alone');
+  });
+
+  test('removing a workspace while the Keychain is locked removes nothing',
+      () async {
+    await save(workspace());
+    final before = storage.values['slack_workspaces'];
+    storage.failReadsFrom = 0;
+    await expectLater(store().remove('T2'), throwsA(isA<PlatformException>()));
+    expect(storage.values['slack_workspaces'], before);
   });
 
   test('a refresh token the other window already spent uses its new pair',

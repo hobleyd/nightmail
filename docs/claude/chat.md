@@ -746,6 +746,12 @@ than falling into an account lookup that answers null.
   a refusal first re-reads the Keychain — if the other window already
   refreshed, its pair is used; only otherwise is the workspace flagged.
   PKCE refresh tokens also expire after 30 days unused.
+- **A locked Mac's Keychain refuses reads** (-25308, "User interaction is
+  not allowed" — the overnight `[Slack] workspaces unreadable` lines).
+  `all()` then answers none, but every write of the list (`_put`, `remove`)
+  reads through `_read()`, which throws: a write built on that empty list
+  would keep only the workspace being written. A refresh that cannot be
+  stored still returns its new token for the call in hand.
 - **Slack's failures never touch the email accounts.** A refused token
   (`invalid_auth`, `token_revoked`, `missing_scope`, a dead refresh token…)
   sets `SlackWorkspace.needsReconnect` and throws `SlackReconnectException`

@@ -9,6 +9,7 @@ import '../../../core/text/emoji.dart';
 import '../../../core/theme/app_colors.dart';
 import '../../../domain/entities/chat.dart';
 import '../../blocs/chat/chat_conversation_cubit.dart';
+import 'chat_conversation_row.dart';
 import 'chat_message_body.dart';
 import 'chat_person_style.dart';
 
@@ -361,7 +362,7 @@ class _MessageTile extends StatelessWidget {
           ),
           const SizedBox(width: 8),
           Text(
-            DateFormat.jm().format(m.createdAt),
+            chatMessageWhen(m.createdAt),
             style: TextStyle(fontSize: 11, color: c.textMuted),
           ),
           if (m.editedAt != null) ...[

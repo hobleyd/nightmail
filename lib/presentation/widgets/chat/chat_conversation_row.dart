@@ -16,6 +16,22 @@ String chatWhen(DateTime? at) {
   return DateFormat(at.year == now.year ? 'd MMM' : 'd/M/yy').format(at);
 }
 
+/// A message's time in its header: the hour today; before that the date
+/// too ("Yesterday 3:04 PM", "Mon 24 Nov 3:04 PM", "24 Nov 2025 3:04 PM") —
+/// a long day's messages, or a thread opened beside the list, can sit far
+/// from the day separator above them.
+String chatMessageWhen(DateTime at, {DateTime? now}) {
+  final n = now ?? DateTime.now();
+  final today = DateTime(n.year, n.month, n.day);
+  final day = DateTime(at.year, at.month, at.day);
+  final time = DateFormat.jm().format(at);
+  if (day == today) return time;
+  if (day == today.subtract(const Duration(days: 1))) return 'Yesterday $time';
+  final date = DateFormat(at.year == n.year ? 'EEE d MMM' : 'd MMM y')
+      .format(at);
+  return '$date $time';
+}
+
 /// One chat or channel in a list: kind icon, title (bold with a dot while
 /// unread), time, and the newest message's preview. The chat window's list
 /// and the Chat pane's unread list.

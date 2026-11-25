@@ -75,13 +75,24 @@ abstract interface class ChatRemoteDatasource {
   );
 
   /// Sends [text], as a reply in [replyTo]'s thread when given, with
-  /// [image] under it when given ([text] may then be empty).
+  /// [image] under it when given ([text] may then be empty). Each of
+  /// [mentions] still written in [text] as `@displayName` goes as the
+  /// provider's tag for that person (`splitMentions`); with none found the
+  /// message is sent exactly as before.
   Future<ChatMessage> send(
     ChatConversation conversation,
     String text, {
     ChatMessage? replyTo,
     ChatOutgoingImage? image,
+    List<ChatMember> mentions = const [],
   });
+
+  /// The people who can be tagged with `@` in [conversation], each with the
+  /// [ChatMember.userId] the provider's mention names them by — the
+  /// conversation's members where the access NightMail holds can list them,
+  /// else none (the caller adds whoever has written in it). May include the
+  /// user, whom the caller leaves out.
+  Future<List<ChatMember>> mentionable(ChatConversation conversation);
 
   /// Whether [send] takes an image in [conversation]: not on a NightMail
   /// Server, whose chat API has no hosted contents.

@@ -394,6 +394,58 @@ anything else in the conversation's (`ChatConversationState.editingInThread`).
 - An edit of the newest message updates the list's preview
   (`ChatRepositoryImpl._retouch`) without moving the conversation.
 
+## Tagging people with `@`
+
+Typing `@` at the start of a word in either composer opens a list above the
+box of who the conversation can tag (`_MentionList`, `matchMentions`):
+Up/Down move, Enter or Tab picks, Esc closes it, a click or tap picks. A
+pick writes `@Name ` into the box and remembers the person (`_picked`); at
+send, every pick still written as `@Name` goes as the provider's tag
+(`splitMentions` in `domain/entities/chat_mentions.dart`), and one the user
+deleted or retyped goes as the text it now is.
+
+- **Keys go to the list first.** `_onKey` sits under `CallbackShortcuts`, so
+  while the list is open it takes Enter (else it would send), Esc (else it
+  would leave an edit or drop a pasted picture) and Up (else it would start
+  an edit). The widget tests press Enter and check nothing was sent.
+- **Only a word-starting `@`** (start, space or `(` before it), on one line,
+  three words at most — `bob@example.com` never opens it. Never in an edit:
+  a save is text only, and a message with a mention has no `editableText`
+  anyway. Picks and the roster are dropped when the conversation, account
+  or (thread composer) thread changes, as a pasted picture is.
+- **Split, then escape.** Each provider escapes the text runs its own way
+  and emits its own tag for the mention runs; replacing `@Name` in
+  already-escaped text would miss a name with `&` or `<` in it.
+- **Who is offered** (`ChatConversationCubit.mentionable`): the provider's
+  roster (`ChatRemoteDatasource.mentionable`), asked once on the first `@`
+  and kept per conversation, then anyone who has written in the loaded
+  messages or thread whom it missed — never the user (`ownUserId`), and
+  never an app or bot (`ChatMessage.senderIsApp`: Graph puts
+  `from.application`'s id in `senderUserId`, and tagging it as `aadUser`
+  is a 400). Each new `@` asks the cubit again, so someone who has just
+  written is offered; only the network roster is cached.
+  - Graph: `/chats/{id}/members` (`Chat.ReadWrite`). **A Microsoft 365
+    channel has no roster** — it needs `ChannelMember.Read.All` (admin
+    consent; adding it to `channelScopes` would send every tenant back
+    through consent, as with edits) — so only people who wrote are offered.
+    A NightMail Server lists `/teams/{t}/channels/{c}/members`.
+  - Google: `spaces.members` (humans only). A membership may come without a
+    `displayName` under user auth; those are named from People
+    `people:batchGet` (`directory.readonly`, which photos already use), and
+    anyone still nameless is left out.
+  - Slack: `conversations.members`, named from `users.info` — or, with more
+    than 40 unknown, one `users.list` sweep (Tier 2, once an hour per
+    workspace) rather than a burst of `users.info`.
+- **On the wire:**
+  - Graph: only when a tag survives, the body becomes
+    `contentType: html` — text escaped, newlines `<br>`, each tag
+    `<at id="n">Name</at>` with a `mentions` entry (`aadUser`), every
+    occurrence its own id (nightware refuses a repeat). Otherwise the
+    message is the plain `text` body it always was. A pasted picture's
+    caption carries them too. Nightware turns `<at>` into Talk's `@"uid"`.
+  - Google: `<users/{id}>` in `text`; Google makes the annotation.
+  - Slack: `<@U…>` in the escaped text, in a post or a picture's comment.
+
 ## Replying in a thread from a chat
 
 - **Where:** `ChatConversationCubit.threads` — every `hasThreads`

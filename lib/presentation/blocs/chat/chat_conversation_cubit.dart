@@ -769,10 +769,13 @@ class ChatConversationCubit extends Cubit<ChatConversationState> {
   /// composer that holds it calls [saveEdit] instead. The list's composer
   /// never answers in a thread, even with one open beside it. [image] goes
   /// with the text, which may then be empty; only where [canSendImage].
+  /// [mentions] are the people picked from the `@` typeahead
+  /// ([mentionable]); any still written as `@Name` are tagged.
   Future<bool> send(
     String text, {
     bool inThread = false,
     ChatOutgoingImage? image,
+    List<ChatMember> mentions = const [],
   }) async {
     final trimmed = text.trim();
     final accountId = state.accountId;
@@ -821,7 +824,7 @@ class ChatConversationCubit extends Cubit<ChatConversationState> {
     final threadPost = inThread && threads ? state.threadPost : null;
     final threadId = threadPost?.id;
     final sent = await _repo.sendMessage(accountId, conversation, trimmed,
-        replyTo: threadPost, image: image);
+        replyTo: threadPost, image: image, mentions: mentions);
     if (gen != _generation || isClosed) return false;
     return sent.match(
       (f) {
@@ -841,6 +844,51 @@ class ChatConversationCubit extends Cubit<ChatConversationState> {
         return true;
       },
     );
+  }
+
+  /// The roster [mentionable] fetched, per `account|conversation` — asked
+  /// once on the first `@` and kept while the cubit lives.
+  final _rosters = <String, Future<List<ChatMember>>>{};
+
+  /// Who the open conversation's composer can tag with `@`: its members as
+  /// the provider lists them, then anyone who has written in it that the
+  /// roster missed (all there is for a Microsoft 365 channel, whose roster
+  /// needs a scope NightMail does not hold), never the user. Empty with no
+  /// conversation open — a one-on-one not yet started has nobody to tag.
+  /// The roster is fetched once; the senders are read afresh each call, so
+  /// someone who has just written (or an older page) is offered too.
+  Future<List<ChatMember>> mentionable() async {
+    final accountId = state.accountId;
+    final conversation = state.conversation;
+    if (accountId == null || conversation == null) return const [];
+    final key = '$accountId|${conversation.id}';
+    final roster = await (_rosters[key] ??= _repo
+        .mentionable(accountId, conversation)
+        .then((r) => r.getOrElse((_) {
+              // Asked again next time, rather than an empty list for good.
+              _rosters.remove(key);
+              return const <ChatMember>[];
+            })));
+    if (isClosed || state.conversation?.id != conversation.id) return const [];
+    final own = state.ownUserId;
+    final seen = <String>{?own};
+    final out = <ChatMember>[];
+    for (final m in roster) {
+      if (m.userId case final id? when seen.add(id)) out.add(m);
+    }
+    for (final m in [...state.threadReplies, ...state.messages]) {
+      final id = m.senderUserId;
+      final name = m.senderName.trim();
+      if (id == null ||
+          name.isEmpty ||
+          m.isSystem ||
+          m.isDeleted ||
+          m.senderIsApp) {
+        continue;
+      }
+      if (seen.add(id)) out.add(ChatMember(displayName: name, userId: id));
+    }
+    return out;
   }
 
   /// An `<img src>` in the open conversation, for the message renderer.

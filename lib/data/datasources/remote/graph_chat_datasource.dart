@@ -7,6 +7,7 @@ import 'package:flutter/foundation.dart' show visibleForTesting;
 import '../../../core/error/exceptions.dart';
 import '../../../core/utils/latest_reply.dart' show htmlToPlainText;
 import '../../../domain/entities/chat.dart';
+import '../../../domain/entities/chat_mentions.dart';
 import 'chat_images.dart';
 import 'chat_remote_datasource.dart';
 
@@ -332,6 +333,7 @@ class GraphChatDatasource implements ChatRemoteDatasource {
     String text, {
     ChatMessage? replyTo,
     ChatOutgoingImage? image,
+    List<ChatMember> mentions = const [],
   }) async {
     final path = !conversation.isChannel
         ? '/chats/${conversation.id}/messages'
@@ -339,10 +341,80 @@ class GraphChatDatasource implements ChatRemoteDatasource {
             ? '/teams/${conversation.teamId}/channels/${conversation.id}/messages'
             : '/teams/${conversation.teamId}/channels/${conversation.id}'
                 '/messages/${replyTo.id}/replies';
-    final data = await _post(path, image == null
-        ? {'body': {'contentType': 'text', 'content': text}}
-        : imageMessageBody(text, image));
+    final tagged = mentionBody(text, mentions);
+    final data = await _post(
+        path,
+        image != null
+            ? imageMessageBody(text, image, mentions: mentions)
+            : tagged ?? {'body': {'contentType': 'text', 'content': text}});
     return _parseMessage(data);
+  }
+
+  /// [text] as an html body with each of [mentions] still in it as an
+  /// `<at id="n">` and its `mentions` entry — or null when none is, so an
+  /// ordinary message goes as the plain text it always did. Every occurrence
+  /// takes an id of its own: Graph pairs them one to one, and nightware
+  /// refuses an id used twice.
+  @visibleForTesting
+  static Map<String, dynamic>? mentionBody(
+      String text, List<ChatMember> mentions) {
+    final parts = splitMentions(text, mentions);
+    if (!parts.any((p) => p is ChatMentionRun)) return null;
+    final html = StringBuffer();
+    final entries = <Map<String, dynamic>>[];
+    for (final part in parts) {
+      switch (part) {
+        case ChatTextRun(:final text):
+          html.write(_escape(text));
+        case ChatMentionRun(:final member):
+          final name = member.displayName.trim();
+          html.write('<at id="${entries.length}">${_escape(name)}</at>');
+          entries.add({
+            'id': entries.length,
+            'mentionText': name,
+            'mentioned': {
+              'user': {
+                'id': member.userId,
+                'displayName': name,
+                'userIdentityType': 'aadUser',
+              },
+            },
+          });
+      }
+    }
+    return {
+      'body': {'contentType': 'html', 'content': '<p>$html</p>'},
+      'mentions': entries,
+    };
+  }
+
+  /// Members of a chat (`Chat.ReadWrite` lists them), or of a channel on a
+  /// NightMail Server. A Microsoft 365 channel's roster needs
+  /// `ChannelMember.Read.All`, which NightMail does not ask for (an admin
+  /// consent, as with edits) — none here; the caller offers whoever wrote.
+  @override
+  Future<List<ChatMember>> mentionable(ChatConversation conversation) async {
+    if (conversation.isChannel && !isNightmailServer) return const [];
+    final path = conversation.isChannel
+        ? '/teams/${conversation.teamId}/channels/${conversation.id}/members'
+        : '/chats/${conversation.id}/members';
+    final out = <ChatMember>[];
+    String? next = path;
+    for (var page = 0; next != null && page < 5; page++) {
+      final data = await _get(next);
+      for (final m in _values(data)) {
+        final id = m['userId'] as String?;
+        final name = (m['displayName'] as String?)?.trim() ?? '';
+        if (id == null || id.isEmpty || name.isEmpty) continue;
+        out.add(ChatMember(
+          displayName: name,
+          userId: id,
+          email: (m['email'] as String?)?.trim().toLowerCase(),
+        ));
+      }
+      next = _nextLink(data);
+    }
+    return out;
   }
 
   /// A message carrying [image] as hosted content, the way Teams sends a
@@ -350,7 +422,9 @@ class GraphChatDatasource implements ChatRemoteDatasource {
   /// answers with the `…/hostedContents/{id}/$value` it was given.
   @visibleForTesting
   static Map<String, dynamic> imageMessageBody(
-      String text, ChatOutgoingImage image) {
+      String text, ChatOutgoingImage image,
+      {List<ChatMember> mentions = const []}) {
+    final tagged = mentionBody(text, mentions);
     var size = '';
     final w = image.width, h = image.height;
     if (w != null && h != null && w > 0 && h > 0) {
@@ -361,8 +435,13 @@ class GraphChatDatasource implements ChatRemoteDatasource {
       size = ' width="$sw" height="$sh"'
           ' style="vertical-align:bottom; width:${sw}px; height:${sh}px"';
     }
-    final caption = text.trim().isEmpty ? '' : '<p>${_escape(text)}</p>';
+    final caption = tagged != null
+        ? (tagged['body'] as Map)['content'] as String
+        : text.trim().isEmpty
+            ? ''
+            : '<p>${_escape(text)}</p>';
     return {
+      if (tagged != null) 'mentions': tagged['mentions'],
       'body': {
         'contentType': 'html',
         'content': '$caption<p><img src="../hostedContents/1/\$value"'
@@ -747,6 +826,7 @@ class GraphChatDatasource implements ChatRemoteDatasource {
       editedAt: _date(raw['lastEditedDateTime']),
       isDeleted: raw['deletedDateTime'] != null,
       isSystem: isSystem,
+      senderIsApp: from is Map && from['user'] == null && from['application'] != null,
       reactions: [
         for (final e in reactionCounts.entries)
           ChatReaction(

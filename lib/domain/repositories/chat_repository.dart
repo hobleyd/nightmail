@@ -165,14 +165,22 @@ abstract interface class ChatRepository {
 
   /// Sends [text] to [conversation], as a reply in [replyTo]'s thread when
   /// given (conversations with threads only), with [image] under it when
-  /// given.
+  /// given, tagging each of [mentions] still written as `@displayName`.
   Future<Either<Failure, ChatMessage>> sendMessage(
     String accountId,
     ChatConversation conversation,
     String text, {
     ChatMessage? replyTo,
     ChatOutgoingImage? image,
+    List<ChatMember> mentions = const [],
   });
+
+  /// The people who can be tagged in [conversation] — see
+  /// `ChatRemoteDatasource.mentionable`.
+  Future<Either<Failure, List<ChatMember>>> mentionable(
+    String accountId,
+    ChatConversation conversation,
+  );
 
   /// Whether a picture can be sent in [conversation] — see
   /// `ChatRemoteDatasource.canSendImage`.

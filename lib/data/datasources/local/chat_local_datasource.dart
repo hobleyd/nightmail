@@ -187,6 +187,7 @@ class ChatLocalDatasourceImpl implements ChatLocalDatasource {
         'editedAt': ?m.editedAt?.toIso8601String(),
         if (m.isDeleted) 'deleted': true,
         if (m.isSystem) 'system': true,
+        if (m.senderIsApp) 'app': true,
         if (m.reactions.isNotEmpty)
           'reactions': [
             for (final r in m.reactions)
@@ -216,6 +217,7 @@ class ChatLocalDatasourceImpl implements ChatLocalDatasource {
         editedAt: _date(j['editedAt']),
         isDeleted: j['deleted'] == true,
         isSystem: j['system'] == true,
+        senderIsApp: j['app'] == true,
         reactions: [
           for (final r in (j['reactions'] as List?) ?? const [])
             if (r is Map)

@@ -841,11 +841,183 @@ class _ComposerState extends State<_Composer> {
   final _focus = FocusNode();
 
   @override
+  void initState() {
+    super.initState();
+    _controller.addListener(_onTyped);
+  }
+
+  @override
   void dispose() {
     _controller.dispose();
     _focus.dispose();
     super.dispose();
   }
+
+  // ---- @ typeahead ---------------------------------------------------------
+
+  /// People picked from the typeahead for the message being typed. Only
+  /// those still written as `@Name` at send are tagged (`splitMentions`).
+  final _picked = <ChatMember>[];
+
+  /// Who the open conversation can tag, once asked; null before the first
+  /// `@`, and again after the conversation changes.
+  List<ChatMember>? _roster;
+  bool _askingRoster = false;
+
+  /// The `@` [_roster] was last asked for. Each new `@` asks the cubit
+  /// again — its network roster is cached there, and the senders it adds
+  /// change as people write.
+  int? _rosterAt;
+
+  /// The open list: matches for what follows the `@` at [_at].
+  List<ChatMember> _matches = const [];
+  int _highlight = 0;
+  int? _at;
+
+  /// The `@` whose list Esc closed — not reopened while it is being typed.
+  int? _dismissedAt;
+
+  static const _maxMatches = 6;
+
+  bool get _suggesting => _matches.isNotEmpty;
+
+  /// Opens, narrows or closes the list as the text or caret moves: open
+  /// while the caret follows an `@` that starts a word (so an address's `@`
+  /// never opens it), on one line, a few words at most. Never in an edit —
+  /// a save is text only.
+  void _onTyped() {
+    final query = _mentionQuery();
+    if (query == null) {
+      _close();
+      return;
+    }
+    final (at, typed) = query;
+    final roster = _roster;
+    if (roster == null || at != _rosterAt) {
+      _askRoster(at);
+      if (roster == null) return;
+    }
+    final matches = matchMentions(roster, typed, limit: _maxMatches);
+    if (matches.isEmpty) {
+      _close();
+      return;
+    }
+    setState(() {
+      if (_at != at || !_sameMembers(matches, _matches)) _highlight = 0;
+      _at = at;
+      _matches = matches;
+    });
+  }
+
+  (int, String)? _mentionQuery() {
+    final value = _controller.value;
+    final sel = value.selection;
+    if (!sel.isValid || !sel.isCollapsed) return null;
+    if (_mine(context.read<ChatConversationCubit>().state)) return null;
+    final caret = sel.baseOffset;
+    final text = value.text;
+    if (caret <= 0 || caret > text.length) return null;
+    final at = text.lastIndexOf('@', caret - 1);
+    if (at < 0) return null;
+    if (at == _dismissedAt) {
+      // Esc closed this `@`; once it is deleted, the next one may open.
+      if (text.length > at && text[at] == '@') return null;
+      _dismissedAt = null;
+    }
+    if (at > 0 && !RegExp(r'[\s(]').hasMatch(text[at - 1])) return null;
+    final typed = text.substring(at + 1, caret);
+    if (typed.contains('\n') ||
+        typed.startsWith(' ') ||
+        typed.length > 40 ||
+        typed.split(' ').length > 3) {
+      return null;
+    }
+    return (at, typed);
+  }
+
+  Future<void> _askRoster(int at) async {
+    if (_askingRoster) return;
+    _askingRoster = true;
+    _rosterAt = at;
+    final cubit = context.read<ChatConversationCubit>();
+    final conversation = cubit.state.conversation?.id;
+    final roster = await cubit.mentionable();
+    _askingRoster = false;
+    if (!mounted || cubit.state.conversation?.id != conversation) return;
+    // Nobody yet (a conversation still loading): asked again on the next `@`.
+    if (roster.isNotEmpty) _roster = roster;
+    if (_roster != null) _onTyped();
+  }
+
+  void _close() {
+    if (_matches.isEmpty && _at == null) return;
+    setState(() {
+      _matches = const [];
+      _at = null;
+      _highlight = 0;
+    });
+  }
+
+  /// Puts `@Name ` in place of what was typed after the `@`.
+  void _pick(ChatMember m) {
+    final at = _at;
+    if (at == null) return;
+    final value = _controller.value;
+    final caret = value.selection.baseOffset;
+    final name = m.displayName.trim();
+    final text = value.text.replaceRange(at, caret, '@$name ');
+    if (!_picked.any((p) => p.userId == m.userId)) _picked.add(m);
+    _controller.value = TextEditingValue(
+      text: text,
+      selection: TextSelection.collapsed(offset: at + name.length + 2),
+    );
+    _close();
+    _focus.requestFocus();
+  }
+
+  /// Up/Down move through the list, Enter or Tab picks, Esc closes it —
+  /// handled before the box's own Enter (send) and Esc (leave an edit, drop
+  /// a picture) see them.
+  KeyEventResult _onSuggestKey(KeyEvent event) {
+    if (event is! KeyDownEvent && event is! KeyRepeatEvent) {
+      return KeyEventResult.ignored;
+    }
+    final key = event.logicalKey;
+    if (key == LogicalKeyboardKey.arrowDown ||
+        key == LogicalKeyboardKey.arrowUp) {
+      final step = key == LogicalKeyboardKey.arrowDown ? 1 : -1;
+      setState(() =>
+          _highlight = (_highlight + step) % _matches.length);
+      return KeyEventResult.handled;
+    }
+    if (event is! KeyDownEvent) return KeyEventResult.ignored;
+    if (key == LogicalKeyboardKey.enter ||
+        key == LogicalKeyboardKey.numpadEnter ||
+        key == LogicalKeyboardKey.tab) {
+      _pick(_matches[_highlight.clamp(0, _matches.length - 1)]);
+      return KeyEventResult.handled;
+    }
+    if (key == LogicalKeyboardKey.escape) {
+      _dismissedAt = _at;
+      _close();
+      return KeyEventResult.handled;
+    }
+    return KeyEventResult.ignored;
+  }
+
+  /// Forgets the picks and the roster: another conversation, or a thread
+  /// that is not this one's.
+  void _resetMentions() {
+    _picked.clear();
+    _roster = null;
+    _rosterAt = null;
+    _dismissedAt = null;
+    _close();
+  }
+
+  static bool _sameMembers(List<ChatMember> a, List<ChatMember> b) =>
+      a.length == b.length &&
+      Iterable<int>.generate(a.length).every((i) => a[i] == b[i]);
 
   /// What was typed before an edit took the box over, given back after it.
   String? _draft;
@@ -867,9 +1039,14 @@ class _ComposerState extends State<_Composer> {
     } else {
       final image = _image;
       if (text.trim().isEmpty && image == null) return;
-      if (await cubit.send(text, inThread: widget.inThread, image: image) &&
+      if (await cubit.send(text,
+              inThread: widget.inThread,
+              image: image,
+              mentions: List.of(_picked)) &&
           mounted) {
         _controller.clear();
+        _picked.clear();
+        _dismissedAt = null;
         setState(() => _image = null);
       }
     }
@@ -897,6 +1074,7 @@ class _ComposerState extends State<_Composer> {
   /// Up in an empty box edits the user's newest message, as Slack and Teams
   /// do. Anywhere else Up moves the caret, as always.
   KeyEventResult _onKey(FocusNode node, KeyEvent event) {
+    if (_suggesting) return _onSuggestKey(event);
     if (event is! KeyDownEvent ||
         event.logicalKey != LogicalKeyboardKey.arrowUp ||
         _controller.text.isNotEmpty ||
@@ -941,14 +1119,17 @@ class _ComposerState extends State<_Composer> {
               a.editingInThread != b.editingInThread,
           listener: _onEditing,
         ),
-        // A picture pasted for one conversation never goes to the next.
+        // A picture pasted for one conversation never goes to the next,
+        // nor do the people tagged for it.
         BlocListener<ChatConversationCubit, ChatConversationState>(
           listenWhen: (a, b) =>
-              _image != null &&
-              (a.accountId != b.accountId ||
-                  a.conversation?.id != b.conversation?.id ||
-                  a.threadPostId != b.threadPostId && widget.inThread),
-          listener: (_, _) => setState(() => _image = null),
+              a.accountId != b.accountId ||
+              a.conversation?.id != b.conversation?.id ||
+              a.threadPostId != b.threadPostId && widget.inThread,
+          listener: (_, _) {
+            _resetMentions();
+            if (_image != null) setState(() => _image = null);
+          },
         ),
       ],
       child: Container(
@@ -990,6 +1171,13 @@ class _ComposerState extends State<_Composer> {
             _PendingImage(
               image: image,
               onRemove: () => setState(() => _image = null),
+            ),
+          if (_suggesting)
+            _MentionList(
+              matches: _matches,
+              highlight: _highlight,
+              onPick: _pick,
+              onHover: (i) => setState(() => _highlight = i),
             ),
           Row(
         crossAxisAlignment: CrossAxisAlignment.end,
@@ -1057,6 +1245,130 @@ class _ComposerState extends State<_Composer> {
       ),
         ],
       ),
+      ),
+    );
+  }
+}
+
+/// Who a composer's `@[typed]` could mean, best first: a name starting with
+/// it, then one with every typed word starting a word of the name (`@lee`,
+/// `@ann l` for "Ann Lee"), then an address starting with it — at most
+/// [limit]. Bare `@` lists everyone, in [roster]'s order.
+@visibleForTesting
+List<ChatMember> matchMentions(List<ChatMember> roster, String typed,
+    {int limit = 6}) {
+  final q = typed.trim().toLowerCase();
+  if (q.isEmpty) return roster.take(limit).toList();
+  final words = q.split(RegExp(r'\s+'));
+  int? rank(ChatMember m) {
+    final name = m.displayName.toLowerCase();
+    if (name.startsWith(q)) return 0;
+    final parts = name.split(RegExp(r'[\s,.\-]+'));
+    if (words.every((w) => parts.any((p) => p.startsWith(w)))) return 1;
+    if (m.email?.startsWith(q) ?? false) return 2;
+    return null;
+  }
+
+  final ranked = [
+    for (final m in roster)
+      if (rank(m) case final r?) (r, m),
+  ];
+  // Stable: equal ranks keep the roster's order (members, then senders).
+  final sorted = [
+    for (var r = 0; r <= 2; r++)
+      for (final e in ranked)
+        if (e.$1 == r) e.$2,
+  ];
+  return sorted.take(limit).toList();
+}
+
+/// The `@` typeahead above the box. Its rows are part of the field's tap
+/// region, so tapping one does not take focus from the field (and drop the
+/// phone's keyboard) before the pick lands.
+class _MentionList extends StatelessWidget {
+  const _MentionList({
+    required this.matches,
+    required this.highlight,
+    required this.onPick,
+    required this.onHover,
+  });
+
+  final List<ChatMember> matches;
+  final int highlight;
+  final ValueChanged<ChatMember> onPick;
+  final ValueChanged<int> onHover;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.colors;
+    return TextFieldTapRegion(
+      child: Container(
+        margin: const EdgeInsets.only(bottom: 6),
+        padding: const EdgeInsets.symmetric(vertical: 4),
+        decoration: BoxDecoration(
+          color: c.surfaceBase,
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: c.separator),
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            for (final (i, m) in matches.indexed)
+              MouseRegion(
+                // Movement only: a row that opens under a resting pointer
+                // must not take the highlight from the best match.
+                onHover: (_) {
+                  if (i != highlight) onHover(i);
+                },
+                child: InkWell(
+                  key: ValueKey('mention-${m.userId}'),
+                  onTap: () => onPick(m),
+                  child: Container(
+                    color: i == highlight
+                        ? AppColors.accent.withValues(alpha: 0.14)
+                        : null,
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+                    child: Row(
+                      children: [
+                        ChatAvatar(
+                          size: 22,
+                          message: ChatMessage(
+                            id: '',
+                            createdAt: DateTime(2000),
+                            senderName: m.displayName,
+                            senderUserId: m.userId,
+                            bodyHtml: '',
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Flexible(
+                          child: Text(
+                            m.displayName,
+                            overflow: TextOverflow.ellipsis,
+                            style:
+                                TextStyle(fontSize: 13, color: c.textPrimary),
+                          ),
+                        ),
+                        if (m.email case final email?) ...[
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Text(
+                              email,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                  fontSize: 11.5, color: c.textTertiary),
+                            ),
+                          ),
+                        ],
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+          ],
+        ),
       ),
     );
   }

@@ -8,6 +8,7 @@ import 'package:flutter/foundation.dart' show debugPrint, visibleForTesting;
 import '../../../core/error/exceptions.dart';
 import '../../../core/text/emoji.dart';
 import '../../../domain/entities/chat.dart';
+import '../../../domain/entities/chat_mentions.dart';
 import '../../../infrastructure/slack/slack_workspaces.dart';
 import 'chat_images.dart';
 import 'chat_remote_datasource.dart';
@@ -90,6 +91,10 @@ class SlackChatDatasource implements ChatRemoteDatasource {
   /// once per [_customEmojiFresh]; empty without `emoji:read`.
   static final _customEmoji = <String, Map<String, SlackCustomEmoji>>{};
   static final _customEmojiAt = <String, DateTime>{};
+
+  /// When `users.list` last named a workspace's people, per team — at most
+  /// once an hour (Tier 2), and only for a roster too big for `users.info`.
+  static final _usersListedAt = <String, DateTime>{};
   static const _customEmojiFresh = Duration(hours: 1);
 
   @visibleForTesting
@@ -480,13 +485,15 @@ class SlackChatDatasource implements ChatRemoteDatasource {
     String text, {
     ChatMessage? replyTo,
     ChatOutgoingImage? image,
+    List<ChatMember> mentions = const [],
   }) async {
-    if (image != null) return _sendImage(conversation, text, replyTo, image);
+    final sent = outgoingText(text, mentions);
+    if (image != null) return _sendImage(conversation, sent, replyTo, image);
     final data = await _call(
       'chat.postMessage',
       {
         'channel': conversation.id,
-        'text': escapeText(text),
+        'text': sent,
         'thread_ts': ?(replyTo == null ? null : replyTo.replyToId ?? replyTo.id),
       },
       post: true,
@@ -510,6 +517,7 @@ class SlackChatDatasource implements ChatRemoteDatasource {
   /// Slack posts the message itself, after the call returns, and names no
   /// `ts` for it, so it is looked for in the newest messages — a few tries,
   /// while Slack processes the file.
+  /// [text] is already [outgoingText].
   Future<ChatMessage> _sendImage(
     ChatConversation conversation,
     String text,
@@ -572,7 +580,7 @@ class SlackChatDatasource implements ChatRemoteDatasource {
           {'id': fileId, 'title': image.name},
         ]),
         'channel_id': conversation.id,
-        if (text.isNotEmpty) 'initial_comment': escapeText(text),
+        if (text.isNotEmpty) 'initial_comment': text,
         'thread_ts': ?thread,
       },
       post: true,
@@ -589,7 +597,7 @@ class SlackChatDatasource implements ChatRemoteDatasource {
     return _parseMessage({
       'ts': (DateTime.now().microsecondsSinceEpoch / 1e6).toStringAsFixed(6),
       'user': ?await _ownId(),
-      'text': text.isEmpty ? '' : escapeText(text),
+      'text': text,
       'files': [file],
       'thread_ts': ?thread,
     });
@@ -961,6 +969,7 @@ class SlackChatDatasource implements ChatRemoteDatasource {
       editedAt: edited is Map ? _ts(edited['ts'] as String?) : null,
       isDeleted: subtype == 'tombstone' || subtype == 'message_deleted',
       isSystem: subtype != null && _systemSubtypes.contains(subtype),
+      senderIsApp: user == null || subtype == 'bot_message' || m['bot_id'] != null,
       replyCount: (m['reply_count'] as num?)?.toInt(),
       reactions: [
         for (final r in _list(m['reactions']))
@@ -1125,6 +1134,69 @@ class SlackChatDatasource implements ChatRemoteDatasource {
       .replaceAll('&amp;', '&');
 
   // ---- text ---------------------------------------------------------------
+
+  /// What the user typed as Slack message text: [escapeText], with each of
+  /// [mentions] still written as `@Name` turned into `<@U…>`.
+  @visibleForTesting
+  static String outgoingText(String text, List<ChatMember> mentions) => [
+        for (final part in splitMentions(text, mentions))
+          switch (part) {
+            ChatTextRun(:final text) => escapeText(text),
+            ChatMentionRun(:final member) => '<@${member.userId}>',
+          },
+      ].join();
+
+  /// The conversation's members (`conversations.members`, the `*:read`
+  /// already held), named from what is known. A handful not yet known are
+  /// looked up one by one ([_resolveUsers]); a big channel's roster comes
+  /// from `users.list` instead — 200 a call, once an hour — rather than a
+  /// burst of `users.info`.
+  @override
+  Future<List<ChatMember>> mentionable(ChatConversation conversation) async {
+    final ids = <String>[];
+    String? cursor;
+    for (var page = 0; page < 5; page++) {
+      final data = await _call('conversations.members', {
+        'channel': conversation.id,
+        'limit': '200',
+        'cursor': ?cursor,
+      });
+      ids.addAll((data['members'] as List? ?? const []).whereType<String>());
+      cursor = (data['response_metadata'] as Map?)?['next_cursor'] as String?;
+      if (cursor == null || cursor.isEmpty) break;
+    }
+    final missing =
+        ids.where((id) => !_users.containsKey('$teamId|$id')).length;
+    if (missing > 40) await _listUsers();
+    await _resolveUsers(ids);
+    return [
+      for (final id in ids)
+        if (_users['$teamId|$id'] case final u?)
+          ChatMember(displayName: u.name, userId: id, email: u.email),
+    ];
+  }
+
+  Future<void> _listUsers() async {
+    final at = _usersListedAt[teamId];
+    if (at != null && DateTime.now().difference(at) < const Duration(hours: 1)) {
+      return;
+    }
+    _usersListedAt[teamId] = DateTime.now();
+    String? cursor;
+    for (var page = 0; page < 10; page++) {
+      final data = await _call('users.list', {
+        'limit': '200',
+        'cursor': ?cursor,
+      });
+      for (final u in _list(data['members'])) {
+        final id = u['id'] as String?;
+        if (id == null || u['deleted'] == true) continue;
+        _users['$teamId|$id'] = _SlackUser.fromJson(u);
+      }
+      cursor = (data['response_metadata'] as Map?)?['next_cursor'] as String?;
+      if (cursor == null || cursor.isEmpty) break;
+    }
+  }
 
   /// What the user typed, escaped the way Slack wants message text: only
   /// `&`, `<` and `>` (anything between `<` and `>` would otherwise be read

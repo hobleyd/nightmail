@@ -6,6 +6,7 @@ import 'package:flutter/foundation.dart' show visibleForTesting;
 
 import '../../../core/error/exceptions.dart';
 import '../../../domain/entities/chat.dart';
+import '../../../domain/entities/chat_mentions.dart';
 import 'chat_remote_datasource.dart';
 import 'chat_images.dart';
 
@@ -326,13 +327,14 @@ class GoogleChatDatasource implements ChatRemoteDatasource {
     String text, {
     ChatMessage? replyTo,
     ChatOutgoingImage? image,
+    List<ChatMember> mentions = const [],
   }) async {
     final thread = replyTo?.threadId;
     final ref = image == null ? null : await _upload(conversation, image);
     final data = await _post(
       '/${conversation.id}/messages',
       {
-        if (text.isNotEmpty) 'text': text,
+        if (text.isNotEmpty) 'text': mentionText(text, mentions),
         if (thread != null) 'thread': {'name': thread},
         if (ref != null)
           'attachment': [
@@ -345,6 +347,81 @@ class GoogleChatDatasource implements ChatRemoteDatasource {
       },
     );
     return _parseMessage(data);
+  }
+
+  /// [text] with each of [mentions] as Chat's `<users/{id}>`, which Google
+  /// turns into the mention (and its `USER_MENTION` annotation). The rest is
+  /// sent as typed, as always.
+  @visibleForTesting
+  static String mentionText(String text, List<ChatMember> mentions) => [
+        for (final part in splitMentions(text, mentions))
+          switch (part) {
+            ChatTextRun(:final text) => text,
+            ChatMentionRun(:final member) => '<${member.userId}>',
+          },
+      ].join();
+
+  /// The space's human members (`chat.memberships.readonly`), as
+  /// `users/{id}`. With user auth a membership may carry no `displayName`
+  /// (what [_titleFromMembers] falls over on), so those are named from the
+  /// People directory — the `directory.readonly` [photo] already reads —
+  /// and anyone still nameless is left out.
+  @override
+  Future<List<ChatMember>> mentionable(ChatConversation conversation) async {
+    final members = <String, String>{};
+    String? token;
+    for (var page = 0; page < 5; page++) {
+      final data = await _get('/${conversation.id}/members', query: {
+        'pageSize': 200,
+        'pageToken': ?token,
+      });
+      for (final m in _list(data['memberships'])) {
+        final member = m['member'];
+        if (member is! Map || member['type'] != 'HUMAN') continue;
+        final id = member['name'] as String?;
+        if (id == null || !id.startsWith('users/')) continue;
+        members[id] = (member['displayName'] as String? ?? '').trim();
+      }
+      token = data['nextPageToken'] as String?;
+      if (token == null || token.isEmpty) break;
+    }
+    final unnamed = [
+      for (final e in members.entries)
+        if (e.value.isEmpty) e.key,
+    ];
+    for (var i = 0; i < unnamed.length && i < 200; i += 50) {
+      try {
+        final r = await _dio.get<Map<String, dynamic>>(
+          'https://people.googleapis.com/v1/people:batchGet',
+          queryParameters: {
+            'resourceNames': [
+              for (final id in unnamed.skip(i).take(50))
+                'people/${id.substring(6)}',
+            ],
+            'personFields': 'names',
+          },
+        );
+        for (final res in _list(r.data?['responses'])) {
+          final person = res['person'];
+          final name = res['requestedResourceName'] as String? ??
+              (person is Map ? person['resourceName'] as String? : null);
+          if (name == null || person is! Map) continue;
+          final names = person['names'];
+          final display = names is List && names.isNotEmpty
+              ? ((names.first as Map)['displayName'] as String? ?? '').trim()
+              : '';
+          if (display.isNotEmpty) {
+            members['users/${name.replaceFirst('people/', '')}'] = display;
+          }
+        }
+      } catch (_) {
+        break; // Names are a nicety; the senders still come.
+      }
+    }
+    return [
+      for (final e in members.entries)
+        if (e.value.isNotEmpty) ChatMember(displayName: e.value, userId: e.key),
+    ];
   }
 
   /// `media.upload` takes the `chat.messages` NightMail already holds.
@@ -553,6 +630,7 @@ class GoogleChatDatasource implements ChatRemoteDatasource {
       senderName:
           (sender is Map ? sender['displayName'] as String? : null) ?? '',
       senderUserId: sender is Map ? sender['name'] as String? : null,
+      senderIsApp: sender is Map && sender['type'] == 'BOT',
       bodyHtml: chatTextToHtml(raw['text'] as String? ?? '') +
           _imagesHtml(raw['attachment']) +
           _gifsHtml(raw['attachedGifs']),

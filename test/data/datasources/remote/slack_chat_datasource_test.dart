@@ -1173,6 +1173,36 @@ void main() {
           isTrue, reason: '$kind');
     }
   });
+
+  group('mentions', () {
+    test('a tag goes as <@U…>, the rest escaped as ever', () {
+      expect(
+          SlackChatDatasource.outgoingText('@Ann & <co> @Ann', const [
+            ChatMember(displayName: 'Ann', userId: 'UANN'),
+          ]),
+          '<@UANN> &amp; &lt;co&gt; <@UANN>');
+    });
+
+    test('the conversation\'s members, named by users.info', () async {
+      await connected();
+      routes['conversations.members'] = (o) {
+        expect(o.queryParameters['channel'], 'C9');
+        return {
+          'ok': true,
+          'members': ['UME', 'UZED'],
+          'response_metadata': {'next_cursor': ''},
+        };
+      };
+      routes['users.info'] = (o) => switch (o.queryParameters['user']) {
+            'UZED' => user('UZED', 'Zed', email: 'zed@x.com'),
+            _ => user('UME', 'Me'),
+          };
+      final members = await datasource().mentionable(
+          const ChatConversation(id: 'C9', kind: ChatKind.space, title: '#g'));
+      expect(members.map((m) => (m.userId, m.displayName)),
+          containsAll([('UZED', 'Zed'), ('UME', 'Me')]));
+    });
+  });
 }
 
 const _json = {

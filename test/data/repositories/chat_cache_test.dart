@@ -312,6 +312,7 @@ class _Chats extends Fake implements ChatRemoteDatasource {
     String text, {
     ChatMessage? replyTo,
     ChatOutgoingImage? image,
+    List<ChatMember> mentions = const [],
   }) async =>
       ChatMessage(
         id: 'm',

@@ -773,6 +773,78 @@ void main() {
             id: '19:ch', kind: ChatKind.channel, title: 'G', teamId: 'T')),
         isTrue);
   });
+
+  group('mentions', () {
+    const bob = ChatMember(displayName: 'Bob & Co', userId: 'u-bob');
+    const chat = ChatConversation(id: 'c', kind: ChatKind.group, title: 'G');
+
+    test('a tag goes as <at> in an html body, each occurrence its own id',
+        () async {
+      routes['/chats/c/messages'] = (_) => {
+            'id': '9',
+            'createdDateTime': '2026-11-23T01:00:00Z',
+            'body': {'contentType': 'html', 'content': 'x'},
+          };
+      await datasource().send(chat, '@Bob & Co <hi>\n@Bob & Co',
+          mentions: [bob]);
+      final body = requests.single.data as Map;
+      expect(body['body'], {
+        'contentType': 'html',
+        'content': '<p><at id="0">Bob &amp; Co</at> &lt;hi&gt;<br>'
+            '<at id="1">Bob &amp; Co</at></p>',
+      });
+      expect((body['mentions'] as List).map((m) => m['id']), [0, 1]);
+      expect((body['mentions'] as List).first, {
+        'id': 0,
+        'mentionText': 'Bob & Co',
+        'mentioned': {
+          'user': {
+            'id': 'u-bob',
+            'displayName': 'Bob & Co',
+            'userIdentityType': 'aadUser',
+          },
+        },
+      });
+    });
+
+    test('a pick no longer in the text sends plain text, as before',
+        () async {
+      routes['/chats/c/messages'] = (_) => {
+            'id': '9',
+            'createdDateTime': '2026-11-23T01:00:00Z',
+            'body': {'contentType': 'text', 'content': 'hi Bob'},
+          };
+      await datasource().send(chat, 'hi Bob', mentions: [bob]);
+      expect(requests.single.data,
+          {'body': {'contentType': 'text', 'content': 'hi Bob'}});
+    });
+
+    test('a chat lists its members; a Microsoft 365 channel asks nothing',
+        () async {
+      routes['/chats/c/members'] = (_) => {
+            'value': [
+              {'displayName': 'Bob', 'userId': 'u-bob', 'email': 'Bob@X.com'},
+              {'displayName': 'Guest', 'userId': null},
+            ],
+          };
+      final members = await datasource().mentionable(chat);
+      expect(members, [
+        const ChatMember(displayName: 'Bob', userId: 'u-bob', email: 'bob@x.com'),
+      ]);
+      requests.clear();
+      const channel = ChatConversation(
+          id: 'ch', kind: ChatKind.channel, title: 'G', teamId: 't');
+      expect(await datasource(server: false).mentionable(channel), isEmpty);
+      expect(requests, isEmpty);
+      // A NightMail Server lists a channel's members.
+      routes['/teams/t/channels/ch/members'] = (_) => {
+            'value': [
+              {'displayName': 'Bob', 'userId': 'u-bob'},
+            ],
+          };
+      expect((await datasource().mentionable(channel)).single.userId, 'u-bob');
+    });
+  });
 }
 
 const _json = {

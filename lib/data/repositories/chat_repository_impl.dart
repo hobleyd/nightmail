@@ -591,14 +591,22 @@ class ChatRepositoryImpl implements ChatRepository {
     String text, {
     ChatMessage? replyTo,
     ChatOutgoingImage? image,
+    List<ChatMember> mentions = const [],
   }) =>
       _guard(accountId, (ds) async {
         final sent = await ds.send(conversation, text,
-            replyTo: replyTo, image: image);
+            replyTo: replyTo, image: image, mentions: mentions);
         if (image != null) _seedImage(accountId, sent, image.bytes);
         _touch(accountId, conversation, sent);
         return sent;
       });
+
+  @override
+  Future<Either<Failure, List<ChatMember>>> mentionable(
+    String accountId,
+    ChatConversation conversation,
+  ) =>
+      _guard(accountId, (ds) => ds.mentionable(conversation));
 
   @override
   bool canSendImage(String accountId, ChatConversation conversation) =>

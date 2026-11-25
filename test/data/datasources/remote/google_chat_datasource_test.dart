@@ -677,6 +677,63 @@ void main() {
             threaded: true)),
         isTrue);
   });
+
+  group('mentions', () {
+    const space = ChatConversation(
+        id: 'spaces/s', kind: ChatKind.space, title: 'S');
+
+    test('a tag goes as <users/{id}> in the text', () async {
+      routes['/spaces/s/messages'] = (o) => {
+            'name': 'spaces/s/messages/m',
+            'createTime': '2026-11-23T03:00:00Z',
+            'text': (o.data as Map)['text'],
+          };
+      await datasource().send(space, 'hi @Ann Lee, a<b', mentions: const [
+        ChatMember(displayName: 'Ann Lee', userId: 'users/123'),
+      ]);
+      expect((requests.single.data as Map)['text'], 'hi <users/123>, a<b');
+    });
+
+    test('members without a name are named from the People directory',
+        () async {
+      routes['/spaces/s/members'] = (_) => {
+            'memberships': [
+              {
+                'member': {
+                  'name': 'users/1',
+                  'type': 'HUMAN',
+                  'displayName': 'Ann Lee',
+                },
+              },
+              {
+                'member': {'name': 'users/2', 'type': 'HUMAN'},
+              },
+              {
+                'member': {'name': 'users/app', 'type': 'BOT'},
+              },
+            ],
+          };
+      routes['/v1/people:batchGet'] = (o) {
+        expect(o.uri.queryParametersAll['resourceNames'], ['people/2']);
+        return {
+          'responses': [
+            {
+              'requestedResourceName': 'people/2',
+              'person': {
+                'names': [
+                  {'displayName': 'Bob Brown'},
+                ],
+              },
+            },
+          ],
+        };
+      };
+      expect(await datasource().mentionable(space), const [
+        ChatMember(displayName: 'Ann Lee', userId: 'users/1'),
+        ChatMember(displayName: 'Bob Brown', userId: 'users/2'),
+      ]);
+    });
+  });
 }
 
 const _json = {

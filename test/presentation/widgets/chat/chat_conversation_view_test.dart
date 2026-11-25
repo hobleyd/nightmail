@@ -609,6 +609,131 @@ void main() {
       await cubit.close();
     }, variant: desktops);
   });
+
+  group('@ typeahead', () {
+    const bob = ChatMember(
+        displayName: 'Bob Brown', userId: 'u-bob', email: 'bob@x.com');
+    const carol = ChatMember(displayName: 'Carol Diaz', userId: 'u-carol');
+    const me = ChatMember(displayName: 'Me', userId: 'u-me');
+
+    Future<(_Repo, ChatConversationCubit)> pump(WidgetTester tester) async {
+      final repo = _Repo([
+        ChatMessage(
+          id: '2',
+          createdAt: DateTime(2026, 11, 25, 10, 2),
+          senderName: 'Workflows',
+          senderUserId: 'u-app',
+          bodyHtml: '<p>build passed</p>',
+          senderIsApp: true,
+        ),
+        msg('1', 'Ann Lee', 'u-ann', 1),
+      ], ownId: 'u-me')
+        ..roster = [me, bob, carol];
+      final cubit = ChatConversationCubit(repository: repo);
+      await cubit.open('a',
+          const ChatConversation(id: 'c', kind: ChatKind.group, title: 'G'));
+      await tester.pumpWidget(MaterialApp(
+        home: Scaffold(
+          body: BlocProvider.value(
+            value: cubit,
+            child: const ChatConversationView(),
+          ),
+        ),
+      ));
+      await tester.pumpAndSettle();
+      return (repo, cubit);
+    }
+
+    String typed(WidgetTester tester) =>
+        tester.widget<TextField>(find.byType(TextField)).controller!.text;
+
+    testWidgets('Enter picks the person rather than sending; the next Enter '
+        'sends with them tagged', (tester) async {
+      final (repo, cubit) = await pump(tester);
+      await tester.enterText(find.byType(TextField), 'hi @bo');
+      await tester.pumpAndSettle();
+      expect(find.text('Bob Brown'), findsOneWidget);
+      expect(find.text('Carol Diaz'), findsNothing);
+
+      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+      await tester.pumpAndSettle();
+      expect(repo.sent, isEmpty);
+      expect(typed(tester), 'hi @Bob Brown ');
+      expect(find.text('Bob Brown'), findsNothing, reason: 'list closed');
+
+      await tester.enterText(find.byType(TextField), 'hi @Bob Brown look');
+      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+      await tester.pumpAndSettle();
+      expect(repo.sent.single.$1, 'hi @Bob Brown look');
+      expect(repo.sentMentions.single, [bob]);
+      expect(typed(tester), '');
+      await cubit.close();
+    });
+
+    testWidgets('a bare @ lists the members and whoever wrote, never the '
+        'user; Down and Tab pick the second', (tester) async {
+      final (repo, cubit) = await pump(tester);
+      await tester.enterText(find.byType(TextField), '@');
+      await tester.pumpAndSettle();
+      expect(find.text('Bob Brown'), findsOneWidget);
+      expect(find.text('Carol Diaz'), findsOneWidget);
+      expect(find.text('Ann Lee'), findsWidgets, reason: 'wrote in it');
+      expect(find.text('Me'), findsNothing);
+      expect(find.byKey(const ValueKey('mention-u-app')), findsNothing,
+          reason: 'an app is no one to tag');
+      expect(find.byKey(const ValueKey('mention-u-ann')), findsOneWidget);
+
+      await tester.sendKeyEvent(LogicalKeyboardKey.arrowDown);
+      await tester.sendKeyEvent(LogicalKeyboardKey.tab);
+      await tester.pumpAndSettle();
+      expect(typed(tester), '@Carol Diaz ');
+      expect(repo.sent, isEmpty);
+      await cubit.close();
+    });
+
+    testWidgets('an address\'s @ opens nothing, and Esc closes the list so '
+        'Enter sends', (tester) async {
+      final (repo, cubit) = await pump(tester);
+      await tester.enterText(find.byType(TextField), 'mail bob@x');
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('mention-u-bob')), findsNothing);
+
+      await tester.enterText(find.byType(TextField), 'ask @car');
+      await tester.pumpAndSettle();
+      expect(find.text('Carol Diaz'), findsOneWidget);
+      await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+      await tester.pumpAndSettle();
+      expect(find.text('Carol Diaz'), findsNothing);
+      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+      await tester.pumpAndSettle();
+      expect(repo.sent.single.$1, 'ask @car');
+      expect(repo.sentMentions.single, isEmpty);
+      await cubit.close();
+    });
+
+    testWidgets('tapping a row picks it', (tester) async {
+      final (repo, cubit) = await pump(tester);
+      await tester.enterText(find.byType(TextField), '@b');
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('mention-u-bob')));
+      await tester.pumpAndSettle();
+      expect(typed(tester), '@Bob Brown ');
+      await cubit.close();
+    });
+
+    test('matchMentions ranks a name prefix, then word prefixes, then '
+        'an address', () {
+      const ann = ChatMember(
+          displayName: 'Ann Lee', userId: 'a', email: 'zed@x.com');
+      const lee = ChatMember(displayName: 'Lee Park', userId: 'l');
+      const z = ChatMember(displayName: 'Zoe', userId: 'z', email: 'lee@x');
+      final roster = [ann, z, lee];
+      expect(matchMentions(roster, 'lee'), [lee, ann, z]);
+      expect(matchMentions(roster, 'ann l'), [ann]);
+      expect(matchMentions(roster, ''), roster);
+      expect(matchMentions(roster, 'q'), isEmpty);
+    });
+  });
 }
 
 class _Repo extends Fake implements ChatRepository {
@@ -674,9 +799,11 @@ class _Repo extends Fake implements ChatRepository {
     String text, {
     ChatMessage? replyTo,
     ChatOutgoingImage? image,
+    List<ChatMember> mentions = const [],
   }) async {
     sent.add((text, replyTo?.id));
     images.add(image);
+    sentMentions.add(mentions);
     return Right(ChatMessage(
       id: 'new-${sent.length}',
       createdAt: DateTime(2026, 11, 25, 11),
@@ -687,6 +814,13 @@ class _Repo extends Fake implements ChatRepository {
   }
 
   final images = <ChatOutgoingImage?>[];
+  final sentMentions = <List<ChatMember>>[];
+  List<ChatMember> roster = const [];
+
+  @override
+  Future<Either<Failure, List<ChatMember>>> mentionable(
+          String accountId, ChatConversation conversation) async =>
+      Right(roster);
   bool imagesAllowed = true;
 
   @override

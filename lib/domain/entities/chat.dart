@@ -234,6 +234,7 @@ class ChatMessage extends Equatable {
     this.conversationTitle,
     this.threadId,
     this.editableText,
+    this.senderIsApp = false,
   });
 
   final String id;
@@ -282,6 +283,10 @@ class ChatMessage extends Equatable {
   /// labelled link, formatting or a file the provider keeps in the body), so
   /// such a message offers no edit rather than losing them on save.
   final String? editableText;
+
+  /// Sent by an app or bot (Graph `from.application`, a Slack bot, a Google
+  /// `BOT`), whose [senderUserId] is no person to tag.
+  final bool senderIsApp;
 
   int get totalReplies => replyCount ?? replies.length;
 
@@ -379,6 +384,7 @@ class ChatMessage extends Equatable {
         conversationTitle: conversationTitle,
         threadId: threadId,
         editableText: editableText ?? this.editableText,
+        senderIsApp: senderIsApp,
       );
 
   @override
@@ -400,6 +406,7 @@ class ChatMessage extends Equatable {
         conversationTitle,
         threadId,
         editableText,
+        senderIsApp,
       ];
 }
 

@@ -751,6 +751,84 @@ void main() {
     });
   });
 
+  group('renaming', () {
+    const channel = ChatConversation(
+        id: 'C1', kind: ChatKind.space, title: '#general', threaded: true);
+
+    test('only channels; DMs and group DMs have no name', () {
+      final ds = datasource();
+      expect(ds.canRename(channel), isTrue);
+      expect(
+          ds.canRename(const ChatConversation(
+              id: 'D1', kind: ChatKind.oneOnOne, title: 'Ann')),
+          isFalse);
+      expect(
+          ds.canRename(const ChatConversation(
+              id: 'G1', kind: ChatKind.group, title: 'ann, bob')),
+          isFalse);
+    });
+
+    test('the name is sent as Slack takes it and comes back with its #',
+        () async {
+      await connected(scopes: const {'channels:write', 'groups:write'});
+      routes['conversations.rename'] = (o) {
+        final form = o.data as Map;
+        expect(form['channel'], 'C1');
+        expect(form['name'], 'team-updates');
+        return {
+          'ok': true,
+          'channel': {'id': 'C1', 'name': 'team-updates'},
+        };
+      };
+      final renamed = await datasource().rename(channel, ' #Team  Updates ');
+      expect(renamed.title, '#team-updates');
+      expect(renamed.key, channel.key);
+      expect(renamed.threaded, isTrue);
+    });
+
+    test('a workspace without channels:write is asked to reconnect, not '
+        'flagged', () async {
+      await expectLater(
+        datasource().rename(channel, 'x'),
+        throwsA(isA<ServerException>().having(
+            (e) => e.message, 'message', contains('Connect this Slack'))),
+      );
+      expect(requests, isEmpty);
+      expect((await workspaces.byTeam('T1'))!.needsReconnect, isFalse);
+    });
+
+    test('missing_scope from the rename itself does not flag the workspace',
+        () async {
+      await connected(scopes: const {'channels:write', 'groups:write'});
+      routes['conversations.rename'] =
+          (_) => {'ok': false, 'error': 'missing_scope'};
+      await expectLater(
+        datasource().rename(channel, 'x'),
+        throwsA(isA<ServerException>().having(
+            (e) => e.message, 'message', contains('Connect this Slack'))),
+      );
+      expect((await workspaces.byTeam('T1'))!.needsReconnect, isFalse);
+    });
+
+    test('a refusal is worded', () async {
+      await connected(scopes: const {'channels:write', 'groups:write'});
+      routes['conversations.rename'] =
+          (_) => {'ok': false, 'error': 'name_taken'};
+      await expectLater(
+        datasource().rename(channel, 'random'),
+        throwsA(isA<ServerException>().having(
+            (e) => e.message, 'message', contains('already has that name'))),
+      );
+      routes['conversations.rename'] =
+          (_) => {'ok': false, 'error': 'not_authorized'};
+      await expectLater(
+        datasource().rename(channel, 'random'),
+        throwsA(isA<ServerException>().having(
+            (e) => e.message, 'message', contains('channel\'s managers'))),
+      );
+    });
+  });
+
   group('reactions', () {
     const general = ChatConversation(
         id: 'C1', kind: ChatKind.space, title: '#general', threaded: true);

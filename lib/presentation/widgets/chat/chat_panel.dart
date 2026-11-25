@@ -20,6 +20,7 @@ import '../../blocs/email_detail/email_detail_bloc.dart';
 import '../../blocs/email_detail/email_detail_state.dart';
 import 'chat_conversation_view.dart';
 import 'chat_pane_picker.dart';
+import 'chat_rename_dialog.dart';
 import 'chat_window_target.dart';
 
 /// The Chat pane beside the reading pane: a one-on-one with the selected
@@ -149,6 +150,18 @@ class _ChatPanelBodyState extends State<_ChatPanelBody> {
     }
     unawaited(openChatWindow(ChatWindowTarget(
         sourceId: sourceId, conversation: state.conversation)));
+  }
+
+  /// Renames the open conversation; the picker's label follows.
+  Future<void> _rename() async {
+    final cubit = context.read<ChatConversationCubit>();
+    final conversation = cubit.state.conversation;
+    if (conversation == null) return;
+    final renamed = await showChatRenameDialog(context,
+        conversation: conversation, rename: cubit.rename);
+    final now = cubit.state.conversation;
+    if (!renamed || !mounted || now == null) return;
+    if (_chat?.key == now.key) setState(() => _chat = now);
   }
 
   Future<void> _sync(
@@ -385,6 +398,20 @@ class _ChatPanelBodyState extends State<_ChatPanelBody> {
                               letterSpacing: -0.2,
                             ),
                           ),
+                  ),
+                  BlocBuilder<ChatConversationCubit, ChatConversationState>(
+                    buildWhen: (a, b) =>
+                        a.accountId != b.accountId ||
+                        a.conversation != b.conversation,
+                    builder: (context, _) =>
+                        context.read<ChatConversationCubit>().canRename
+                            ? IconButton(
+                                icon: Icon(Icons.edit_outlined,
+                                    size: touchIcon(15), color: c.textMuted),
+                                tooltip: 'Rename',
+                                onPressed: _rename,
+                              )
+                            : const SizedBox.shrink(),
                   ),
                   if (_isDesktop)
                     IconButton(

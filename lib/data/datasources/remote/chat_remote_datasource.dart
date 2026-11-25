@@ -89,6 +89,16 @@ abstract interface class ChatRemoteDatasource {
     String text,
   );
 
+  /// Whether [conversation] can be renamed with the access this datasource
+  /// holds: a group chat or a channel, never a one-on-one, and not where the
+  /// provider wants more than NightMail asks for (a Microsoft 365 channel, a
+  /// Google space).
+  bool canRename(ChatConversation conversation);
+
+  /// Renames [conversation] to [title] and returns it under its new
+  /// [ChatConversation.title], as the list shows it.
+  Future<ChatConversation> rename(ChatConversation conversation, String title);
+
   /// Whether anyone's messages in [conversation] can take a reaction from
   /// the user with the access this datasource holds.
   bool canReact(ChatConversation conversation);

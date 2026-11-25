@@ -515,6 +515,48 @@ void main() {
     expect(datasource().listChats(), throwsA(isA<AuthException>()));
   });
 
+  group('renaming', () {
+    const group =
+        ChatConversation(id: '19:g', kind: ChatKind.group, title: 'Ann, Bob');
+    const channel = ChatConversation(
+        id: '19:ch', kind: ChatKind.channel, title: 'General', teamId: 'T');
+
+    test('a group chat\'s topic, a server channel\'s name', () async {
+      routes['/chats/19:g'] = (o) {
+        expect(o.method, 'PATCH');
+        expect(o.data, {'topic': 'Launch'});
+        return <String, Object?>{};
+      };
+      routes['/teams/T/channels/19:ch'] = (o) {
+        expect(o.method, 'PATCH');
+        expect(o.data, {'displayName': 'Releases'});
+        return <String, Object?>{};
+      };
+      final ds = datasource();
+      expect((await ds.rename(group, 'Launch')).title, 'Launch');
+      final renamed = await ds.rename(channel, 'Releases');
+      expect(renamed.title, 'Releases');
+      expect(renamed.key, channel.key);
+      expect(requests.map((r) => r.uri.path.split('/v1.0').last),
+          ['/chats/19:g', '/teams/T/channels/19:ch']);
+    });
+
+    test('never a one-on-one or meeting; a Microsoft 365 channel needs admin '
+        'consent', () {
+      const oneOnOne =
+          ChatConversation(id: '19:c', kind: ChatKind.oneOnOne, title: 'A');
+      const meeting =
+          ChatConversation(id: '19:m', kind: ChatKind.meeting, title: 'M');
+      for (final ds in [datasource(), datasource(server: false)]) {
+        expect(ds.canRename(group), isTrue);
+        expect(ds.canRename(oneOnOne), isFalse);
+        expect(ds.canRename(meeting), isFalse);
+      }
+      expect(datasource().canRename(channel), isTrue);
+      expect(datasource(server: false).canRename(channel), isFalse);
+    });
+  });
+
   group('editing', () {
     ChatMessage mine(String id, {String? replyToId}) => ChatMessage(
           id: id,

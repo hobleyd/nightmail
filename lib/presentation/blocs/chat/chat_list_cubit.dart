@@ -328,6 +328,13 @@ class ChatListCubit extends Cubit<ChatListState> {
     }
   }
 
+  /// [c], just renamed in the open conversation, under its new title at
+  /// once rather than on the next poll; it keeps its place.
+  void renamed(ChatConversation c) => emit(state.copyWith(conversations: [
+        for (final x in state.conversations)
+          x.key == c.key ? x.copyWith(title: c.title) : x,
+      ]));
+
   /// Opening a conversation reads it: its row stops being bold at once
   /// rather than on the next poll.
   void select(String? key) {

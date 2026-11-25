@@ -569,6 +569,49 @@ class SlackChatDatasource implements ChatRemoteDatasource {
     return emojiShortcode(emoji);
   }
 
+  /// Public and private channels; Slack names no DM or group DM.
+  @override
+  bool canRename(ChatConversation conversation) =>
+      conversation.kind == ChatKind.space;
+
+  /// `conversations.rename`, under `channels:write`/`groups:write` — which a
+  /// workspace connected before 1.58.1 lacks until it is connected again,
+  /// so that is checked first rather than flagging the workspace.
+  @override
+  Future<ChatConversation> rename(
+    ChatConversation conversation,
+    String title,
+  ) async {
+    const reconnect = ServerException(
+        message: 'Connect this Slack workspace again in Settings to rename '
+            'channels.');
+    final scopes = (await _workspaces.byTeam(teamId))?.scopes;
+    if (scopes == null ||
+        !scopes.contains('channels:write') ||
+        !scopes.contains('groups:write')) {
+      throw reconnect;
+    }
+    final Map<String, dynamic> data;
+    try {
+      data = await _call(
+        'conversations.rename',
+        {'channel': conversation.id, 'name': slackChannelName(title)},
+        post: true,
+      );
+    } on SlackApiException {
+      throw reconnect;
+    } on ServerException catch (e) {
+      // Many workspaces let only a channel's managers rename it.
+      if (e.message != _readable('not_authorized')) rethrow;
+      throw const ServerException(
+          message: 'Only the channel\'s managers can rename it in this '
+              'workspace.');
+    }
+    final name = (data['channel'] as Map?)?['name'] as String?;
+    return conversation.copyWith(
+        title: '#${name ?? slackChannelName(title)}');
+  }
+
   @override
   Future<ChatConversation> createOneOnOne({
     required String ownEmail,
@@ -910,6 +953,16 @@ class SlackChatDatasource implements ChatRemoteDatasource {
       .replaceAll('&', '&amp;')
       .replaceAll('<', '&lt;')
       .replaceAll('>', '&gt;');
+
+  /// A channel name as Slack will take it: lowercase, no `#`, whitespace as
+  /// hyphens — what Slack's own rename box does as you type, rather than
+  /// refusing "Team Updates" with `invalid_name_specials`.
+  static String slackChannelName(String title) => title
+      .trim()
+      .replaceFirst(RegExp(r'^#+'), '')
+      .trim()
+      .toLowerCase()
+      .replaceAll(RegExp(r'\s+'), '-');
 
   /// Slack mrkdwn as the HTML `ChatMessageBody` renders.
   ///
@@ -1314,6 +1367,7 @@ class SlackChatDatasource implements ChatRemoteDatasource {
         // keeps working, just without them.
         if ((method == 'emoji.list' ||
                 method == 'conversations.mark' ||
+                method == 'conversations.rename' ||
                 method == 'reactions.add') &&
             error == 'missing_scope') {
           throw SlackApiException(error);
@@ -1378,6 +1432,15 @@ class SlackChatDatasource implements ChatRemoteDatasource {
         'restricted_action' =>
           'Your Slack workspace does not allow that.',
         'msg_too_long' => 'That message is too long for Slack.',
+        'name_taken' => 'A Slack channel already has that name.',
+        'invalid_name_required' => 'A Slack channel needs a name.',
+        'invalid_name_maxlength' =>
+          'Slack channel names are at most 80 characters.',
+        'invalid_name' ||
+        'invalid_name_specials' ||
+        'invalid_name_punctuation' =>
+          'Slack channel names can only have lowercase letters, numbers, '
+              'hyphens and underscores.',
         _ => 'Slack: $error',
       };
 }

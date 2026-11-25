@@ -22,6 +22,7 @@ import '../blocs/theme/theme_state.dart';
 import '../widgets/chat/chat_window_target.dart';
 import '../widgets/chat/chat_conversation_view.dart';
 import '../widgets/chat/chat_read_relay.dart';
+import '../widgets/chat/chat_rename_dialog.dart';
 
 /// The chat window, opened by double-clicking the Chat button: every chat
 /// and channel on the left, grouped and newest first, the open one's history
@@ -888,6 +889,19 @@ class _ConversationPane extends StatelessWidget {
   /// The Slack workspace shown, by name; null for an account's own chat.
   final String? slackWorkspace;
 
+  /// Renames [conversation]; its row on the left follows at once.
+  Future<void> _rename(
+      BuildContext context, ChatConversation conversation) async {
+    final cubit = context.read<ChatConversationCubit>();
+    final list = context.read<ChatListCubit>();
+    final renamed = await showChatRenameDialog(context,
+        conversation: conversation, rename: cubit.rename);
+    final now = cubit.state.conversation;
+    if (renamed && now != null && now.key == conversation.key) {
+      list.renamed(now);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final c = context.colors;
@@ -951,6 +965,14 @@ class _ConversationPane extends StatelessWidget {
                         ),
                       ),
                     ),
+                    if (context.read<ChatConversationCubit>().canRename)
+                      IconButton(
+                        icon: Icon(Icons.edit_outlined,
+                            size: 15, color: c.textMuted),
+                        tooltip: 'Rename',
+                        visualDensity: VisualDensity.compact,
+                        onPressed: () => _rename(context, conversation),
+                      ),
                     if (conversation.members.length > 1)
                       Tooltip(
                         message: conversation.members

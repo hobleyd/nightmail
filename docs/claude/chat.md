@@ -415,6 +415,39 @@ anything else in the conversation's (`ChatConversationState.editingInThread`).
   `reactions.add` is not a reconnect (`_call`). The Slack app must have the
   scope too: `tool/setup_slack_app.sh --update <app id>`.
 
+## Renaming a chat or channel
+
+The pencil beside the open conversation's title (the chat window's header,
+the pane's) opens a name dialog; Save renames it on the server, and the
+header, the list row and the cached list (`ChatRepositoryImpl
+.renameConversation`, in place — no reorder) follow at once. What is
+offered is `ChatRemoteDatasource.canRename`:
+
+- **Teams and NightMail Server group chats:** `PATCH /chats/{id}`
+  `{topic}` (`Chat.ReadWrite`). Microsoft answers 204, nightware the chat;
+  the title is what was sent either way. Never a one-on-one, and not a
+  meeting chat (its topic is the meeting's). An empty topic is not sent —
+  nightware refuses one.
+- **NightMail Server channels:** `PATCH /teams/{t}/channels/{c}`
+  `{displayName}` (nightware `UpdateChannel`). A Microsoft 365 channel
+  needs `ChannelSettings.ReadWrite.All`, admin consent — not offered, for
+  the same reason as channel edits.
+- **Slack channels** (public and private; Slack names no DM or group DM):
+  `conversations.rename` under `channels:write`/`groups:write`. The name is
+  sent as Slack takes it (`slackChannelName`: no `#`, lowercase, whitespace
+  as hyphens) and the title comes back as `#name` from Slack's answer. A
+  workspace connected before 1.58.1 lacks those scopes: the rename is not
+  sent and says to connect again, and a `missing_scope` from the call is
+  *not* a reconnect (`_call`). Many workspaces let only channel managers
+  rename — `not_authorized`, worded.
+- **Google Chat: not offered.** `spaces.patch` wants `chat.spaces`, which
+  `chatScopes` leaves out on purpose (`chat.spaces.create` has no
+  rename/delete power). Adding it would make every existing token fail
+  `grantsChat` and re-consent every Workspace user, and consent cannot run
+  from the chat window — a product decision, not done here.
+
+A refusal shows under the field with the dialog left open.
+
 ## Rendering
 
 Bodies are HTML on both providers, rendered by `ChatMessageBody` as styled
@@ -560,8 +593,8 @@ than falling into an account lookup that answers null.
   `*:history`, `users:read`, `users:read.email` (`users.lookupByEmail`),
   `chat:write`, `im:write`/`mpim:write` (`conversations.open`, and
   `conversations.mark` on DMs), `channels:write`/`groups:write`
-  (`conversations.mark` on channels), `files:read` (images), `search:read`,
-  `reactions:write` (`reactions.add`).
+  (`conversations.mark` on channels, `conversations.rename`), `files:read`
+  (images), `search:read`, `reactions:write` (`reactions.add`).
   A scope added later surfaces as `missing_scope` → reconnect, which grants
   it — except where noted below.
 - **Mapping:** `im` → one-on-one (titled by the other person), `mpim` →

@@ -554,6 +554,42 @@ class ChatConversationCubit extends Cubit<ChatConversationState> {
         _repo.canEdit(accountId, conversation);
   }
 
+  /// Whether the open conversation can be renamed here.
+  bool get canRename {
+    final accountId = state.accountId;
+    final conversation = state.conversation;
+    return accountId != null &&
+        conversation != null &&
+        _repo.canRename(accountId, conversation);
+  }
+
+  /// Renames the open conversation to [title]. Null when it was renamed
+  /// ([ChatConversationState.conversation] then carries the new title),
+  /// otherwise why not, for the rename dialog to show.
+  Future<String?> rename(String title) async {
+    final trimmed = title.trim();
+    final accountId = state.accountId;
+    final conversation = state.conversation;
+    if (trimmed.isEmpty) return 'A name is needed.';
+    if (accountId == null || conversation == null) {
+      return 'No conversation is open.';
+    }
+    final gen = _generation;
+    final result =
+        await _repo.renameConversation(accountId, conversation, trimmed);
+    return result.match(
+      (f) => f is AuthFailure || f is NetworkFailure
+          ? _messageOf(f)
+          : 'Could not rename it: ${f.message}',
+      (renamed) {
+        if (gen == _generation && !isClosed) {
+          emit(state.copyWith(conversation: () => renamed));
+        }
+        return null;
+      },
+    );
+  }
+
   /// Points a composer — the thread's when [inThread] — at [m]: its next
   /// [saveEdit] replaces [m]'s text.
   void startEdit(ChatMessage m, {bool inThread = false}) {

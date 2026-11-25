@@ -340,6 +340,17 @@ class GoogleChatDatasource implements ChatRemoteDatasource {
   @override
   bool canEdit(ChatConversation conversation) => true;
 
+  /// `spaces.patch` wants `chat.spaces`, which `GmailAuthService.chatScopes`
+  /// leaves out on purpose (`chat.spaces.create` starts a DM without power
+  /// to rename or delete spaces).
+  @override
+  bool canRename(ChatConversation conversation) => false;
+
+  @override
+  Future<ChatConversation> rename(
+          ChatConversation conversation, String title) =>
+      throw UnsupportedError('Google Chat spaces are not renamed here');
+
   /// `messages.patch` of the text alone; pictures and the thread stay.
   @override
   Future<ChatMessage> edit(

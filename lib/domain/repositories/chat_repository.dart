@@ -198,6 +198,18 @@ abstract interface class ChatRepository {
     String emoji,
   );
 
+  /// Whether [conversation] can be renamed — see
+  /// `ChatRemoteDatasource.canRename`.
+  bool canRename(String accountId, ChatConversation conversation);
+
+  /// Renames [conversation] to [title] and returns it renamed; the cached
+  /// list follows without moving it.
+  Future<Either<Failure, ChatConversation>> renameConversation(
+    String accountId,
+    ChatConversation conversation,
+    String title,
+  );
+
   /// Creates the one-on-one chat with [email] and sends [text] to it.
   Future<Either<Failure, (ChatConversation, ChatMessage)>> startOneOnOne(
     String accountId,

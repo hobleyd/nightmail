@@ -334,6 +334,36 @@ void main() {
     });
   });
 
+  group('renaming', () {
+    const group =
+        ChatConversation(id: 'g1', kind: ChatKind.group, title: 'Ann, Bob');
+
+    test('the open conversation takes its new title', () async {
+      await cubit.open('acct', group);
+      expect(cubit.canRename, isTrue);
+      expect(await cubit.rename('  Launch '), isNull);
+      expect(repo.renames, [('g1', 'Launch')]);
+      expect(cubit.state.conversation?.title, 'Launch');
+      expect(cubit.state.conversation?.key, 'g1');
+    });
+
+    test('a refusal is worded and changes nothing; empty is not sent',
+        () async {
+      await cubit.open('acct', group);
+      expect(await cubit.rename('   '), isNotNull);
+      repo.renameFailure =
+          const ServerFailure(message: 'Only owners can rename it');
+      expect(await cubit.rename('Launch'), contains('Only owners'));
+      expect(repo.renames, [('g1', 'Launch')]);
+      expect(cubit.state.conversation?.title, 'Ann, Bob');
+    });
+
+    test('not offered where the provider cannot', () async {
+      repo.renamable = false;
+      await cubit.open('acct', group);
+      expect(cubit.canRename, isFalse);
+    });
+  });
 }
 
 class _Repo implements ChatRepository {
@@ -427,6 +457,25 @@ class _Repo implements ChatRepository {
       editableText: text,
       editedAt: DateTime.utc(2026, 11, 25, 12),
     ));
+  }
+
+  bool renamable = true;
+  Failure? renameFailure;
+  final renames = <(String, String)>[];
+
+  @override
+  bool canRename(String accountId, ChatConversation conversation) =>
+      renamable;
+
+  @override
+  Future<Either<Failure, ChatConversation>> renameConversation(
+    String accountId,
+    ChatConversation conversation,
+    String title,
+  ) async {
+    renames.add((conversation.id, title));
+    if (renameFailure != null) return Left(renameFailure!);
+    return Right(conversation.copyWith(title: title));
   }
 
   @override

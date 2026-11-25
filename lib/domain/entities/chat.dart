@@ -128,6 +128,7 @@ class ChatConversation extends Equatable {
   String get key => isChannel ? '$teamId/$id' : id;
 
   ChatConversation copyWith({
+    String? title,
     DateTime? lastActivity,
     String? lastMessagePreview,
     bool? unread,
@@ -136,7 +137,7 @@ class ChatConversation extends Equatable {
       ChatConversation(
         id: id,
         kind: kind,
-        title: title,
+        title: title ?? this.title,
         teamId: teamId,
         teamName: teamName,
         lastActivity: lastActivity ?? this.lastActivity,

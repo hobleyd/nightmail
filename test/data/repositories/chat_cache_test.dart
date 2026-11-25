@@ -53,6 +53,55 @@ void main() {
     expect(list.first.lastMessagePreview, 'last week');
   });
 
+  test('a rename retitles the listed conversation without moving it',
+      () async {
+    ds.chats = [
+      ChatConversation(
+          id: 'a',
+          kind: ChatKind.group,
+          title: 'A',
+          lastActivity: DateTime.utc(2026, 11, 25)),
+      ChatConversation(
+          id: 'b',
+          kind: ChatKind.group,
+          title: 'B',
+          lastActivity: DateTime.utc(2026, 11, 24)),
+    ];
+    await repo.conversations('acct', refresh: true);
+    final renamed = (await repo.renameConversation(
+            'acct', ds.chats.last, 'Launch'))
+        .getOrElse((f) => fail(f.message));
+    expect(renamed.title, 'Launch');
+    final list = (await repo.conversations('acct'))
+        .getOrElse((f) => fail(f.message));
+    expect(list.map((c) => (c.id, c.title)), [('a', 'A'), ('b', 'Launch')]);
+    expect(ds.listed, 1);
+  });
+
+  test('activity looked up before a rename never brings the old name back',
+      () async {
+    const channel =
+        ChatConversation(id: 'c', kind: ChatKind.space, title: '#general');
+    ds.chats = const [channel];
+    await repo.conversations('acct', refresh: true);
+    await repo.channelActivity('acct', channel);
+    await repo.renameConversation('acct', channel, '#releases');
+    ds.chats = const [
+      ChatConversation(id: 'c', kind: ChatKind.space, title: '#releases'),
+    ];
+    final list = (await repo.conversations('acct', refresh: true))
+        .getOrElse((f) => fail(f.message));
+    expect(list.single.title, '#releases');
+    expect(list.single.lastActivity, DateTime.utc(2026, 11, 25, 8),
+        reason: 'the activity learned is still kept');
+
+    // An activity lookup that began before the rename lands after it.
+    await repo.channelActivity('acct', channel);
+    final again = (await repo.conversations('acct'))
+        .getOrElse((f) => fail(f.message));
+    expect(again.single.title, '#releases');
+  });
+
   test('before the server answers, the cached list is what there is',
       () async {
     local.lists['acct'] = const [
@@ -190,6 +239,17 @@ class _Chats extends Fake implements ChatRemoteDatasource {
     await hold?.future;
     return chats;
   }
+
+  @override
+  Future<ChatConversation> channelActivity(ChatConversation channel) async =>
+      channel.copyWith(
+          lastActivity: DateTime.utc(2026, 11, 25, 8),
+          lastMessagePreview: 'hi');
+
+  @override
+  Future<ChatConversation> rename(
+          ChatConversation conversation, String title) async =>
+      conversation.copyWith(title: title);
 
   @override
   Future<ChatMessageDelta?> messagesSince(

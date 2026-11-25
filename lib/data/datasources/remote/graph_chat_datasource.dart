@@ -396,6 +396,30 @@ class GraphChatDatasource implements ChatRemoteDatasource {
     return true;
   }
 
+  /// A group chat's topic (`Chat.ReadWrite`). A channel only on a NightMail
+  /// Server: Microsoft wants `ChannelSettings.ReadWrite.All`, admin consent.
+  /// A meeting chat's topic is the meeting's.
+  @override
+  bool canRename(ChatConversation conversation) =>
+      conversation.kind == ChatKind.group ||
+      (conversation.isChannel && isNightmailServer);
+
+  @override
+  Future<ChatConversation> rename(
+    ChatConversation conversation,
+    String title,
+  ) async {
+    // Microsoft answers 204 with no body, nightware with the chat: the
+    // title is what was sent either way.
+    if (conversation.isChannel) {
+      await _patch('/teams/${conversation.teamId}/channels/${conversation.id}',
+          {'displayName': title});
+    } else {
+      await _patch('/chats/${conversation.id}', {'topic': title});
+    }
+    return conversation.copyWith(title: title);
+  }
+
   @override
   Future<ChatConversation> createOneOnOne({
     required String ownEmail,

@@ -207,10 +207,13 @@ class ChatRepositoryImpl implements ChatRepository {
         final known = await _cachedActivity(accountId);
         final merged = [
           for (final c in [...chats, ...channels])
-            c.lastActivity == null
-                ? _channelActivity['$accountId|${c.key}'] ??
-                    _withActivityOf(c, known[c.key])
-                : c,
+            if (c.lastActivity != null)
+              c
+            else if (_channelActivity['$accountId|${c.key}']
+                case final learned?)
+              _withLearned(c, learned)
+            else
+              _withActivityOf(c, known[c.key]),
         ]..sort(_byActivity);
         _conversations[accountId] = merged;
         _listedAt[accountId] = DateTime.now();
@@ -234,6 +237,16 @@ class ChatRepositoryImpl implements ChatRepository {
   }
 
   /// [c] as listed, with the activity and preview [known] last had.
+  /// [c] as listed — its title and members current, a rename included —
+  /// with the activity [learned] looked up for it.
+  static ChatConversation _withLearned(
+          ChatConversation c, ChatConversation learned) =>
+      c.copyWith(
+        lastActivity: learned.lastActivity,
+        lastMessagePreview: learned.lastMessagePreview,
+        noMessages: learned.noMessages,
+      );
+
   static ChatConversation _withActivityOf(
           ChatConversation c, ChatConversation? known) =>
       known == null
@@ -295,7 +308,8 @@ class ChatRepositoryImpl implements ChatRepository {
         final list = _conversations[accountId];
         if (list != null) {
           _conversations[accountId] = [
-            for (final c in list) c.key == updated.key ? updated : c,
+            for (final c in list)
+              c.key == updated.key ? _withLearned(c, updated) : c,
           ]..sort(_byActivity);
           _saveList(accountId);
         }
@@ -594,6 +608,29 @@ class ChatRepositoryImpl implements ChatRepository {
     String emoji,
   ) =>
       _guard(accountId, (ds) => ds.react(conversation, message, emoji));
+
+  @override
+  bool canRename(String accountId, ChatConversation conversation) =>
+      _ds(accountId)?.canRename(conversation) ?? false;
+
+  @override
+  Future<Either<Failure, ChatConversation>> renameConversation(
+    String accountId,
+    ChatConversation conversation,
+    String title,
+  ) =>
+      _guard(accountId, (ds) async {
+        final renamed = await ds.rename(conversation, title);
+        final list = _conversations[accountId];
+        if (list != null && list.any((x) => x.key == renamed.key)) {
+          _conversations[accountId] = [
+            for (final x in list)
+              x.key == renamed.key ? x.copyWith(title: renamed.title) : x,
+          ];
+          _saveList(accountId);
+        }
+        return renamed;
+      });
 
   @override
   Future<Either<Failure, (ChatConversation, ChatMessage)>> startOneOnOne(

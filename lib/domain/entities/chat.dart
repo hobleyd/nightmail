@@ -80,6 +80,7 @@ class ChatConversation extends Equatable {
     this.members = const [],
     this.threaded = false,
     this.unread = false,
+    this.noMessages = false,
   });
 
   /// The chat id, or the channel id for a [ChatKind.channel] (which only
@@ -112,6 +113,11 @@ class ChatConversation extends Equatable {
   /// a Teams channel, which has no per-user read state.
   final bool unread;
 
+  /// The provider says nothing has ever been written in it — a meeting's
+  /// chat nobody used, a space only created. Its [lastActivity] is then just
+  /// when it was made. False when not known.
+  final bool noMessages;
+
   bool get isChannel => kind == ChatKind.channel;
 
   /// Whether messages here are posts with replies (Teams channels, threaded
@@ -125,6 +131,7 @@ class ChatConversation extends Equatable {
     DateTime? lastActivity,
     String? lastMessagePreview,
     bool? unread,
+    bool? noMessages,
   }) =>
       ChatConversation(
         id: id,
@@ -137,6 +144,11 @@ class ChatConversation extends Equatable {
         members: members,
         threaded: threaded,
         unread: unread ?? this.unread,
+        // Activity or a preview means something was written.
+        noMessages: noMessages ??
+            (this.noMessages &&
+                lastActivity == null &&
+                lastMessagePreview == null),
       );
 
   @override
@@ -151,6 +163,7 @@ class ChatConversation extends Equatable {
         members,
         threaded,
         unread,
+        noMessages,
       ];
 }
 

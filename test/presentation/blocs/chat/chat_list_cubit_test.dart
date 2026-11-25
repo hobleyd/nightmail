@@ -60,20 +60,52 @@ void main() {
     expect(cubit.state.chats.map((c) => c.title), ['zed', 'Mia', 'Ann']);
   });
 
-  test('quiet after a week, unless unread, open or not yet looked up', () {
+  test('a Slack lookup that fails is asked again next poll, once done never',
+      () async {
+    const dm = ChatConversation(id: 'D1', kind: ChatKind.oneOnOne, title: 'Akash');
+    repo.list = [dm];
+    repo.refuse.add('D1');
+    await cubit.load('slack:T1');
+    await pumpEventQueue();
+    expect(repo.looked, ['D1']);
+    await cubit.refresh();
+    await pumpEventQueue();
+    expect(repo.looked, ['D1', 'D1']);
+    await cubit.refresh();
+    await pumpEventQueue();
+    expect(repo.looked, ['D1', 'D1']);
+  });
+
+  test('quiet after a week or when not known, unless unread or open', () {
     final now = DateTime.utc(2026, 11, 25);
     const state = ChatListState(selectedKey: 'open');
     expect(state.isQuiet(chat('new', 'New', 20), now), isFalse);
     expect(state.isQuiet(chat('old', 'Old', 10), now), isTrue);
     expect(state.isQuiet(chat('u', 'Unread', 10, unread: true), now), isFalse);
     expect(state.isQuiet(chat('open', 'Open', 10), now), isFalse);
+    // Made yesterday, never written in.
+    expect(
+        state.isQuiet(
+            const ChatConversation(id: 'e', kind: ChatKind.meeting,
+                    title: 'Sync', noMessages: true)
+                .copyWith(),
+            now),
+        isTrue);
+    // Its first message ends that.
+    expect(
+        const ChatConversation(
+                id: 'e', kind: ChatKind.meeting, title: 'Sync',
+                noMessages: true)
+            .copyWith(lastMessagePreview: 'hi')
+            .noMessages,
+        isFalse);
     expect(
         state.isQuiet(
             const ChatConversation(
                 id: 'ch', kind: ChatKind.channel, title: 'General',
                 teamId: 't'),
             now),
-        isFalse);
+        isTrue);
   });
 }
 
@@ -98,6 +130,20 @@ class _Repo implements ChatRepository {
   @override
   Future<List<ChatConversation>> unreadConversations(String accountId) async =>
       unread;
+
+  /// Each lookup's key, and whether the next one of each is refused.
+  final looked = <String>[];
+  final refuse = <String>{};
+
+  @override
+  Future<Either<Failure, ChatConversation>> channelActivity(
+      String accountId, ChatConversation conversation) async {
+    looked.add(conversation.key);
+    if (refuse.remove(conversation.key)) {
+      return const Left(ServerFailure(message: 'ratelimited'));
+    }
+    return Right(conversation);
+  }
 
   @override
   dynamic noSuchMethod(Invocation invocation) =>

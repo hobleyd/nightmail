@@ -415,6 +415,8 @@ class GoogleChatDatasource implements ChatRemoteDatasource {
           : _titles[id] ??
               (kind == ChatKind.oneOnOne ? 'Direct message' : 'Group chat'),
       lastActivity: _date(raw['lastActiveTime']) ?? _date(raw['createTime']),
+      // "Timestamp of the last message in the space": none, no messages.
+      noMessages: raw['lastActiveTime'] == null,
       threaded: kind == ChatKind.space &&
           (threading == 'THREADED_MESSAGES' || threading == 'GROUPED_MESSAGES'),
     );

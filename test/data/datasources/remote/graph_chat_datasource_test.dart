@@ -162,6 +162,25 @@ void main() {
       expect(listing.uri.queryParameters[r'$top'], '50');
     });
 
+    test('a chat listed with no preview has never had a message', () async {
+      routes['/me'] = (_) => {'id': 'u-me'};
+      routes['/me/chats'] = (_) => {
+            'value': [
+              chat(),
+              {
+                'id': '19:empty',
+                'chatType': 'meeting',
+                'topic': 'Sync',
+                'createdDateTime': '2026-11-24T00:00:00Z',
+                'lastMessagePreview': null,
+              },
+            ],
+          };
+      final chats = await datasource().listRecentChats();
+      expect({for (final c in chats) c.id: c.noMessages},
+          {'19:c': false, '19:empty': true});
+    });
+
     test('a one-on-one listed without members is named by its sender',
         () async {
       routes['/me'] = (_) => {'id': 'u-me'};

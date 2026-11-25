@@ -87,13 +87,13 @@ class ChatListState extends Equatable {
   /// window tucks it under its section's "older" row.
   static const quietAfter = Duration(days: 7);
 
-  /// Nothing new in [quietAfter]. A conversation whose activity is not known
-  /// yet (a channel not looked up), one still unread and the open one never
-  /// are.
+  /// Nothing new in [quietAfter], never anything at all, or nothing known
+  /// yet — a channel or Slack conversation not looked up, which comes up when
+  /// its lookup finds something recent. One still unread (the unread poll
+  /// knows without a lookup) and the open one never are.
   bool isQuiet(ChatConversation c, DateTime now) {
     final at = c.lastActivity;
-    return at != null &&
-        now.difference(at) > quietAfter &&
+    return (c.noMessages || at == null || now.difference(at) > quietAfter) &&
         !c.unread &&
         c.key != selectedKey;
   }
@@ -306,7 +306,10 @@ class ChatListCubit extends Cubit<ChatListState> {
         : list.where((c) => c.isChannel && _activityAsked.add(c.key)).toList();
     for (var i = 0; i < pending.length; i += 4) {
       await Future.wait(pending.skip(i).take(4).map(
-            (c) => _repo.channelActivity(accountId, c),
+            (c) async => (await _repo.channelActivity(accountId, c))
+                // One refused (rate-limited, offline) is asked again next
+                // poll rather than left unknown for the session.
+                .mapLeft((_) => _activityAsked.remove(c.key)),
           ));
       if (gen != _generation || isClosed) return;
       final again = await _repo.conversations(accountId);

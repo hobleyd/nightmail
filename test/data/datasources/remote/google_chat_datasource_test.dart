@@ -236,6 +236,23 @@ void main() {
     expect(chats.last.kind, ChatKind.space);
     expect(chats.last.threaded, isTrue);
     expect(chats.last.hasThreads, isTrue);
+    expect(chats.map((c) => c.noMessages), everyElement(isFalse));
+  });
+
+  test('a space without a last active time has never had a message',
+      () async {
+    routes['/spaces'] = (_) => {
+          'spaces': [
+            {
+              'name': 'spaces/new',
+              'spaceType': 'SPACE',
+              'displayName': 'Made, never used',
+              'createTime': '2026-11-24T00:00:00Z',
+            },
+          ],
+        };
+    final chats = await datasource().listChats();
+    expect(chats.single.noMessages, isTrue);
   });
 
   test('a DM is found by address; none is a null, not an error', () async {

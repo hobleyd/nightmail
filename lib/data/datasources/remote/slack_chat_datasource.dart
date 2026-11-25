@@ -312,8 +312,9 @@ class SlackChatDatasource implements ChatRemoteDatasource {
     final data = await _call(
         'conversations.history', {'channel': channel.id, 'limit': '1'});
     final newest = _list(data['messages']).firstOrNull;
-    final ts = newest?['ts'] as String?;
-    if (newest == null || ts == null) return channel;
+    if (newest == null) return channel.copyWith(noMessages: true);
+    final ts = newest['ts'] as String?;
+    if (ts == null) return channel;
     _latest['$teamId|${channel.id}'] = ts;
     await _resolveUsers(_userIdsIn([newest]));
     return channel.copyWith(

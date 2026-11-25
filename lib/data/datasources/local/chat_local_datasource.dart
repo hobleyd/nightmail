@@ -150,6 +150,7 @@ class ChatLocalDatasourceImpl implements ChatLocalDatasource {
           ],
         if (c.threaded) 'threaded': true,
         if (c.unread) 'unread': true,
+        if (c.noMessages) 'noMessages': true,
       };
 
   static ChatConversation conversationFromJson(Map<String, dynamic> j) =>
@@ -172,6 +173,7 @@ class ChatLocalDatasourceImpl implements ChatLocalDatasource {
         ],
         threaded: j['threaded'] == true,
         unread: j['unread'] == true,
+        noMessages: j['noMessages'] == true,
       );
 
   static Map<String, Object?> messageToJson(ChatMessage m) => {

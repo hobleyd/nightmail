@@ -9,9 +9,14 @@ channel on the left, grouped (Chats; Teams › channels) and newest first; the
 open one's history on the right, channel threads beside it; search on top.
 
 A conversation with nothing new in a week (`ChatListState.quietAfter`,
-`isQuiet`) waits under a "Show N older" row at the foot of its section —
-quiet Teams channels are regrouped by team below that row. Unread ones, the
-open one, and a channel whose activity is not known yet always show. A
+`isQuiet`), or never anything at all (`ChatConversation.noMessages`: Graph
+lists it with `lastMessagePreview: null`, Google without `lastActiveTime`,
+Slack's history is empty; a NightMail Server sends Graph's explicit null
+for a Talk room whose newest message is still `conversation_created`, from
+Nightware 1.86), or nothing known yet (a channel or Slack conversation whose
+lookup has not landed — Slack lists none with activity), waits under a "Show N older" row at the foot of its section —
+quiet Teams channels are regrouped by team below that row. Unread ones and
+the open one always show; a lookup that fails is asked again next poll. A
 deleted message is a single "Deleted message" line with no sender: the
 providers send none, so it used to read "Unknown".
 

@@ -554,6 +554,9 @@ class GraphChatDatasource implements ChatRemoteDatasource {
           preview is Map<String, dynamic> ? _previewOf(preview) : null,
       members: others,
       unread: ownId != null && isUnread(raw, ownId),
+      // Listed with its preview expanded, and there is none. A chat as
+      // created or fetched without the expansion is not known to be empty.
+      noMessages: raw.containsKey('lastMessagePreview') && preview == null,
     );
   }
 

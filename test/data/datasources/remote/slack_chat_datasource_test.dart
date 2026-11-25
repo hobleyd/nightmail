@@ -584,6 +584,51 @@ void main() {
     expect({for (final c in recent) c.id: c.unread}, {'D1': true, 'D2': false});
   });
 
+  test('a DM Slack counts unread is checked against last_read: an AI app\'s '
+      'assistant thread is not unread', () async {
+    routes['users.conversations'] = (_) => {
+          'ok': true,
+          'channels': [
+            {'id': 'DROVO', 'is_im': true, 'user': 'UROVO'},
+            {'id': 'DANN', 'is_im': true, 'user': 'UANN'},
+            {'id': 'DBOB', 'is_im': true, 'user': 'UBOB'},
+          ],
+        };
+    routes['conversations.info'] = (o) => {
+          'ok': true,
+          'channel': {
+            'id': o.queryParameters['channel'],
+            'is_im': true,
+            'last_read': '1700000100.000000',
+            'unread_count_display': o.queryParameters['channel'] == 'DBOB' ? 0 : 1,
+          },
+        };
+    final history = <String>[];
+    routes['conversations.history'] = (o) {
+      final id = o.queryParameters['channel'] as String;
+      history.add(id);
+      return {
+        'ok': true,
+        'messages': [
+          if (id == 'DROVO')
+            {
+              'ts': '1700000200.000000',
+              'user': 'UROVO',
+              'bot_id': 'B1',
+              'subtype': 'assistant_app_thread',
+            }
+          else
+            {'ts': '1700000200.000000', 'user': 'UANN'},
+        ],
+      };
+    };
+    final recent = await datasource().listRecentChats();
+    expect({for (final c in recent) c.id: c.unread},
+        {'DROVO': false, 'DANN': true, 'DBOB': false});
+    expect(history, isNot(contains('DBOB')),
+        reason: 'a DM Slack calls read costs no history call');
+  });
+
   test('a channel is unread when someone — or a bot — wrote after last_read, '
       'not for a join', () async {
     routes['users.conversations'] = (o) {

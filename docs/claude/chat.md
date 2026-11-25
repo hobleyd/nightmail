@@ -798,8 +798,12 @@ than falling into an account lookup that answers null.
   order — stable between polls, so every channel is reached within
   `channels / 4` minutes (re-sorting the pool each poll skipped some). The
   main window and the chat window each poll, so that is ~46 of Tier 3's
-  50+ a minute. A DM's info carries `unread_count_display`; a group DM's
-  and a channel's `last_read`, checked against the newest 5 messages —
+  50+ a minute. A DM's info carries `unread_count_display`; at 0 it is
+  read, with no history call. Above 0 it is checked like a group DM's and a
+  channel's `last_read`, against the newest 5 messages — an AI app's DM
+  (Atlassian Rovo) holds only an `assistant_app_thread` parent, read in
+  Slack's side panel, which need not move the DM's marker, so its count
+  can stay above 0 and it kept coming back unread. Those newest 5 are
   read without `oldest`, so a read channel's activity is learned too.
   People's, bots' (`bot_message`), file-share and broadcast messages
   count; joins, leaves and topic changes do not (`_unreadSubtypes`).

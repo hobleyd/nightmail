@@ -245,10 +245,10 @@ class SlackChatDatasource implements ChatRemoteDatasource {
   }
 
   /// Whether someone else has written in [channel] since the user last read
-  /// it. A DM's `conversations.info` says so outright
-  /// (`unread_count_display`); a group DM's and a channel's name
-  /// `last_read`, and the newest messages decide — read whether or not any
-  /// came after it, so a quiet channel's activity is learned too.
+  /// it. A DM's `conversations.info` gives `unread_count_display`, which
+  /// settles a read one; otherwise `last_read` and the newest messages
+  /// decide — read whether or not any came after it, so a quiet channel's
+  /// activity is learned too. Only [_unreadSubtypes] count.
   Future<({bool unread, DateTime? latest})> _readState(
       Map<String, dynamic> channel, String own) async {
     final id = channel['id'] as String;
@@ -257,10 +257,14 @@ class SlackChatDatasource implements ChatRemoteDatasource {
       _latest['$teamId|$id'] = latest['ts'] as String;
     }
     final count = channel['unread_count_display'];
-    if (count is num) {
+    final lastRead = channel['last_read'] as String?;
+    // A DM Slack calls read is read, with no history call. One it calls
+    // unread is checked like a channel: an AI app's DM (Rovo) holds only an
+    // `assistant_app_thread` parent, read in Slack's side panel, which
+    // need not move the DM's own marker — its count can stay above 0.
+    if (count is num && (count <= 0 || lastRead == null)) {
       return (unread: count > 0, latest: _ts(_latest['$teamId|$id']));
     }
-    final lastRead = channel['last_read'] as String?;
     final history = await _call(
         'conversations.history', {'channel': id, 'limit': '5'});
     final newer = _list(history['messages']);

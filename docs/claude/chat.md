@@ -347,6 +347,36 @@ Nightware's conformance fixtures for these routes are copied into
 (`graph_chat_fixture_replay_test.dart`); refresh them when nightware changes
 one.
 
+## Drafts
+
+Text typed in a composer and not sent stays with the place it was typed
+(`ChatDrafts`, `presentation/blocs/chat/chat_drafts.dart`): opening another
+chat or channel empties the box, and coming back — or reopening the Chat
+pane, or closing and reopening a thread — puts it back, with its `@` picks.
+
+- **Keyed by where it was typed** (`ChatDrafts.keyOf`): account + conversation
+  `key` (or `p:<email>` for a person not chatted with yet), plus `t:<postId>`
+  for the thread composer. The two composers never share a draft.
+- **A lazy singleton in `sl`, in memory only.** The pane's
+  `ChatConversationCubit` is a factory that dies with the pane, so the store
+  is handed to it (`cubit.drafts`). Each window is its own engine: the Chat
+  window keeps its own drafts, and nothing survives a quit.
+- **Saved on leaving, not per keystroke**: `_ComposerState._stash` runs when
+  the key changes and in `dispose` (the narrow list composer is disposed
+  while a thread is open). An edit in progress is not a draft — the text
+  from before it (`_draft`) is what is kept.
+- **A person's chat gaining its conversation is not a move**
+  (`_moveDraft`'s `started`): the found or newly created chat keeps the box
+  as it is, or the first send would wipe it mid-flight.
+- **A send outlives the move.** Moving off mid-send stashes the text; when
+  it lands, `_sendingFrom`'s draft is dropped and only a box still showing
+  that place is emptied. So `ChatConversationCubit.send` returns true when
+  the server took it even after the generation moved on — false there left
+  a sent message as a draft, one Enter from going twice.
+- **Coming back to an open edit**: a list edit stays open while a narrow
+  pane shows a thread, so the rebuilt box takes the edit up again
+  (`initState` → `_onEditing`) with the draft behind it.
+
 ## Editing your own messages
 
 The pencil on your own message (on hover with a mouse, always on a touch

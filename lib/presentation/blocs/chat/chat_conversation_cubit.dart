@@ -9,6 +9,7 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import '../../../core/error/failures.dart';
 import '../../../domain/entities/chat.dart';
 import '../../../domain/repositories/chat_repository.dart';
+import 'chat_drafts.dart';
 
 /// Someone the pane will chat with once the first message is sent — there is
 /// no one-on-one with them yet, and opening the pane must not make one (on a
@@ -168,11 +169,17 @@ class ChatConversationCubit extends Cubit<ChatConversationState> {
   ChatConversationCubit({
     required ChatRepository repository,
     bool Function()? isForeground,
+    ChatDrafts? drafts,
   })  : _repo = repository,
         _isForeground = isForeground ?? _appInForeground,
+        drafts = drafts ?? ChatDrafts(),
         super(const ChatConversationState());
 
   final ChatRepository _repo;
+
+  /// What the composers had typed and not sent, by conversation — shared
+  /// by every pane in this window, and kept after this cubit closes.
+  final ChatDrafts drafts;
   final bool Function() _isForeground;
 
   /// Null is foreground: every engine, a chat sub-window's too, hears the
@@ -771,6 +778,8 @@ class ChatConversationCubit extends Cubit<ChatConversationState> {
   /// with the text, which may then be empty; only where [canSendImage].
   /// [mentions] are the people picked from the `@` typeahead
   /// ([mentionable]); any still written as `@Name` are tagged.
+  /// True when the server took it — even if the user has since opened
+  /// another conversation, so the composer can drop its draft.
   Future<bool> send(
     String text, {
     bool inThread = false,
@@ -801,7 +810,8 @@ class ChatConversationCubit extends Cubit<ChatConversationState> {
       }
       final started = await _repo.startOneOnOne(
           accountId, person.email, person.name, trimmed);
-      if (gen != _generation || isClosed) return false;
+      // Moved off meanwhile: nothing to show, but it went.
+      if (gen != _generation || isClosed) return started.isRight();
       return started.match(
         (f) {
           emit(state.copyWith(sending: false, error: () => _messageOf(f)));
@@ -825,7 +835,7 @@ class ChatConversationCubit extends Cubit<ChatConversationState> {
     final threadId = threadPost?.id;
     final sent = await _repo.sendMessage(accountId, conversation, trimmed,
         replyTo: threadPost, image: image, mentions: mentions);
-    if (gen != _generation || isClosed) return false;
+    if (gen != _generation || isClosed) return sent.isRight();
     return sent.match(
       (f) {
         emit(state.copyWith(sending: false, error: () => _messageOf(f)));

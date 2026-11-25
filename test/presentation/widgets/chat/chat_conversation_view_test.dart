@@ -1,3 +1,6 @@
+import 'dart:async';
+
+
 import 'package:flutter/foundation.dart' show defaultTargetPlatform;
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
@@ -9,6 +12,7 @@ import 'package:nightmail/core/error/failures.dart';
 import 'package:nightmail/domain/entities/chat.dart';
 import 'package:nightmail/domain/repositories/chat_repository.dart';
 import 'package:nightmail/presentation/blocs/chat/chat_conversation_cubit.dart';
+import 'package:nightmail/presentation/blocs/chat/chat_drafts.dart';
 import 'package:nightmail/presentation/widgets/chat/chat_conversation_view.dart';
 import 'package:nightmail/presentation/widgets/chat/chat_person_style.dart';
 
@@ -747,6 +751,143 @@ void main() {
       expect(matchMentions(roster, 'q'), isEmpty);
     });
   });
+
+  group('drafts', () {
+    const g = ChatConversation(id: 'c', kind: ChatKind.group, title: 'G');
+    const h = ChatConversation(id: 'other', kind: ChatKind.group, title: 'H');
+
+    String typed(WidgetTester tester) =>
+        tester.widget<TextField>(find.byType(TextField)).controller!.text;
+
+    Future<void> show(WidgetTester tester, ChatConversationCubit cubit) async {
+      await tester.pumpWidget(MaterialApp(
+        home: Scaffold(
+          body: BlocProvider.value(
+            value: cubit,
+            child: const ChatConversationView(),
+          ),
+        ),
+      ));
+      await tester.pumpAndSettle();
+    }
+
+    testWidgets('what was typed stays with its conversation', (tester) async {
+      final repo = _Repo([msg('1', 'Ann Lee', 'u-ann', 1)]);
+      final cubit = ChatConversationCubit(repository: repo);
+      await cubit.open('a', g);
+      await show(tester, cubit);
+      await tester.enterText(find.byType(TextField), 'half a thought');
+
+      await cubit.open('a', h);
+      await tester.pumpAndSettle();
+      expect(typed(tester), '', reason: 'never carried to another chat');
+      await tester.enterText(find.byType(TextField), 'for H');
+
+      await cubit.open('a', g);
+      await tester.pumpAndSettle();
+      expect(typed(tester), 'half a thought');
+      await cubit.open('a', h);
+      await tester.pumpAndSettle();
+      expect(typed(tester), 'for H');
+      expect(repo.sent, isEmpty);
+      await cubit.close();
+    });
+
+    testWidgets('it survives the pane closing, with its tags, and goes once '
+        'sent', (tester) async {
+      const bob = ChatMember(userId: 'u-bob', displayName: 'Bob Brown');
+      final repo = _Repo([msg('1', 'Ann Lee', 'u-ann', 1)])..roster = [bob];
+      final drafts = ChatDrafts();
+      final cubit = ChatConversationCubit(repository: repo, drafts: drafts);
+      await cubit.open('a', g);
+      await show(tester, cubit);
+      await tester.enterText(find.byType(TextField), 'hi @bo');
+      await tester.pumpAndSettle();
+      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+      await tester.pumpAndSettle();
+      expect(typed(tester), 'hi @Bob Brown ');
+      await tester.pumpWidget(const SizedBox());
+      await cubit.close();
+
+      // The pane opens again with a new cubit, as it does.
+      final again = ChatConversationCubit(repository: repo, drafts: drafts);
+      await again.open('a', g);
+      await show(tester, again);
+      expect(typed(tester), 'hi @Bob Brown ');
+      await tester.enterText(find.byType(TextField), 'hi @Bob Brown look');
+      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+      await tester.pumpAndSettle();
+      expect(repo.sent.single.$1, 'hi @Bob Brown look');
+      expect(repo.sentMentions.single, [bob]);
+
+      await again.open('a', h);
+      await tester.pumpAndSettle();
+      await again.open('a', g);
+      await tester.pumpAndSettle();
+      expect(typed(tester), '');
+      expect(drafts['a|c:c'], isNull);
+      await again.close();
+    });
+
+    testWidgets('its tags come back after another chat was opened',
+        (tester) async {
+      const bob = ChatMember(userId: 'u-bob', displayName: 'Bob Brown');
+      final repo = _Repo([msg('1', 'Ann Lee', 'u-ann', 1)])..roster = [bob];
+      final cubit = ChatConversationCubit(repository: repo);
+      await cubit.open('a', g);
+      await show(tester, cubit);
+      await tester.enterText(find.byType(TextField), 'hi @bo');
+      await tester.pumpAndSettle();
+      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+      await tester.pumpAndSettle();
+
+      await cubit.open('a', h);
+      await tester.pumpAndSettle();
+      expect(typed(tester), '');
+      await cubit.open('a', g);
+      await tester.pumpAndSettle();
+
+      expect(typed(tester), 'hi @Bob Brown ');
+      await tester.enterText(find.byType(TextField), 'hi @Bob Brown look');
+      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+      await tester.pumpAndSettle();
+      expect(repo.sentMentions.single, [bob]);
+      await cubit.close();
+    });
+
+    testWidgets('a message still sending when the user moves on is not '
+        'left behind as a draft', (tester) async {
+      final repo = _Repo([msg('1', 'Ann Lee', 'u-ann', 1)]);
+      final drafts = ChatDrafts();
+      final cubit = ChatConversationCubit(repository: repo, drafts: drafts);
+      await cubit.open('a', g);
+      await show(tester, cubit);
+      await tester.enterText(find.byType(TextField), 'on its way');
+      repo.sendGate = Completer();
+      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+      await tester.pump();
+
+      repo.loadGate = Completer();
+      unawaited(cubit.open('a', h));
+      await tester.pump();
+      expect(drafts['a|c:c']?.text, 'on its way', reason: 'kept until sent');
+      repo.sendGate!.complete();
+      repo.loadGate!.complete();
+      repo.loadGate = null;
+      await tester.pumpAndSettle();
+      expect(repo.sent.single.$1, 'on its way');
+      expect(drafts['a|c:c'], isNull);
+
+      await tester.enterText(find.byType(TextField), 'for H');
+      await cubit.open('a', g);
+      await tester.pumpAndSettle();
+      expect(typed(tester), '');
+      await cubit.open('a', h);
+      await tester.pumpAndSettle();
+      expect(typed(tester), 'for H', reason: 'the other box was not emptied');
+      await cubit.close();
+    });
+  });
 }
 
 class _Repo extends Fake implements ChatRepository {
@@ -775,8 +916,14 @@ class _Repo extends Fake implements ChatRepository {
     String accountId,
     ChatConversation conversation, {
     String? nextLink,
-  }) async =>
-      Right(ChatMessagePage(messages: history));
+  }) async {
+    await loadGate?.future;
+    return Right(ChatMessagePage(messages: history));
+  }
+
+  /// Hold a load or a send open, as the network does.
+  Completer<void>? loadGate;
+  Completer<void>? sendGate;
 
   @override
   Future<Uint8List?> photo(String accountId, String userId) async {
@@ -814,6 +961,7 @@ class _Repo extends Fake implements ChatRepository {
     ChatOutgoingImage? image,
     List<ChatMember> mentions = const [],
   }) async {
+    await sendGate?.future;
     sent.add((text, replyTo?.id));
     images.add(image);
     sentMentions.add(mentions);

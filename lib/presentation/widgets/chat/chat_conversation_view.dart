@@ -9,6 +9,7 @@ import '../../../core/text/emoji.dart';
 import '../../../core/theme/app_colors.dart';
 import '../../../domain/entities/chat.dart';
 import '../../blocs/chat/chat_conversation_cubit.dart';
+import '../../blocs/chat/chat_drafts.dart';
 import 'chat_conversation_row.dart';
 import 'chat_message_body.dart';
 import 'chat_person_style.dart';
@@ -840,10 +841,19 @@ class _Composer extends StatefulWidget {
 class _ComposerState extends State<_Composer> {
   final _controller = TextEditingController();
   final _focus = FocusNode();
+  late final ChatConversationCubit _cubit;
 
   @override
   void initState() {
     super.initState();
+    _cubit = context.read<ChatConversationCubit>();
+    // What was typed here before the pane, thread or window last closed.
+    _shown = _cubit.state;
+    _key = _keyOf(_shown);
+    _restore();
+    // A list edit stays open while a narrow pane shows a thread; the box
+    // built on coming back takes it up again, the draft held behind it.
+    if (_mine(_shown)) _onEditing(context, _shown);
     _controller.addListener(_onTyped);
     // Reply opens the thread with its box ready to type in. Beside the
     // list the thread composer already exists, so a newly opened thread
@@ -858,9 +868,84 @@ class _ComposerState extends State<_Composer> {
 
   @override
   void dispose() {
+    _stash();
     _controller.dispose();
     _focus.dispose();
     super.dispose();
+  }
+
+  // ---- drafts ----------------------------------------------------------------
+
+  /// Where this box is typing ([ChatDrafts.keyOf]): the conversation, or
+  /// for the thread's box the open thread. Null with nothing open.
+  String? _key;
+
+  /// The state [_key] was last taken from.
+  late ChatConversationState _shown;
+
+  String? _keyOf(ChatConversationState s) {
+    if (widget.inThread && s.threadPostId == null) return null;
+    return ChatDrafts.keyOf(
+      accountId: s.accountId,
+      conversation: s.conversation,
+      personEmail: s.person?.email,
+      threadPostId: widget.inThread ? s.threadPostId : null,
+    );
+  }
+
+  /// Keeps what is typed under [_key] — the text from before an edit, if
+  /// one has the box — with [picked], or the picks as they stand.
+  void _stash([List<ChatMember>? picked]) {
+    final key = _key;
+    if (key == null) return;
+    _cubit.drafts.put(key, _draft ?? _controller.text, picked ?? _picked);
+  }
+
+  /// The [_key] a send in flight was typed under — followed through a
+  /// person's chat gaining its conversation — so its draft goes when it
+  /// lands, wherever the box is by then.
+  String? _sendingFrom;
+
+  /// Puts [_key]'s draft, or nothing, in the box.
+  void _restore() {
+    final draft = _key == null ? null : _cubit.drafts[_key!];
+    final text = draft?.text ?? '';
+    _controller.value = TextEditingValue(
+      text: text,
+      selection: TextSelection.collapsed(offset: text.length),
+    );
+    _picked
+      ..clear()
+      ..addAll(draft?.mentions ?? const []);
+  }
+
+  /// Another conversation or thread: what was typed stays with the one it
+  /// was typed for, and the new one's comes back. A chat with a person that
+  /// gets its conversation (found, or started by the first send) is the
+  /// same place: the box is left alone and the draft moves with it.
+  void _moveDraft(ChatConversationState a, ChatConversationState b,
+      List<ChatMember> picked) {
+    final next = _keyOf(b);
+    if (next == _key) return;
+    final started = a.accountId == b.accountId &&
+        a.person != null &&
+        a.person == b.person &&
+        a.conversation == null &&
+        b.conversation != null;
+    if (started) {
+      if (_key != null) _cubit.drafts.put(_key!, '', const []);
+      if (_sendingFrom == _key) _sendingFrom = next;
+      _key = next;
+      _picked
+        ..clear()
+        ..addAll(picked);
+      return;
+    }
+    _stash(picked);
+    _key = next;
+    // Any edit was left with the conversation; the box's text is in [_stash].
+    _draft = null;
+    _restore();
   }
 
   // ---- @ typeahead ---------------------------------------------------------
@@ -1049,18 +1134,25 @@ class _ComposerState extends State<_Composer> {
     } else {
       final image = _image;
       if (text.trim().isEmpty && image == null) return;
-      if (await cubit.send(text,
-              inThread: widget.inThread,
-              image: image,
-              mentions: List.of(_picked)) &&
-          mounted) {
+      _sendingFrom = _key;
+      final sent = await cubit.send(text,
+          inThread: widget.inThread,
+          image: image,
+          mentions: List.of(_picked));
+      final from = _sendingFrom;
+      _sendingFrom = null;
+      // The user may have moved on meanwhile, leaving the text as a draft
+      // (or the pane): it is sent, so it goes — but only this box, if it
+      // still shows where it was typed, is emptied.
+      if (sent && from != null) cubit.drafts.put(from, '', const []);
+      if (sent && mounted && _key == from) {
         _controller.clear();
         _picked.clear();
         _dismissedAt = null;
         setState(() => _image = null);
       }
     }
-    _focus.requestFocus();
+    if (mounted) _focus.requestFocus();
   }
 
   /// Cmd+V with a picture on the clipboard stages it under the box, where
@@ -1141,9 +1233,14 @@ class _ComposerState extends State<_Composer> {
           listenWhen: (a, b) =>
               a.accountId != b.accountId ||
               a.conversation?.id != b.conversation?.id ||
-              a.threadPostId != b.threadPostId && widget.inThread,
-          listener: (_, _) {
+              a.threadPostId != b.threadPostId && widget.inThread ||
+              _keyOf(a) != _keyOf(b),
+          listener: (_, b) {
+            final picked = List.of(_picked);
+            final a = _shown;
+            _shown = b;
             _resetMentions();
+            _moveDraft(a, b, picked);
             if (_image != null) setState(() => _image = null);
           },
         ),

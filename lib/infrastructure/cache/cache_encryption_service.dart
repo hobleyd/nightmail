@@ -1,11 +1,12 @@
 import 'dart:convert';
-import 'dart:io' show File, Platform;
+import 'dart:io' show File;
 
 import 'package:cryptography/cryptography.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
 import '../../core/platform/app_data_directory.dart';
+import '../../core/platform/platform.dart';
 
 /// Manages the AES-256-GCM key used to encrypt cached email content.
 ///

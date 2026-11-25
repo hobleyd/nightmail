@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:io' show Platform;
 import 'dart:math' as math;
 
 import 'package:desktop_multi_window/desktop_multi_window.dart';
@@ -44,6 +43,7 @@ import 'date_time_fields.dart';
 import 'forward_meeting_dialog.dart';
 import 'recipient_input_field.dart';
 import 'room_location_field.dart';
+import '../../core/platform/platform.dart';
 
 // ─── Public API ──────────────────────────────────────────────────────────────
 

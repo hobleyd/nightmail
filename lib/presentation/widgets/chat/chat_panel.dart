@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:io';
 import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart';
@@ -26,6 +25,7 @@ import 'chat_pane_picker.dart';
 import 'chat_rename_dialog.dart';
 import 'chat_source_picker.dart';
 import 'chat_window_target.dart';
+import '../../../core/platform/platform.dart';
 
 /// The Chat pane beside the reading pane: a one-on-one with the selected
 /// email's sender, or — from the dropdown — with anyone else on it who is in

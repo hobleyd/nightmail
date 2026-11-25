@@ -1,5 +1,5 @@
 import 'dart:convert';
-import 'dart:io' show File, Platform;
+import 'dart:io' show File;
 
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/services.dart' show PlatformException;
@@ -7,6 +7,7 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
 import '../../core/platform/app_data_directory.dart';
 import 'account.dart';
+import '../../core/platform/platform.dart';
 
 class AccountStorage {
   AccountStorage(this._storage);

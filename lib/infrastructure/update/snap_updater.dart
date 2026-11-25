@@ -1,5 +1,5 @@
 import 'dart:async';
-import 'dart:io';
+import 'dart:io' hide Platform;
 
 import 'package:crypto/crypto.dart';
 import 'package:dio/dio.dart';
@@ -8,6 +8,7 @@ import 'package:package_info_plus/package_info_plus.dart';
 import 'package:version/version.dart';
 
 import '../../core/platform/app_data_directory.dart';
+import '../../core/platform/platform.dart';
 
 /// The snap the newest GitHub release offers, and how it compares to this build.
 class SnapReleaseCheck {

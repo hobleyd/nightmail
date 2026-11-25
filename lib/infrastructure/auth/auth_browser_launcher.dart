@@ -1,8 +1,8 @@
-import 'dart:io' show Platform;
 
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/services.dart';
 import 'package:url_launcher/url_launcher.dart';
+import '../../core/platform/platform.dart';
 
 /// Hands a sign-in URL to a real browser, preferring Google Chrome.
 ///

@@ -1,7 +1,8 @@
-import 'dart:io';
+import 'dart:io' hide Platform;
 
 import 'package:flutter/foundation.dart';
 import 'package:path_provider/path_provider.dart';
+import 'platform.dart';
 
 /// The `CompanyName` this app shipped with before it was corrected to
 /// `au.com.sharpblue` in `windows/runner/Runner.rc`.

@@ -1,6 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:io';
+import 'dart:io' hide Platform;
 import 'dart:math' as math;
 
 import 'package:desktop_drop/desktop_drop.dart';
@@ -51,6 +51,7 @@ import 'forward_as_attachment.dart';
 import 'html_email_editor.dart';
 import 'insert_link_dialog.dart';
 import 'recipient_input_field.dart';
+import '../../core/platform/platform.dart';
 
 class ComposeDialog extends StatelessWidget {
   const ComposeDialog({

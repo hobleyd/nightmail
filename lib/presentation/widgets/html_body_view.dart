@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:io';
 
 import 'package:desktop_multi_window/desktop_multi_window.dart';
 import 'package:flutter/foundation.dart';
@@ -17,6 +16,7 @@ import '../../domain/entities/inline_attachment.dart';
 import '../../injection_container.dart';
 import 'body_link_opener.dart';
 import 'body_status_bar.dart';
+import '../../core/platform/platform.dart';
 
 /// A prepared document, ready to hand to the webview. Exactly one of
 /// [filePath] and [inlineHtml] is set: large or image-bearing bodies are

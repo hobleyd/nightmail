@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:io' show Platform;
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -8,6 +7,7 @@ import 'package:url_launcher/url_launcher.dart';
 import '../../core/settings/app_settings.dart';
 import '../../domain/repositories/system_contacts_repository.dart';
 import '../../injection_container.dart';
+import '../../core/platform/platform.dart';
 
 /// What the startup check should do with the Contacts permission it found.
 enum ContactsAccessAction {

@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/gestures.dart' show kDoubleTapTimeout;
@@ -11,6 +10,7 @@ import '../../core/platform/window_utils.dart';
 import '../../core/theme/app_colors.dart';
 import '../blocs/chat/chat_unread_cubit.dart';
 import '../blocs/tasks/overdue_tasks_cubit.dart';
+import '../../core/platform/platform.dart';
 
 /// The Calendar, Tasks, Chat, AI and Commitments buttons, as a row.
 ///

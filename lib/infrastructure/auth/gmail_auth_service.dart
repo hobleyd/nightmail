@@ -1,5 +1,4 @@
 import 'dart:convert';
-import 'dart:io' show Platform;
 import 'dart:math';
 
 import 'package:crypto/crypto.dart';
@@ -18,6 +17,7 @@ import 'token_refresh_coordinator.dart';
 import 'token_refresh_error.dart';
 import 'token_storage.dart';
 import 'web_auth_stub.dart' if (dart.library.html) 'web_auth_web.dart';
+import '../../core/platform/platform.dart';
 
 /// Google OAuth2 + PKCE implementation for Gmail and Google Calendar access.
 ///

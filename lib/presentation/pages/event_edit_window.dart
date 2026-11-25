@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:io';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
@@ -24,6 +23,7 @@ import '../blocs/event_edit/event_edit_state.dart';
 import '../blocs/theme/theme_cubit.dart';
 import '../blocs/theme/theme_state.dart';
 import '../widgets/event_edit_dialog.dart';
+import '../../core/platform/platform.dart';
 
 const _kCalendarRefreshChannel =
     MethodChannel('au.com.sharpblue.nightmail/calendar_refresh');

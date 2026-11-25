@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:io' show Platform;
 
 import 'package:app_links/app_links.dart';
 import 'package:desktop_multi_window/desktop_multi_window.dart';
@@ -67,6 +66,7 @@ import 'compose_window.dart';
 import 'mail_sent_channel.dart';
 import 'settings_page.dart';
 import 'tasks_page.dart';
+import '../../core/platform/platform.dart';
 
 DateTime _mondayOfWeek(DateTime date) {
   final daysFromMonday = (date.weekday - 1) % 7;

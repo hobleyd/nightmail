@@ -1,9 +1,10 @@
 import 'dart:convert';
-import 'dart:io';
+import 'dart:io' hide Platform;
 
 import 'package:flutter/foundation.dart' show visibleForTesting;
 import 'package:markdown/markdown.dart' as md;
 import 'package:path_provider/path_provider.dart';
+import '../../core/platform/platform.dart';
 
 
 /// Renders a markdown attachment into a self-contained HTML document for the

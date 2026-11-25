@@ -1,13 +1,14 @@
-import 'dart:io' show Directory, Platform;
+import 'dart:io' show Directory;
 
 import 'package:drift/drift.dart';
 import 'package:drift_flutter/drift_flutter.dart';
 import 'package:flutter/foundation.dart'
     show debugPrint, kIsWeb, visibleForTesting;
 import 'package:sqlite3/common.dart' show CommonDatabase;
-import 'package:sqlite3/sqlite3.dart' show Database;
 
 import '../../domain/entities/email_folder.dart';
+import 'keep_handle_native.dart'
+    if (dart.library.js_interop) 'keep_handle_web.dart';
 import '../../core/platform/app_data_directory.dart';
 import '../datasources/local/delta_token_datasource.dart';
 import '../datasources/local/folder_local_datasource.dart';
@@ -16,6 +17,7 @@ import '../datasources/local/pending_calendar_operations_datasource.dart';
 import '../datasources/local/pending_operations_datasource.dart';
 import '../datasources/local/reminder_schedule_local_datasource.dart';
 import '../datasources/local/task_reminder_schedule_local_datasource.dart';
+import '../../core/platform/platform.dart';
 
 part 'app_database.g.dart';
 
@@ -1278,9 +1280,8 @@ class AppDatabase extends _$AppDatabase
   /// replays it.
   ///
   /// Must stay a static tear-off: drift sends it to the background isolate.
-  static void _keepHandleUntilProcessExit(CommonDatabase db) {
-    (db as Database).leak();
-  }
+  static void _keepHandleUntilProcessExit(CommonDatabase db) =>
+      keepHandleUntilProcessExit(db);
 
   /// How long a connection waits for another connection's lock before giving
   /// up with `database is locked`. The longest write anything here holds is a
@@ -1357,6 +1358,12 @@ class AppDatabase extends _$AppDatabase
         setup: configureConnection,
         databaseDirectory:
             !kIsWeb && Platform.isMacOS ? _databaseDirectory : null,
+      ),
+      // web/sqlite3.wasm and web/drift_worker.js come from the sqlite3 and
+      // drift releases pubspec.lock pins; replace both when either moves.
+      web: DriftWebOptions(
+        sqlite3Wasm: Uri.parse('sqlite3.wasm'),
+        driftWorker: Uri.parse('drift_worker.js'),
       ),
     );
   }

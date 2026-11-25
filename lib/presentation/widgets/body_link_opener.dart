@@ -1,4 +1,3 @@
-import 'dart:io' show Platform;
 
 import 'package:flutter/foundation.dart' show debugPrint, kIsWeb;
 import 'package:flutter/material.dart';
@@ -13,6 +12,7 @@ import '../../core/utils/online_meeting_url.dart';
 import '../blocs/account/account_cubit.dart';
 import '../pages/compose_window.dart';
 import 'cloud_document_preview_host.dart';
+import '../../core/platform/platform.dart';
 
 /// Opens a link the reader clicked in a message body.
 ///

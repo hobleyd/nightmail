@@ -1,9 +1,10 @@
 import 'dart:convert';
-import 'dart:io';
+import 'dart:io' hide Platform;
 
 import 'package:flutter/foundation.dart' show debugPrint;
 import 'package:flutter/services.dart' show rootBundle;
 import 'package:path_provider/path_provider.dart';
+import '../../core/platform/platform.dart';
 
 /// The OOXML office formats we can preview.
 enum OfficeFormat { docx, xlsx, pptx }

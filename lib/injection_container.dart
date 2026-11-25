@@ -1,4 +1,3 @@
-import 'dart:io' show Platform;
 
 import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart' show debugPrint, kIsWeb, kReleaseMode;
@@ -195,7 +194,8 @@ import 'infrastructure/sync/imap_connection_gate.dart';
 import 'infrastructure/sync/outbox_drain_service.dart';
 import 'infrastructure/sync/recent_mutation_store.dart';
 import 'infrastructure/sync/spam_db_sync_service.dart';
-import 'infrastructure/update/app_update_service.dart';
+import 'infrastructure/update/app_update_service.dart'
+    if (dart.library.js_interop) 'infrastructure/update/app_update_service_web.dart';
 import 'presentation/blocs/account/account_cubit.dart';
 import 'presentation/blocs/calendar/calendar_bloc.dart';
 import 'presentation/blocs/compose/compose_bloc.dart';
@@ -209,6 +209,7 @@ import 'presentation/blocs/tasks/overdue_tasks_cubit.dart';
 import 'presentation/blocs/tasks/tasks_bloc.dart';
 import 'presentation/blocs/theme/theme_cubit.dart';
 import 'presentation/blocs/update/update_cubit.dart';
+import 'core/platform/platform.dart';
 
 final sl = GetIt.instance;
 

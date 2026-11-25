@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:io';
 
 import 'package:desktop_multi_window/desktop_multi_window.dart';
 import 'package:flutter/foundation.dart';
@@ -31,6 +30,7 @@ import '../widgets/compose_dialog.dart';
 import '../widgets/forward_as_attachment.dart';
 import '../widgets/error_snack_bar.dart';
 import 'mail_sent_channel.dart';
+import '../../core/platform/platform.dart';
 
 class ComposeWindowApp extends StatelessWidget {
   const ComposeWindowApp({

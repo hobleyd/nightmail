@@ -1,10 +1,11 @@
 import 'dart:convert';
-import 'dart:io';
+import 'dart:io' hide Platform;
 
 import 'package:flutter/material.dart';
 import 'package:screen_retriever/screen_retriever.dart';
 
 import '../../core/platform/app_data_directory.dart';
+import '../platform/platform.dart';
 
 /// Returned by [WindowBoundsService.loadValidatedBounds].
 class WindowRestoreState {

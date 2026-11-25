@@ -1,7 +1,8 @@
 import 'dart:convert';
-import 'dart:io';
+import 'dart:io' hide Platform;
 
 import 'package:flutter/foundation.dart';
+import '../../core/platform/platform.dart';
 
 /// The prefix `desktop_updater` gives every staging directory it creates.
 const String kDesktopUpdaterStagePrefix = 'desktop_updater_stage_';

@@ -1,7 +1,10 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:nightmail/core/utils/ended_meeting_series.dart';
+import 'package:nightmail/core/utils/rrule.dart';
+import 'package:nightmail/data/datasources/remote/ics_meeting_invite.dart';
 import 'package:nightmail/domain/entities/calendar_event.dart';
 import 'package:nightmail/domain/entities/calendar_recurrence.dart';
+import 'package:nightmail/domain/entities/meeting_invite.dart';
 
 /// The 25 Nov 2026 incident: a weekday stand-up cut short at Mon 23 Nov by
 /// moving its end date, mailed as "Updated invitation" with an ICS whose UNTIL
@@ -9,7 +12,16 @@ import 'package:nightmail/domain/entities/calendar_recurrence.dart';
 const _uid = 'gacrfrmvm41s2kp486g69kiehb@google.com';
 final _now = DateTime.utc(2026, 11, 25, 7);
 
-CalendarEvent _occurrence(DateTime start, {String iCalUid = _uid}) =>
+/// The rule Google holds for the segment the 2–23 Nov occurrences belong to,
+/// `gacrfrmvm41s2kp486g69kiehb_R20261105T000000`, read off the real calendar.
+final _endedSegment = parseRRule('RRULE:FREQ=WEEKLY;WKST=SU;'
+    'UNTIL=20261123T135959Z;BYDAY=MO,TU,WE,TH,FR')!;
+
+CalendarEvent _occurrence(
+  DateTime start, {
+  String iCalUid = _uid,
+  CalendarRecurrence? recurrence,
+}) =>
     CalendarEvent(
       id: start.toIso8601String(),
       subject: 'OneVal Release 2 (CBV) - Stand-Up',
@@ -17,14 +29,15 @@ CalendarEvent _occurrence(DateTime start, {String iCalUid = _uid}) =>
       end: start.add(const Duration(minutes: 15)),
       isAllDay: false,
       iCalUid: iCalUid,
+      recurrence: recurrence,
     );
 
-DateTime? _ended({
+SeriesEndCheck? _check({
   List<CalendarEvent> upcoming = const [],
   List<CalendarEvent> recent = const [],
   String? uid = _uid,
 }) =>
-    lastOccurrenceOfEndedSeries(
+    checkSeriesEnd(
       inviteUid: uid,
       upcoming: upcoming,
       recent: recent,
@@ -32,57 +45,90 @@ DateTime? _ended({
     );
 
 void main() {
-  group('lastOccurrenceOfEndedSeries', () {
-    test('a series with recent occurrences and none ahead has ended', () {
+  group('checkSeriesEnd', () {
+    test('the incident: the split segment\'s own UNTIL has passed', () {
+      // Stored iCalUID of those occurrences, from the cache database.
+      const segmentUid = 'gacrfrmvm41s2kp486g69kiehb_R20261105T000000'
+          '@google.com';
       final last = DateTime.utc(2026, 11, 23);
+      final check = _check(recent: [
+        _occurrence(DateTime.utc(2026, 11, 19),
+            iCalUid: segmentUid, recurrence: _endedSegment),
+        _occurrence(last, iCalUid: segmentUid, recurrence: _endedSegment),
+        _occurrence(DateTime.utc(2026, 11, 20),
+            iCalUid: segmentUid, recurrence: _endedSegment),
+      ]);
+      expect(check?.lastOccurrence, last);
+      expect(check?.confirmed, isTrue);
+    });
+
+    test('a break in an open-ended series is not confirmed as an end', () {
+      // Weeks cancelled over Christmas are simply not listed; the rule says
+      // the meeting goes on.
+      final check = _check(recent: [
+        _occurrence(DateTime.utc(2026, 11, 23),
+            recurrence: const CalendarRecurrence(
+                frequency: RecurrenceFrequency.weekly)),
+      ]);
+      expect(check?.lastOccurrence, DateTime.utc(2026, 11, 23));
+      expect(check?.confirmed, isFalse);
+    });
+
+    test('a rule ending after today is not confirmed as an end', () {
+      final check = _check(recent: [
+        _occurrence(DateTime.utc(2026, 11, 23),
+            recurrence: CalendarRecurrence(
+                frequency: RecurrenceFrequency.weekly,
+                endDate: DateTime.utc(2027, 2, 1))),
+      ]);
+      expect(check?.confirmed, isFalse);
+    });
+
+    test('a rule whose last day is today is not confirmed yet', () {
+      final today = _now.toLocal();
+      final check = _check(recent: [
+        _occurrence(_now.subtract(const Duration(hours: 1)),
+            recurrence: CalendarRecurrence(
+                frequency: RecurrenceFrequency.weekly,
+                endDate: DateTime(today.year, today.month, today.day))),
+      ]);
+      expect(check?.confirmed, isFalse);
+    });
+
+    test('an unknown rule is not confirmed as an end', () {
       expect(
-        _ended(recent: [
-          _occurrence(DateTime.utc(2026, 11, 19)),
-          _occurrence(last),
-          _occurrence(DateTime.utc(2026, 11, 20)),
-        ]),
-        last,
+        _check(recent: [_occurrence(DateTime.utc(2026, 11, 23))])?.confirmed,
+        isFalse,
       );
     });
 
-    test('occurrences of a split segment count as the same meeting', () {
-      // Google files the segments after a "this and following" edit under
-      // `<uid>_R<split start>`; the instances add their own start on top.
-      final last = DateTime.utc(2026, 11, 23);
+    test('an occurrence still to come means nothing to report', () {
       expect(
-        _ended(recent: [
-          _occurrence(last,
-              iCalUid: 'gacrfrmvm41s2kp486g69kiehb_R20261105T000000'
-                  '@google.com'),
-        ]),
-        last,
-      );
-    });
-
-    test('an occurrence still to come means the series has not ended', () {
-      expect(
-        _ended(
+        _check(
           upcoming: [_occurrence(DateTime.utc(2026, 11, 26))],
-          recent: [_occurrence(DateTime.utc(2026, 11, 24))],
+          recent: [
+            _occurrence(DateTime.utc(2026, 11, 24), recurrence: _endedSegment),
+          ],
         ),
         isNull,
       );
     });
 
-    test('an occurrence in progress means the series has not ended', () {
+    test('an occurrence in progress means nothing to report', () {
       final inProgress = _occurrence(_now.subtract(const Duration(minutes: 5)));
-      expect(_ended(upcoming: [inProgress], recent: [inProgress]), isNull);
+      expect(_check(upcoming: [inProgress], recent: [inProgress]), isNull);
     });
 
     test('nothing on the calendar either side settles nothing', () {
       // A forwarded or hidden invitation is just as absent as an ended one.
-      expect(_ended(), isNull);
+      expect(_check(), isNull);
     });
 
     test('other meetings are not evidence', () {
       expect(
-        _ended(recent: [
-          _occurrence(DateTime.utc(2026, 11, 23), iCalUid: 'other@google.com'),
+        _check(recent: [
+          _occurrence(DateTime.utc(2026, 11, 23),
+              iCalUid: 'other@google.com', recurrence: _endedSegment),
         ]),
         isNull,
       );
@@ -90,10 +136,34 @@ void main() {
 
     test('an invitation with no UID settles nothing', () {
       expect(
-        _ended(uid: null, recent: [_occurrence(DateTime.utc(2026, 11, 23))]),
+        _check(uid: null, recent: [_occurrence(DateTime.utc(2026, 11, 23))]),
         isNull,
       );
     });
+  });
+
+  test('the incident\'s ICS yields a rule the check will judge', () {
+    // Trimmed from the real "Updated invitation with note" message: the
+    // banner returns early, silently, if this ever stops parsing.
+    const ics = 'BEGIN:VCALENDAR\r\n'
+        'METHOD:REQUEST\r\n'
+        'BEGIN:VEVENT\r\n'
+        'DTSTART;TZID=Australia/Brisbane:20261030T100000\r\n'
+        'DTEND;TZID=Australia/Brisbane:20261030T101500\r\n'
+        'RRULE:FREQ=WEEKLY;WKST=SU;UNTIL=20261101T135959Z;'
+        'BYDAY=MO,TU,WE,TH,FR\r\n'
+        'UID:gacrfrmvm41s2kp486g69kiehb@google.com\r\n'
+        'SEQUENCE:1\r\n'
+        'STATUS:CONFIRMED\r\n'
+        'SUMMARY:OneVal Release 2 (CBV) - Stand-Up\r\n'
+        'END:VEVENT\r\n'
+        'END:VCALENDAR\r\n';
+    final invite = buildMeetingInviteFromIcs(ics);
+    expect(invite.type, MeetingEmailType.invitation);
+    expect(invite.uid, _uid);
+    expect(endedSeriesLookahead(invite.recurrence), const Duration(days: 15));
+    // UNTIL is kept as the series' last day, not an instant.
+    expect(_endedSegment.endDate, DateTime(2026, 11, 23));
   });
 
   group('endedSeriesLookahead', () {

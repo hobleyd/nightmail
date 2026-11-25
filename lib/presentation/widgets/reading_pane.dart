@@ -1586,10 +1586,10 @@ class _MeetingInviteBannerState extends State<_MeetingInviteBanner> {
   DateTime? _proposedStart;
   DateTime? _proposedEnd;
 
-  /// The last occurrence of a series the calendar shows has already ended —
-  /// see `ended_meeting_series.dart`. Set, the banner says so in place of
-  /// Accept/Decline: there is nothing left to answer.
-  DateTime? _seriesEndedAt;
+  /// Set when the calendar has no occurrence of this series coming up — see
+  /// `ended_meeting_series.dart`. Only a [SeriesEndCheck.confirmed] end takes
+  /// Accept/Decline away; an empty calendar ahead may just be a break.
+  SeriesEndCheck? _seriesEnd;
 
   @override
   void initState() {
@@ -1638,16 +1638,16 @@ class _MeetingInviteBannerState extends State<_MeetingInviteBanner> {
       endDateTime: now,
     ));
     if (!mounted) return;
-    final last = recent.fold(
+    final end = recent.fold(
       (_) => null,
-      (events) => lastOccurrenceOfEndedSeries(
+      (events) => checkSeriesEnd(
         inviteUid: uid,
         upcoming: upcomingEvents,
         recent: events,
         now: now,
       ),
     );
-    if (last != null) setState(() => _seriesEndedAt = last);
+    if (end != null) setState(() => _seriesEnd = end);
   }
 
   Future<void> _checkConflicts() async {
@@ -1906,6 +1906,9 @@ class _MeetingInviteBannerState extends State<_MeetingInviteBanner> {
     );
   }
 
+  static String _formatOccurrenceDay(DateTime start) =>
+      DateFormat('EEE d MMM').format(start.toLocal());
+
   Widget _buildIdleState(AppColors c) {
     final invite = widget.email.meetingInvite;
     final timeStr = invite != null ? formatMeetingTime(invite) : '';
@@ -1913,7 +1916,8 @@ class _MeetingInviteBannerState extends State<_MeetingInviteBanner> {
     final repeats = invite == null ? null : describeInviteRecurrence(invite);
     final hasDetails =
         timeStr.isNotEmpty || location != null || repeats != null;
-    final endedAt = _seriesEndedAt;
+    final seriesEnd = _seriesEnd;
+    final ended = seriesEnd?.confirmed ?? false;
 
     // A Wrap rather than a Row: the buttons keep their intrinsic width, so in a
     // narrow reading pane a Row would starve the details column instead of
@@ -2022,9 +2026,9 @@ class _MeetingInviteBannerState extends State<_MeetingInviteBanner> {
           crossAxisAlignment: WrapCrossAlignment.center,
           spacing: 12,
           runSpacing: 8,
-          children: [details, if (endedAt == null) buttons],
+          children: [details, if (!ended) buttons],
         ),
-        if (endedAt != null) ...[
+        if (seriesEnd != null) ...[
           const SizedBox(height: 6),
           Row(
             children: [
@@ -2032,9 +2036,13 @@ class _MeetingInviteBannerState extends State<_MeetingInviteBanner> {
               const SizedBox(width: 4),
               Expanded(
                 child: Text(
-                  'This series has ended — the last meeting was '
-                  '${DateFormat('EEE d MMM').format(endedAt.toLocal())}. '
-                  'There is nothing to answer.',
+                  ended
+                      ? 'This series has ended — the last meeting was '
+                          '${_formatOccurrenceDay(seriesEnd.lastOccurrence)}. '
+                          'There is nothing to answer.'
+                      : 'No further meetings of this series on your '
+                          'calendar — the last was '
+                          '${_formatOccurrenceDay(seriesEnd.lastOccurrence)}.',
                   style: TextStyle(color: c.textTertiary, fontSize: 11),
                 ),
               ),
@@ -2058,7 +2066,7 @@ class _MeetingInviteBannerState extends State<_MeetingInviteBanner> {
             ],
           ),
         ],
-        if (endedAt == null) _buildNoteRow(c),
+        if (!ended) _buildNoteRow(c),
       ],
     );
   }

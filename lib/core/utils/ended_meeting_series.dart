@@ -48,14 +48,33 @@ Duration? endedSeriesLookahead(CalendarRecurrence? recurrence) {
   return lookahead > _maxLookahead ? null : lookahead;
 }
 
-/// The start of the series' last occurrence when the series is over, or null
-/// when it is not — or when that cannot be told.
+/// What the calendar says about a series with nothing coming up.
+class SeriesEndCheck {
+  const SeriesEndCheck({required this.lastOccurrence, required this.confirmed});
+
+  /// Start of the most recent occurrence of the meeting.
+  final DateTime lastOccurrence;
+
+  /// The segment that occurrence belongs to has an `UNTIL` already past, so
+  /// the series is over by its own rule. False when the calendar is merely
+  /// empty ahead, which a holiday break of a few cancelled weeks also looks
+  /// like: occurrences cancelled one at a time are not listed at all.
+  final bool confirmed;
+}
+
+/// What the calendar says about a series invitation with nothing coming up,
+/// or null when something is coming up — or when that cannot be told.
 ///
 /// [upcoming] is the calendar from [now] forward, [recent] the calendar from
-/// [endedSeriesLookback] before [now]. Over means: none of [upcoming] is this
-/// meeting still to come (an occurrence in progress counts as still to come),
-/// and at least one of [recent] is an occurrence that has started.
-DateTime? lastOccurrenceOfEndedSeries({
+/// [endedSeriesLookback] before [now]. Null if any of [upcoming] is this
+/// meeting still to come (an occurrence in progress counts), or none of
+/// [recent] is an occurrence of it that has started.
+///
+/// Confirmation reads the rule of the *latest* occurrence's own segment, which
+/// is what a split series needs: Google keeps each segment's master on the
+/// attendee's calendar (`<uid>_R<split start>`, here with `UNTIL` 23 Nov)
+/// even though the mailed ICS names only the first.
+SeriesEndCheck? checkSeriesEnd({
   required String? inviteUid,
   required List<CalendarEvent> upcoming,
   required List<CalendarEvent> recent,
@@ -66,10 +85,16 @@ DateTime? lastOccurrenceOfEndedSeries({
 
   if (upcoming.any((e) => mine(e) && e.end.isAfter(now))) return null;
 
-  DateTime? last;
+  CalendarEvent? last;
   for (final e in recent) {
     if (!mine(e) || e.start.isAfter(now)) continue;
-    if (last == null || e.start.isAfter(last)) last = e.start;
+    if (last == null || e.start.isAfter(last.start)) last = e;
   }
-  return last;
+  if (last == null) return null;
+  // `parseRRule` keeps UNTIL as the series' last *day* (a local date), so the
+  // series is over by its rule only once that whole day is behind us.
+  final lastDay = last.recurrence?.endDate;
+  final ruleOver = lastDay != null &&
+      !DateTime(lastDay.year, lastDay.month, lastDay.day + 1).isAfter(now);
+  return SeriesEndCheck(lastOccurrence: last.start, confirmed: ruleOver);
 }

@@ -22,11 +22,17 @@ mails every guest "Updated invitation …" as `METHOD:REQUEST`, so it gets the
 invitation banner. The ICS cannot say the series is over. Incident, 25 Nov
 2026: a stand-up split twice by "this and following" edits was mailed with the
 first segment's `UNTIL` (1 Nov) while it really ran to 23 Nov. The banner
-therefore asks the *calendar* (`core/utils/ended_meeting_series.dart`): a
+therefore asks the *calendar* (`core/utils/ended_meeting_series.dart`). A
 daily-to-fortnightly series with an occurrence of its UID in the last 21 days
-and none in the next two periods says "This series has ended" instead of
-offering Accept/Decline. Nothing on either side settles nothing, since a
-forwarded or hidden invitation is just as absent. The two listings are kept
+and none in the next two periods is checked against the rule of that latest
+occurrence's own segment, which Google keeps on the attendee's calendar
+(`<uid>_R<split start>`, `UNTIL` 23 Nov here). Only when that rule's last day
+has passed does the banner say "This series has ended" and drop
+Accept/Decline. An empty calendar ahead alone is not enough: a holiday break
+of individually cancelled occurrences looks the same, so the banner keeps its
+buttons and only notes "No further meetings of this series on your calendar".
+Nothing on either side settles nothing, since a forwarded or hidden invitation
+is just as absent. The two listings are kept
 short because `events.list` pages are sorted ascending and capped at 250, so a
 long one that got truncated would lose exactly the upcoming occurrences.
 

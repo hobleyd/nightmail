@@ -237,6 +237,14 @@ Google: the newest message the unread check already reads, remembered in
   it in the rest of the pane and holds it there across emails (`_held`)
   until something else is picked or the system changes; it stays listed,
   highlighted, after it is read. Nothing unread: "No unread chats".
+- **A field at the foot of the unread list** ("Find a chat or channel",
+  just above the divider) swaps the list for every chat and channel whose
+  name, team or members match (`matchChats`, shared with `ChatPanePicker`),
+  newest first; picking one (click, or Enter for the first) opens and holds
+  it like an unread pick and clears the field, and the list scrolls to its
+  row (an older chat sorts below the rows in view); Escape clears. The first
+  keystroke lists the system's conversations — the disk cache, then one
+  `conversations()` per pane and system — never merely opening the pane.
 
 ## Finding anyone from the pane
 

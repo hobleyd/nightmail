@@ -11,6 +11,28 @@ import '../../../infrastructure/accounts/account.dart';
 import '../../../injection_container.dart';
 import '../../blocs/chat/chat_conversation_cubit.dart';
 
+/// Chats and channels whose name, team or members contain [q] (lower case):
+/// names that start with it first, each group in [list]'s order. The pane's
+/// picker and its unread-list search.
+List<ChatConversation> matchChats(
+    Iterable<ChatConversation> list, String q, {int? limit}) {
+  bool has(String? text) => text != null && text.toLowerCase().contains(q);
+  final hits = [
+    for (final ch in list)
+      if (has(ch.title) ||
+          has(ch.teamName) ||
+          ch.members.any((m) => has(m.displayName) || has(m.email)))
+        ch,
+  ];
+  bool starts(ChatConversation ch) {
+    final t = ch.title.toLowerCase();
+    return t.startsWith(q) || t.startsWith('#$q');
+  }
+
+  final sorted = [...hits.where(starts), ...hits.where((ch) => !starts(ch))];
+  return limit == null ? sorted : sorted.take(limit).toList();
+}
+
 /// The Chat pane's header: who or what the pane shows, and a menu to pick
 /// another — the email's people and the system's unread chats, under a field
 /// that finds anyone or any chat or channel by name.
@@ -274,30 +296,18 @@ class _PickerContentState extends State<_PickerContent> {
     ];
   }
 
-  /// Chats and channels whose name, team or members match [q]: names that
-  /// start with it first, then by activity. A one-on-one with someone
-  /// already offered as a person is left out.
-  List<ChatConversation> _chatsFor(String q, Set<String> people) {
-    final hits = [
-      for (final ch in _list)
-        if ((_matches(ch.title, q) ||
-                _matches(ch.teamName, q) ||
-                ch.members.any((m) =>
-                    _matches(m.displayName, q) || _matches(m.email, q))) &&
-            !(ch.kind == ChatKind.oneOnOne &&
+  /// Chats and channels matching [q] ([matchChats]). A one-on-one with
+  /// someone already offered as a person is left out.
+  List<ChatConversation> _chatsFor(String q, Set<String> people) => matchChats(
+        [
+          for (final ch in _list)
+            if (!(ch.kind == ChatKind.oneOnOne &&
                 ch.members.any((m) => people.contains(m.email))))
-          ch,
-    ];
-    bool starts(ChatConversation ch) {
-      final t = ch.title.toLowerCase();
-      return t.startsWith(q) || t.startsWith('#$q');
-    }
-
-    return [
-      ...hits.where(starts),
-      ...hits.where((ch) => !starts(ch)),
-    ].take(_maxChats).toList();
-  }
+              ch,
+        ],
+        q,
+        limit: _maxChats,
+      );
 
   void _submit() {
     final q = _query.text.trim().toLowerCase();

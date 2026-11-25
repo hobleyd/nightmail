@@ -834,6 +834,7 @@ class _MobileLayoutState extends State<_MobileLayout> {
   void _openChat() {
     final emailDetailBloc = context.read<EmailDetailBloc>();
     final accountCubit = context.read<AccountCubit>();
+    final chatUnreadCubit = context.read<ChatUnreadCubit>();
     _nav?.push<void>(
       MaterialPageRoute(
         fullscreenDialog: true,
@@ -843,6 +844,7 @@ class _MobileLayoutState extends State<_MobileLayout> {
               providers: [
                 BlocProvider.value(value: emailDetailBloc),
                 BlocProvider.value(value: accountCubit),
+                BlocProvider.value(value: chatUnreadCubit),
               ],
               child: ChatPanel(
                 onClose: () => Navigator.of(ctx).pop(),
@@ -1395,7 +1397,11 @@ class _ThreePanelLayoutState extends State<_ThreePanelLayout> {
                 }
               },
               onChatTapped: () {
-                if (homeState.view == HomeView.chat) {
+                // With a menu of chat systems, picking another one while the
+                // pane is open switches it rather than closing it.
+                final switched =
+                    context.read<ChatUnreadCubit>().takeSwitched();
+                if (homeState.view == HomeView.chat && !switched) {
                   homeCubit.showEmail();
                 } else {
                   homeCubit.showChat();

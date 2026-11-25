@@ -4,6 +4,9 @@ import 'package:nightmail/data/repositories/chat_repository_impl.dart';
 import 'package:nightmail/domain/entities/chat.dart';
 import 'package:nightmail/domain/repositories/contact_cache_repository.dart';
 import 'package:nightmail/infrastructure/accounts/account_manager.dart';
+import 'package:nightmail/infrastructure/slack/slack_workspaces.dart';
+
+import '../../fakes/memory_secure_storage.dart';
 
 /// The dot on the Chat button: counted from the cheap recent listing, never
 /// for an account that has not consented (the poll must not prompt), and
@@ -15,14 +18,16 @@ void main() {
   test('counts the recent chats someone has written in', () async {
     final ds = _Chats([chat('a', unread: true), chat('b'), chat('c', unread: true)]);
     final repo = ChatRepositoryImpl(
-        accountManager: _Accounts(ds, chats: true), contacts: _NoContacts());
+        accountManager: _Accounts(ds, chats: true), contacts: _NoContacts(),
+        slack: SlackWorkspaces(storage: MemorySecureStorage()));
     expect(await repo.unreadCount('acct'), 2);
   });
 
   test('an account without chat consent is never asked', () async {
     final ds = _Chats([chat('a', unread: true)]);
     final repo = ChatRepositoryImpl(
-        accountManager: _Accounts(ds, chats: false), contacts: _NoContacts());
+        accountManager: _Accounts(ds, chats: false), contacts: _NoContacts(),
+        slack: SlackWorkspaces(storage: MemorySecureStorage()));
     expect(await repo.unreadCount('acct'), 0);
     expect(ds.listed, 0);
   });
@@ -36,7 +41,8 @@ void main() {
         unread: true, lastActivity: t);
     final ds = _Chats([at(before)]);
     final repo = ChatRepositoryImpl(
-        accountManager: _Accounts(ds, chats: true), contacts: _NoContacts());
+        accountManager: _Accounts(ds, chats: true), contacts: _NoContacts(),
+        slack: SlackWorkspaces(storage: MemorySecureStorage()));
     await repo.markRead('acct', at(before));
     expect(await repo.unreadCount('acct'), 0, reason: 'server lagging');
 
@@ -47,7 +53,8 @@ void main() {
   test('marking read tells the server and announces it', () async {
     final ds = _Chats(const []);
     final repo = ChatRepositoryImpl(
-        accountManager: _Accounts(ds, chats: true), contacts: _NoContacts());
+        accountManager: _Accounts(ds, chats: true), contacts: _NoContacts(),
+        slack: SlackWorkspaces(storage: MemorySecureStorage()));
     final reads = repo.reads.first;
     await repo.markRead('acct', chat('a', unread: true));
     expect(ds.marked, ['a']);

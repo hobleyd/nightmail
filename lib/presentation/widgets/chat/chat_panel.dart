@@ -14,6 +14,7 @@ import '../../../infrastructure/accounts/account.dart';
 import '../../../injection_container.dart';
 import '../../blocs/account/account_cubit.dart';
 import '../../blocs/chat/chat_conversation_cubit.dart';
+import '../../blocs/chat/chat_unread_cubit.dart';
 import '../../blocs/email_detail/email_detail_bloc.dart';
 import '../../blocs/email_detail/email_detail_state.dart';
 import 'chat_conversation_view.dart';
@@ -28,6 +29,10 @@ import 'chat_conversation_view.dart';
 /// Follows the selection: a new email points the pane at its sender, unless
 /// the person already chosen is on that email too. Never creates a chat by
 /// being opened; see [ChatPerson].
+///
+/// Chats on the system the Chat button's menu chose
+/// ([ChatUnreadState.chosen]): the account's own chat, or a Slack workspace —
+/// where the people on offer are the ones Slack finds by address.
 class ChatPanel extends StatelessWidget {
   const ChatPanel({
     super.key,
@@ -148,6 +153,7 @@ class _ChatPanelBodyState extends State<_ChatPanelBody> {
   Future<void> _grant() async {
     final accountId = _accountId;
     if (accountId == null) return;
+    final unread = context.read<ChatUnreadCubit>();
     setState(() => _consentError = null);
     final access = await context
         .read<ChatConversationCubit>()
@@ -163,6 +169,8 @@ class _ChatPanelBodyState extends State<_ChatPanelBody> {
       _access = access;
       _openedKey = null;
     });
+    // A reconnected Slack workspace drops its "Reconnect" in the menu.
+    unawaited(unread.refresh());
   }
 
   @override
@@ -174,11 +182,16 @@ class _ChatPanelBodyState extends State<_ChatPanelBody> {
     final detail = context.watch<EmailDetailBloc>().state;
     final email = detail is EmailDetailLoaded ? detail.email : null;
 
+    // The chat system: what the button's menu chose, or — before the
+    // systems are known, or for an account with none — the account itself,
+    // whose access check then explains what is missing.
+    final source = context.watch<ChatUnreadCubit>().state.chosen;
+    final chatId = source?.id ?? account?.id;
     final everyone =
         account == null ? const <ChatPerson>[] : candidatesFor(email, account);
-    if (account != null) {
-      final key = '${account.id}|${email?.id}';
-      if (key != _colleaguesKey) _checkColleagues(account.id, key, everyone);
+    if (chatId != null) {
+      final key = '$chatId|${email?.id}';
+      if (key != _colleaguesKey) _checkColleagues(chatId, key, everyone);
     }
     final colleagues = _colleagues;
     final candidates = colleagues == null
@@ -189,9 +202,9 @@ class _ChatPanelBodyState extends State<_ChatPanelBody> {
             .firstOrNull ??
         candidates.firstOrNull;
 
-    if (account != null) {
+    if (chatId != null) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted) _sync(account.id, person);
+        if (mounted) _sync(chatId, person);
       });
     }
 
@@ -211,13 +224,17 @@ class _ChatPanelBodyState extends State<_ChatPanelBody> {
             ? 'Google Chat is available for Google Workspace accounts, not '
                 'personal Gmail.'
             : 'Chat is available for Microsoft 365, NightMail Server and '
-                'Google Workspace accounts.',
+                'Google Workspace accounts, and for Slack once a workspace is '
+                'connected in Settings > General.',
       );
     } else if (_access == ChatAccess.needsConsent) {
       body = ChatConsentPrompt(
         onGrant: _grant,
         error: _consentError,
         google: account is GmailAccount,
+        slackWorkspace: source != null && source.isSlack && source.id == chatId
+            ? source.label.replaceFirst('Slack · ', '')
+            : null,
       );
     } else if (everyone.isNotEmpty && colleagues == null) {
       body = const Center(
@@ -232,8 +249,10 @@ class _ChatPanelBodyState extends State<_ChatPanelBody> {
       body = _PaneNotice(
           text: everyone.isEmpty
               ? 'Select an email to chat with the people on it.'
-              : 'Nobody on this email is in your organisation or has '
-                  'chatted with you.');
+              : source != null && source.isSlack
+                  ? 'Nobody on this email is in ${source.label}.'
+                  : 'Nobody on this email is in your organisation or has '
+                      'chatted with you.');
     } else {
       body = const ChatConversationView();
     }
@@ -259,8 +278,15 @@ class _ChatPanelBodyState extends State<_ChatPanelBody> {
                     ),
                     const SizedBox(width: 4),
                   ],
-                  Icon(Icons.forum_outlined,
-                      size: touchIcon(16), color: AppColors.accent),
+                  Tooltip(
+                    message: source?.label ?? 'Chat',
+                    child: Icon(
+                        source != null && source.isSlack
+                            ? Icons.tag_rounded
+                            : Icons.forum_outlined,
+                        size: touchIcon(16),
+                        color: AppColors.accent),
+                  ),
                   const SizedBox(width: 8),
                   Expanded(
                     child: candidates.length > 1

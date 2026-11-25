@@ -118,6 +118,13 @@ class ChatListCubit extends Cubit<ChatListState> {
   Timer? _poll;
   int _generation = 0;
 
+  /// How many Slack conversations' activity one window load reads.
+  /// `conversations.history` is Tier 3 (50+ a minute), and someone in 150
+  /// channels would otherwise spend three minutes of it before the open
+  /// conversation could poll; past these, a conversation sorts by name until
+  /// it is opened or messaged.
+  static const _slackActivityPerLoad = 40;
+
   /// Channels whose activity has been looked up this session.
   final _activityAsked = <String>{};
 
@@ -181,15 +188,24 @@ class ChatListCubit extends Cubit<ChatListState> {
     );
   }
 
-  /// Channel listings carry no activity, so each channel's newest post is
-  /// read once, four at a time, and the list re-sorts as they land.
+  /// Channel listings carry no activity (nor does any Slack listing), so
+  /// each such conversation's newest post is read once, four at a time, and
+  /// the list re-sorts as they land.
   Future<void> _fillChannelActivity(
       int gen, List<ChatConversation> list) async {
     final accountId = state.accountId;
     if (accountId == null) return;
-    final pending = list
-        .where((c) => c.isChannel && _activityAsked.add(c.key))
-        .toList();
+    final slack = ChatSource.isSlackId(accountId);
+    final pending = slack
+        // Direct and group messages first: they are the ones people answer.
+        ? ([
+            ...list.where((c) => c.kind != ChatKind.space),
+            ...list.where((c) => c.kind == ChatKind.space),
+          ]
+            .where((c) => c.lastActivity == null && _activityAsked.add(c.key))
+            .take(_slackActivityPerLoad)
+            .toList())
+        : list.where((c) => c.isChannel && _activityAsked.add(c.key)).toList();
     for (var i = 0; i < pending.length; i += 4) {
       await Future.wait(pending.skip(i).take(4).map(
             (c) => _repo.channelActivity(accountId, c),

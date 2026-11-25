@@ -11,18 +11,102 @@ import '../../domain/entities/chat.dart';
 import '../../core/utils/consumer_email_domain.dart';
 import '../../domain/repositories/chat_repository.dart';
 import '../../domain/repositories/contact_cache_repository.dart';
+import '../../infrastructure/accounts/account.dart';
 import '../../infrastructure/accounts/account_manager.dart';
+import '../../infrastructure/slack/slack_workspaces.dart';
 import '../datasources/remote/chat_remote_datasource.dart';
+import '../datasources/remote/slack_chat_datasource.dart';
 
 class ChatRepositoryImpl implements ChatRepository {
   ChatRepositoryImpl({
     required AccountManager accountManager,
     required ContactCacheRepository contacts,
+    required this._slack,
   })  : _accounts = accountManager,
         _contacts = contacts;
 
   final AccountManager _accounts;
   final ContactCacheRepository _contacts;
+  final SlackWorkspaces _slack;
+
+  /// The datasource behind a chat id: a Slack workspace for `slack:{team}`,
+  /// otherwise the email account's own chat (null where it has none).
+  ChatRemoteDatasource? _ds(String accountId) {
+    final team = SlackWorkspace.teamIdOf(accountId);
+    if (team != null) {
+      return SlackChatDatasource(workspaces: _slack, teamId: team);
+    }
+    return _accounts.chatDatasourceForAccount(accountId);
+  }
+
+  @override
+  Future<List<ChatSource>> sources(String? accountId) async {
+    final out = <ChatSource>[];
+    final account = accountId == null ? null : _accounts.accountById(accountId);
+    if (account != null && await _accounts.chatGrants(account.id) != null) {
+      final server = account is MicrosoftAccount && account.isNightmailServer;
+      out.add(ChatSource(
+        id: account.id,
+        kind: account is GmailAccount
+            ? ChatSourceKind.googleChat
+            : server
+                ? ChatSourceKind.nightmailServer
+                : ChatSourceKind.teams,
+        label: account is GmailAccount
+            ? 'Google Chat'
+            : server
+                ? 'NightMail Chat'
+                : 'Teams',
+      ));
+    }
+    final workspaces = await _slack.all();
+    for (final w in workspaces) {
+      out.add(ChatSource(
+        id: w.chatId,
+        kind: ChatSourceKind.slack,
+        label: 'Slack · ${w.teamName}',
+        needsReconnect: w.needsReconnect,
+      ));
+    }
+    return out;
+  }
+
+  @override
+  Stream<void> get sourcesChanged => _slack.changes;
+
+  @override
+  Future<Either<Failure, ChatSource>> connectSlack(String clientId) async {
+    try {
+      final w = await _slack.connect(clientId: clientId);
+      _conversations.remove(w.chatId);
+      return Right(ChatSource(
+        id: w.chatId,
+        kind: ChatSourceKind.slack,
+        label: 'Slack · ${w.teamName}',
+      ));
+    } on AuthException catch (e) {
+      return Left(AuthFailure(message: e.message));
+    } on NetworkException catch (e) {
+      return Left(NetworkFailure(message: e.message));
+    } catch (e) {
+      return Left(ServerFailure(message: e.toString()));
+    }
+  }
+
+  @override
+  Future<void> disconnectSlack(String sourceId) async {
+    final team = SlackWorkspace.teamIdOf(sourceId);
+    if (team == null) return;
+    _conversations.remove(sourceId);
+    await _slack.remove(team);
+  }
+
+  @override
+  Future<String?> slackClientId(String sourceId) async {
+    final team = SlackWorkspace.teamIdOf(sourceId);
+    if (team == null) return null;
+    return (await _slack.byTeam(team))?.clientId;
+  }
 
   /// The last conversation list per account, so the pane can look a person's
   /// one-on-one up on every selected email without listing chats each time.
@@ -44,6 +128,13 @@ class ChatRepositoryImpl implements ChatRepository {
 
   @override
   Future<ChatAccess> access(String accountId) async {
+    final team = SlackWorkspace.teamIdOf(accountId);
+    if (team != null) {
+      final w = await _slack.byTeam(team);
+      if (w == null) return ChatAccess.unsupported;
+      // Reconnecting is the consent prompt's job, as Microsoft's is.
+      return w.needsReconnect ? ChatAccess.needsConsent : ChatAccess.full;
+    }
     final grants = await _accounts.chatGrants(accountId);
     return _accessOf(grants);
   }
@@ -61,6 +152,20 @@ class ChatRepositoryImpl implements ChatRepository {
     String accountId, {
     bool channels = false,
   }) async {
+    final team = SlackWorkspace.teamIdOf(accountId);
+    if (team != null) {
+      final clientId = (await _slack.byTeam(team))?.clientId;
+      if (clientId == null) {
+        return const Left(
+            UnsupportedFailure(message: 'This Slack workspace is not connected.'));
+      }
+      final connected = await connectSlack(clientId);
+      return connected.flatMap((s) => s.id == accountId
+          ? const Right(ChatAccess.full)
+          : Left(AuthFailure(
+              message: 'That sign-in was to ${s.label.replaceFirst('Slack · ', '')}, '
+                  'not this workspace.')));
+    }
     try {
       final grants =
           await _accounts.requestChatAccess(accountId, channels: channels);
@@ -92,9 +197,13 @@ class ChatRepositoryImpl implements ChatRepository {
             debugPrint('[Chat] channels unavailable: $e');
           }
         }
+        // Channels list without activity, and Slack lists nothing with it:
+        // whatever has been learned of either is kept across refreshes.
         final merged = [
-          ...chats,
-          for (final c in channels) _channelActivity['$accountId|${c.key}'] ?? c,
+          for (final c in [...chats, ...channels])
+            c.lastActivity == null
+                ? _channelActivity['$accountId|${c.key}'] ?? c
+                : c,
         ]..sort(_byActivity);
         _conversations[accountId] = merged;
         _listedAt[accountId] = DateTime.now();
@@ -179,7 +288,7 @@ class ChatRepositoryImpl implements ChatRepository {
     String accountId, {
     ChatConversation? conversation,
   }) async {
-    final ds = _accounts.chatDatasourceForAccount(accountId);
+    final ds = _ds(accountId);
     if (ds == null) return null;
     try {
       return await ds.ownUserId(conversation);
@@ -195,7 +304,7 @@ class ChatRepositoryImpl implements ChatRepository {
     String email, {
     String name = '',
   }) async {
-    final direct = _accounts.chatDatasourceForAccount(accountId);
+    final direct = _ds(accountId);
     if (direct != null && direct.findsOneOnOneDirectly) {
       return _guard(accountId, (ds) => ds.findOneOnOne(email));
     }
@@ -262,8 +371,12 @@ class ChatRepositoryImpl implements ChatRepository {
     String text,
   ) =>
       _guard(accountId, (ds) async {
-        final own = _accounts.chatOwnAddress(accountId);
-        if (own == null || own.isEmpty) {
+        // Slack opens a DM by user id; it needs no address of the user's.
+        final own = SlackWorkspace.teamIdOf(accountId) != null
+            ? ''
+            : _accounts.chatOwnAddress(accountId);
+        if (own == null ||
+            (own.isEmpty && SlackWorkspace.teamIdOf(accountId) == null)) {
           throw const ServerException(
               message: 'This account has no address to chat as.');
         }
@@ -323,6 +436,18 @@ class ChatRepositoryImpl implements ChatRepository {
   @override
   Future<Set<String>> colleagues(
       String accountId, Iterable<String> addresses) async {
+    final ds = _ds(accountId);
+    if (ds != null && SlackWorkspace.teamIdOf(accountId) != null) {
+      // A Slack workspace is its own directory, unrelated to mail domains.
+      try {
+        return await ds.directoryMembers(
+                addresses.map((a) => a.trim().toLowerCase()).toList()) ??
+            const {};
+      } catch (e) {
+        debugPrint('[Chat] Slack directory lookup failed: $e');
+        return const {};
+      }
+    }
     final account = _accounts.accountById(accountId);
     if (account == null) return const {};
     // The account's own domains — but a personal domain (gmail.com,
@@ -371,14 +496,14 @@ class ChatRepositoryImpl implements ChatRepository {
 
   @override
   Future<Uint8List?> image(String accountId, String src) {
-    final ds = _accounts.chatDatasourceForAccount(accountId);
+    final ds = _ds(accountId);
     if (ds == null) return Future.value();
     return _cachedImage('$accountId|img|$src', () => ds.image(src));
   }
 
   @override
   Future<Uint8List?> photo(String accountId, String userId) {
-    final ds = _accounts.chatDatasourceForAccount(accountId);
+    final ds = _ds(accountId);
     if (ds == null || userId.isEmpty) return Future.value();
     return _cachedImage('$accountId|photo|$userId', () => ds.photo(userId));
   }
@@ -389,6 +514,9 @@ class ChatRepositoryImpl implements ChatRepository {
     List<({String email, String name})> people,
   ) async {
     final out = await colleagues(accountId, people.map((p) => p.email));
+    // Slack's lookup already is "has a Slack account here"; someone it does
+    // not know has no DM to find either.
+    if (SlackWorkspace.teamIdOf(accountId) != null) return out;
     final outsiders = [
       for (final p in people)
         if (!out.contains(p.email.trim().toLowerCase())) p,
@@ -493,7 +621,7 @@ class ChatRepositoryImpl implements ChatRepository {
     String accountId,
     Future<T> Function(ChatRemoteDatasource ds) run,
   ) async {
-    final ds = _accounts.chatDatasourceForAccount(accountId);
+    final ds = _ds(accountId);
     if (ds == null) {
       return const Left(
           UnsupportedFailure(message: 'Chat is not available for this account'));

@@ -703,13 +703,14 @@ class _Notice extends StatelessWidget {
 }
 
 /// Shown before a Microsoft 365 or Google Workspace account has consented to
-/// chat.
+/// chat, and for a Slack workspace that has to be connected again.
 class ChatConsentPrompt extends StatelessWidget {
   const ChatConsentPrompt({
     super.key,
     required this.onGrant,
     this.error,
     this.google = false,
+    this.slackWorkspace,
   });
 
   final VoidCallback onGrant;
@@ -717,6 +718,10 @@ class ChatConsentPrompt extends StatelessWidget {
 
   /// Names Google Chat rather than Teams.
   final bool google;
+
+  /// A Slack workspace whose sign-in Slack no longer accepts: the prompt
+  /// asks to reconnect it instead.
+  final String? slackWorkspace;
 
   @override
   Widget build(BuildContext context) {
@@ -730,7 +735,10 @@ class ChatConsentPrompt extends StatelessWidget {
             Icon(Icons.forum_outlined, size: 32, color: c.stateIcon),
             const SizedBox(height: 8),
             Text(
-              google
+              slackWorkspace != null
+                  ? 'Slack no longer accepts NightMail\'s sign-in for '
+                      '$slackWorkspace. Connect it again to keep chatting.'
+                  : google
                   ? 'NightMail needs your permission to read and send '
                       'Google Chat messages.'
                   : 'NightMail needs your permission to read and send Teams '
@@ -739,7 +747,10 @@ class ChatConsentPrompt extends StatelessWidget {
               style: TextStyle(fontSize: 12.5, color: c.textTertiary),
             ),
             const SizedBox(height: 12),
-            FilledButton(onPressed: onGrant, child: const Text('Allow chat')),
+            FilledButton(
+                onPressed: onGrant,
+                child: Text(
+                    slackWorkspace != null ? 'Reconnect Slack' : 'Allow chat')),
             if (error != null) ...[
               const SizedBox(height: 8),
               Text(error!,

@@ -43,6 +43,7 @@ import 'data/repositories/sender_repository_impl.dart';
 import 'data/repositories/spam_filter_repository_impl.dart';
 import 'data/repositories/system_contacts_repository_impl.dart';
 import 'data/repositories/chat_repository_impl.dart';
+import 'infrastructure/slack/slack_workspaces.dart';
 import 'data/repositories/tasks_repository_impl.dart';
 import 'data/services/eml_parser.dart';
 import 'data/services/inline_attachment_cache.dart';
@@ -458,10 +459,14 @@ Future<void> configureDependencies() async {
   sl.registerLazySingleton<TasksRepository>(
     () => TasksRepositoryImpl(accountManager: sl<AccountManager>()),
   );
+  sl.registerLazySingleton(
+    () => SlackWorkspaces(storage: sl<FlutterSecureStorage>()),
+  );
   sl.registerLazySingleton<ChatRepository>(
     () => ChatRepositoryImpl(
       accountManager: sl<AccountManager>(),
       contacts: sl<ContactCacheRepository>(),
+      slack: sl<SlackWorkspaces>(),
     ),
   );
   sl.registerLazySingleton<SpamFilterRepository>(

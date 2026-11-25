@@ -26,8 +26,29 @@ enum ChatAccess {
 /// never act on the wrong one.
 ///
 /// Graph-backed for Microsoft 365 and NightMail Server accounts alike; see
-/// `docs/claude/chat.md`.
+/// `docs/claude/chat.md`. A connected Slack workspace is named by its
+/// [ChatSource.id] (`slack:{teamId}`) wherever an `accountId` is taken.
 abstract interface class ChatRepository {
+  /// The chat systems the Chat button offers with [accountId] active: the
+  /// account's own chat when its provider has one, then every connected
+  /// Slack workspace. [accountId] null gives the Slack workspaces alone.
+  Future<List<ChatSource>> sources(String? accountId);
+
+  /// Fires when a Slack workspace is connected, removed or needs
+  /// reconnecting in this isolate.
+  Stream<void> get sourcesChanged;
+
+  /// Signs in to a Slack workspace through the internal Slack app
+  /// [clientId] names, or reconnects one already listed.
+  Future<Either<Failure, ChatSource>> connectSlack(String clientId);
+
+  /// Forgets the Slack workspace [sourceId] and revokes its token.
+  Future<void> disconnectSlack(String sourceId);
+
+  /// The Slack app client id [sourceId] was connected with, for reconnecting
+  /// it; null for anything else.
+  Future<String?> slackClientId(String sourceId);
+
   Future<ChatAccess> access(String accountId);
 
   /// Runs the incremental consent for chats (and, with [channels], for team

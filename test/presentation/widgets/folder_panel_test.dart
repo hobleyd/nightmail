@@ -1363,8 +1363,15 @@ void main() {
 }
 
 /// No unread chats — the Chat button only reads the cubit's state.
-class _FixedChatUnreadCubit extends Cubit<int> implements ChatUnreadCubit {
-  _FixedChatUnreadCubit() : super(0);
+class _FixedChatUnreadCubit extends Cubit<ChatUnreadState>
+    implements ChatUnreadCubit {
+  _FixedChatUnreadCubit() : super(const ChatUnreadState());
+
+  @override
+  void choose(String sourceId) {}
+
+  @override
+  bool takeSwitched() => false;
 
   @override
   void start() {}

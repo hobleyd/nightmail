@@ -5,6 +5,9 @@ import 'package:nightmail/domain/entities/chat.dart';
 import 'package:nightmail/domain/repositories/contact_cache_repository.dart';
 import 'package:nightmail/infrastructure/accounts/account.dart';
 import 'package:nightmail/infrastructure/accounts/account_manager.dart';
+import 'package:nightmail/infrastructure/slack/slack_workspaces.dart';
+
+import '../../fakes/memory_secure_storage.dart';
 
 /// The Chat pane offers only colleagues: someone on one of the account's own
 /// domains, or in its cached directory (a tenant with several domains). A
@@ -18,6 +21,7 @@ void main() {
       ChatRepositoryImpl(
         accountManager: _Accounts(account, _Chats(chats)),
         contacts: _Directory(directory),
+        slack: SlackWorkspaces(storage: MemorySecureStorage()),
       );
 
   final work = MicrosoftAccount(

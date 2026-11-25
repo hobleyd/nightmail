@@ -72,6 +72,12 @@ abstract interface class ChatRemoteDatasource {
     required String displayName,
   });
 
+  /// Which of [emails] (lower-cased) the provider's own directory knows, or
+  /// null where the account's organisation decides instead
+  /// ([ChatRepository.colleagues]) — Slack, whose workspace has no tie to the
+  /// mail account's domains, answers with `users.lookupByEmail`.
+  Future<Set<String>?> directoryMembers(List<String> emails);
+
   /// Only when [searchesOnServer].
   Future<List<ChatSearchHit>> search(String query);
 

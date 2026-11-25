@@ -386,6 +386,9 @@ class GraphChatDatasource implements ChatRemoteDatasource {
   /// Microsoft Search over chat and channel messages. A NightMail Server does
   /// not serve `/search/query`; the repository searches its history itself.
   @override
+  Future<Set<String>?> directoryMembers(List<String> emails) async => null;
+
+  @override
   Future<List<ChatSearchHit>> search(String query) async {
     final data = await _post('/search/query', {
       'requests': [

@@ -6,6 +6,7 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mockito/mockito.dart';
 import 'package:nightmail/core/platform/window_utils.dart';
+import 'package:nightmail/domain/entities/chat.dart';
 import 'package:nightmail/presentation/blocs/chat/chat_unread_cubit.dart';
 import 'package:nightmail/presentation/blocs/tasks/overdue_tasks_cubit.dart';
 import 'package:nightmail/presentation/widgets/view_shortcut_buttons.dart';
@@ -77,7 +78,23 @@ void main() {
     resetPlatformDoubleClickInterval();
   });
 
-  Future<void> pump(WidgetTester tester, {int unreadChats = 0}) async {
+  late _FixedChatUnreadCubit chat;
+
+  const teams =
+      ChatSource(id: 'acct', kind: ChatSourceKind.teams, label: 'Teams');
+  const slack = ChatSource(
+      id: 'slack:T1', kind: ChatSourceKind.slack, label: 'Slack · Acme');
+
+  Future<void> pump(
+    WidgetTester tester, {
+    int unreadChats = 0,
+    List<ChatSource> sources = const [teams],
+    Map<String, int>? unread,
+  }) async {
+    chat = _FixedChatUnreadCubit(ChatUnreadState(
+      sources: sources,
+      unread: unread ?? {sources.first.id: unreadChats},
+    ));
     final overdue = MockOverdueTasksCubit();
     when(overdue.stream).thenAnswer((_) => const Stream.empty());
     when(overdue.state).thenReturn(0);
@@ -87,8 +104,7 @@ void main() {
           body: MultiBlocProvider(
             providers: [
               BlocProvider<OverdueTasksCubit>.value(value: overdue),
-              BlocProvider<ChatUnreadCubit>.value(
-                  value: _FixedChatUnreadCubit(unreadChats)),
+              BlocProvider<ChatUnreadCubit>.value(value: chat),
             ],
             child: ViewShortcutButtons(
               onCalendarTapped: () => taps.add('calendar'),
@@ -177,6 +193,53 @@ void main() {
     expect(created, isEmpty);
   });
 
+  testWidgets('with Slack beside the account\'s chat, a click asks which',
+      (tester) async {
+    await pump(tester,
+        sources: const [teams, slack], unread: const {'slack:T1': 3});
+    expect(button('Chat — 3 unread in Slack · Acme'), findsOneWidget,
+        reason: 'the tooltip names the system with the unread chats');
+
+    await tester.tap(button('Chat — 3 unread in Slack · Acme'));
+    await tester.pump(osInterval + const Duration(milliseconds: 50));
+    await tester.pumpAndSettle();
+    expect(find.text('Teams'), findsOneWidget);
+    expect(find.text('Slack · Acme'), findsOneWidget);
+    expect(find.text('3'), findsOneWidget, reason: 'Slack\'s count');
+    expect(taps, isEmpty, reason: 'nothing opens until one is picked');
+
+    await tester.tap(find.text('Slack · Acme'));
+    await tester.pumpAndSettle();
+    expect(chat.chosen, ['slack:T1']);
+    expect(taps, ['chat']);
+  });
+
+  testWidgets('a double-click on the menu button still opens the window',
+      (tester) async {
+    await pump(tester, sources: const [teams, slack]);
+
+    await tester.tap(button('Chat'));
+    await tester.pump(slowGap);
+    await tester.tap(button('Chat'));
+    await tester.pump(osInterval * 2);
+    await tester.pumpAndSettle();
+
+    expect(find.text('Slack · Acme'), findsNothing, reason: 'no menu');
+    expect(created.single, contains('"type":"chat"'));
+  });
+
+  testWidgets('Slack alone (an IMAP account) is the button, with no menu',
+      (tester) async {
+    await pump(tester, sources: const [slack]);
+
+    await tester.tap(button('Chat'));
+    await tester.pump(osInterval + const Duration(milliseconds: 50));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Slack · Acme'), findsNothing);
+    expect(taps, ['chat']);
+  });
+
   testWidgets('clicks spaced wider than the interval are two toggles',
       (tester) async {
     await pump(tester);
@@ -221,9 +284,19 @@ void main() {
   });
 }
 
-/// A [ChatUnreadCubit] stuck at [count] — the widgets only read its state.
-class _FixedChatUnreadCubit extends Cubit<int> implements ChatUnreadCubit {
-  _FixedChatUnreadCubit([super.count = 0]);
+/// A [ChatUnreadCubit] stuck at [state] — the widgets only read it, and the
+/// menu's choice is recorded.
+class _FixedChatUnreadCubit extends Cubit<ChatUnreadState>
+    implements ChatUnreadCubit {
+  _FixedChatUnreadCubit(super.state);
+
+  final chosen = <String>[];
+
+  @override
+  void choose(String sourceId) => chosen.add(sourceId);
+
+  @override
+  bool takeSwitched() => false;
 
   @override
   void start() {}

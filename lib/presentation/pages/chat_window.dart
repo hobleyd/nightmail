@@ -22,6 +22,10 @@ import '../widgets/chat/chat_conversation_view.dart';
 /// The chat window, opened by double-clicking the Chat button: every chat
 /// and channel on the left, grouped and newest first, the open one's history
 /// on the right, search across them all.
+///
+/// It opens on the active account's own chat (Teams, Google Chat, NightMail
+/// Server); connected Slack workspaces are further entries in its picker,
+/// and the one it opens on when the account has no chat of its own.
 class ChatWindowApp extends StatelessWidget {
   const ChatWindowApp({super.key});
 
@@ -80,6 +84,30 @@ class _ChatWindowPageState extends State<_ChatWindowPage> {
   String? _accountId;
   double _listWidth = 300;
 
+  /// Connected Slack workspaces; null until read from the Keychain, which
+  /// this window — its own isolate — does itself.
+  List<ChatSource>? _slack;
+  StreamSubscription<void>? _slackChanges;
+
+  @override
+  void initState() {
+    super.initState();
+    final repo = sl<ChatRepository>();
+    _slackChanges = repo.sourcesChanged.listen((_) => _loadSlack());
+    _loadSlack();
+  }
+
+  @override
+  void dispose() {
+    _slackChanges?.cancel();
+    super.dispose();
+  }
+
+  Future<void> _loadSlack() async {
+    final slack = await sl<ChatRepository>().sources(null);
+    if (mounted) setState(() => _slack = slack);
+  }
+
   /// Accounts that can chat: Microsoft 365 and NightMail Server sign-ins,
   /// and Google Workspace ones. A shared mailbox has no chats of its own, and
   /// Google's Chat API does not serve `@gmail.com`.
@@ -93,15 +121,37 @@ class _ChatWindowPageState extends State<_ChatWindowPage> {
           .toList()
       : const [];
 
+  /// The picker's entries: each account that can chat, then each Slack
+  /// workspace.
+  List<({String id, String label})> _entries(AccountState s) => [
+        for (final a in _chatAccounts(s))
+          (
+            id: a.id,
+            label: a.emailAddress.isNotEmpty ? a.emailAddress : a.displayName,
+          ),
+        for (final w in _slack ?? const <ChatSource>[])
+          (
+            id: w.id,
+            label: w.needsReconnect ? '${w.label} (reconnect)' : w.label,
+          ),
+      ];
+
+  /// Starts on the active account's own chat — the platform chat — and only
+  /// on Slack when the account has none.
   void _ensureAccount(AccountState s) {
-    final accounts = _chatAccounts(s);
-    if (accounts.isEmpty) return;
-    if (_accountId != null && accounts.any((a) => a.id == _accountId)) return;
+    final entries = _entries(s);
+    if (entries.isEmpty) return;
+    if (_accountId != null && entries.any((e) => e.id == _accountId)) return;
     final active = s is AccountsLoaded ? s.activeAccount : null;
-    final pick = accounts.any((a) => a.id == active?.id)
-        ? active!
-        : accounts.first;
-    _switchTo(pick.id);
+    if (entries.any((e) => e.id == active?.id)) {
+      _switchTo(active!.id);
+      return;
+    }
+    // The active account has no chat: Slack, as the button would — once the
+    // workspaces are known, or another account would win the race.
+    final slack = _slack;
+    if (slack == null) return;
+    _switchTo(slack.firstOrNull?.id ?? entries.first.id);
   }
 
   void _switchTo(String accountId) {
@@ -126,15 +176,22 @@ class _ChatWindowPageState extends State<_ChatWindowPage> {
       if (mounted) _ensureAccount(context.read<AccountCubit>().state);
     });
     final accounts = _chatAccounts(accountState);
+    final entries = _entries(accountState);
+    final slack = _slack?.where((w) => w.id == _accountId).firstOrNull;
 
-    if (accountState is AccountsLoaded && accounts.isEmpty) {
+    if (accountState is AccountsLoaded && _slack != null && entries.isEmpty) {
       return Scaffold(
         backgroundColor: c.surfacePanel,
         body: Center(
-          child: Text(
-            'Chat is available for Microsoft 365, NightMail Server and '
-            'Google Workspace accounts.',
-            style: TextStyle(color: c.textTertiary),
+          child: Padding(
+            padding: const EdgeInsets.all(24),
+            child: Text(
+              'Chat is available for Microsoft 365, NightMail Server and '
+              'Google Workspace accounts, and for Slack once a workspace is '
+              'connected in Settings > General.',
+              textAlign: TextAlign.center,
+              style: TextStyle(color: c.textTertiary),
+            ),
           ),
         ),
       );
@@ -150,7 +207,7 @@ class _ChatWindowPageState extends State<_ChatWindowPage> {
             SizedBox(
               width: listWidth,
               child: _ConversationList(
-                accounts: accounts,
+                accounts: entries,
                 accountId: _accountId,
                 onAccountChanged: (id) => setState(() => _switchTo(id)),
                 onOpen: _open,
@@ -174,6 +231,7 @@ class _ChatWindowPageState extends State<_ChatWindowPage> {
               child: _ConversationPane(
                 google: accounts
                     .any((a) => a.id == _accountId && a is GmailAccount),
+                slackWorkspace: slack?.label.replaceFirst('Slack · ', ''),
               ),
             ),
           ],
@@ -191,7 +249,7 @@ class _ConversationList extends StatefulWidget {
     required this.onOpen,
   });
 
-  final List<Account> accounts;
+  final List<({String id, String label})> accounts;
   final String? accountId;
   final ValueChanged<String> onAccountChanged;
   final ValueChanged<ChatConversation> onOpen;
@@ -231,12 +289,7 @@ class _ConversationListState extends State<_ConversationList> {
                     for (final a in widget.accounts)
                       DropdownMenuItem(
                         value: a.id,
-                        child: Text(
-                          a.emailAddress.isNotEmpty
-                              ? a.emailAddress
-                              : a.displayName,
-                          overflow: TextOverflow.ellipsis,
-                        ),
+                        child: Text(a.label, overflow: TextOverflow.ellipsis),
                       ),
                   ],
                   onChanged: (id) {
@@ -369,7 +422,11 @@ class _Grouped extends StatelessWidget {
               selected: chat.key == state.selectedKey,
               onTap: () => onOpen(chat),
             ),
-          if (spaces.isNotEmpty) _SectionHeader(label: 'Spaces'),
+          if (spaces.isNotEmpty)
+            _SectionHeader(
+                label: ChatSource.isSlackId(state.accountId)
+                    ? 'Channels'
+                    : 'Spaces'),
           for (final space in spaces)
             _ConversationRow(
               conversation: space,
@@ -632,9 +689,12 @@ class _SearchResults extends StatelessWidget {
 }
 
 class _ConversationPane extends StatelessWidget {
-  const _ConversationPane({required this.google});
+  const _ConversationPane({required this.google, this.slackWorkspace});
 
   final bool google;
+
+  /// The Slack workspace shown, by name; null for an account's own chat.
+  final String? slackWorkspace;
 
   @override
   Widget build(BuildContext context) {
@@ -644,6 +704,7 @@ class _ConversationPane extends StatelessWidget {
         if (state.access == ChatAccess.needsConsent) {
           return ChatConsentPrompt(
             google: google,
+            slackWorkspace: slackWorkspace,
             error: state.error,
             onGrant: () async {
               final accountId = state.accountId;

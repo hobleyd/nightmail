@@ -10,13 +10,16 @@ import 'package:file_selector/file_selector.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 
+import '../../core/config/app_config.dart';
 import '../../core/error/exceptions.dart';
 import '../../core/platform/touch_metrics.dart';
 import '../../core/settings/app_settings.dart';
 import '../../core/signature/signature_import.dart';
 import '../../core/signature/signature_merge_engine.dart';
 import '../../core/theme/app_colors.dart';
+import '../../domain/entities/chat.dart';
 import '../../domain/entities/email.dart';
+import '../../domain/repositories/chat_repository.dart';
 import '../../injection_container.dart';
 import '../../infrastructure/notifications/meeting_reminder_board.dart';
 import '../../infrastructure/accounts/account.dart';
@@ -356,6 +359,8 @@ class _GeneralSection extends StatelessWidget {
         _PollIntervalSetting(),
         const SizedBox(height: 12),
         const _DeleteConfirmSetting(),
+        const SizedBox(height: 20),
+        const _SlackSetting(),
       ],
     );
   }
@@ -637,6 +642,233 @@ class _DeleteConfirmSettingState extends State<_DeleteConfirmSetting> {
               },
             ),
           ),
+        ),
+      ],
+    );
+  }
+}
+
+/// Slack as a second chat system beside the account's own (or the only one,
+/// for an IMAP account). Connecting a workspace is what turns the Chat button
+/// into a menu of systems — see `docs/claude/chat.md`.
+class _SlackSetting extends StatefulWidget {
+  const _SlackSetting();
+
+  @override
+  State<_SlackSetting> createState() => _SlackSettingState();
+}
+
+class _SlackSettingState extends State<_SlackSetting> {
+  final _repo = sl<ChatRepository>();
+  List<ChatSource> _workspaces = const [];
+  StreamSubscription<void>? _changes;
+
+  /// The workspace being reconnected, or '' while a new one connects.
+  String? _busy;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    _changes = _repo.sourcesChanged.listen((_) => _load());
+    _load();
+  }
+
+  @override
+  void dispose() {
+    _changes?.cancel();
+    super.dispose();
+  }
+
+  Future<void> _load() async {
+    final list = await _repo.sources(null);
+    if (mounted) setState(() => _workspaces = list);
+  }
+
+  Future<void> _connect({String? reconnecting}) async {
+    final last = reconnecting != null
+        ? await _repo.slackClientId(reconnecting)
+        : null;
+    if (!mounted) return;
+    final clientId = last ??
+        await showDialog<String>(
+          context: context,
+          builder: (_) => _SlackClientIdDialog(
+            initial: _workspaces.isEmpty ? AppConfig.slackClientId : '',
+          ),
+        );
+    if (clientId == null || clientId.trim().isEmpty || !mounted) return;
+    setState(() {
+      _busy = reconnecting ?? '';
+      _error = null;
+    });
+    final result = await _repo.connectSlack(clientId);
+    if (!mounted) return;
+    setState(() {
+      _busy = null;
+      _error = result.match(
+        (f) => f.message == const SignInSupersededException().message
+            ? null
+            : f.message,
+        (_) => null,
+      );
+    });
+    await _load();
+  }
+
+  Future<void> _disconnect(ChatSource w) async {
+    await _repo.disconnectSlack(w.id);
+    await _load();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.colors;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Text(
+              'Slack',
+              style: TextStyle(color: c.textSecondary, fontSize: 13),
+            ),
+            const Spacer(),
+            SizedBox(
+              width: 180,
+              child: Align(
+                alignment: Alignment.centerRight,
+                child: _busy == ''
+                    ? const SizedBox(
+                        width: 16,
+                        height: 16,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : TextButton(
+                        onPressed: _busy != null ? null : () => _connect(),
+                        child: Text(_workspaces.isEmpty
+                            ? 'Connect workspace…'
+                            : 'Add workspace…'),
+                      ),
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 4),
+        Text(
+          _workspaces.isEmpty
+              ? 'Chat on Slack from the Chat button. With Slack beside your '
+                  'account\'s own chat, the button asks which to open.'
+              : 'The Chat button now asks which chat to open.',
+          style: TextStyle(color: c.textMuted, fontSize: 12),
+        ),
+        for (final w in _workspaces)
+          Padding(
+            padding: const EdgeInsets.only(top: 6),
+            child: Row(
+              children: [
+                Icon(Icons.tag_rounded, size: 15, color: c.textMuted),
+                const SizedBox(width: 6),
+                Expanded(
+                  child: Text(
+                    w.label.replaceFirst('Slack · ', ''),
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(color: c.textPrimary, fontSize: 13),
+                  ),
+                ),
+                if (w.needsReconnect)
+                  _busy == w.id
+                      ? const SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : TextButton(
+                          onPressed: _busy != null
+                              ? null
+                              : () => _connect(reconnecting: w.id),
+                          child: const Text('Reconnect'),
+                        ),
+                TextButton(
+                  onPressed: _busy != null ? null : () => _disconnect(w),
+                  child: const Text('Disconnect'),
+                ),
+              ],
+            ),
+          ),
+        if (_error != null)
+          Padding(
+            padding: const EdgeInsets.only(top: 6),
+            child: Text(_error!,
+                style: TextStyle(color: c.errorBannerText, fontSize: 12)),
+          ),
+      ],
+    );
+  }
+}
+
+/// Asks for the Slack app's Client ID: each workspace has its own internal
+/// NightMail app, which `tool/setup_slack_app.sh` creates.
+class _SlackClientIdDialog extends StatefulWidget {
+  const _SlackClientIdDialog({required this.initial});
+
+  final String initial;
+
+  @override
+  State<_SlackClientIdDialog> createState() => _SlackClientIdDialogState();
+}
+
+class _SlackClientIdDialogState extends State<_SlackClientIdDialog> {
+  late final _controller = TextEditingController(text: widget.initial);
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.colors;
+    return AlertDialog(
+      backgroundColor: c.surfacePanel,
+      title: const Text('Connect a Slack workspace'),
+      content: SizedBox(
+        width: 420,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'NightMail signs in through a Slack app installed in your '
+              'workspace. Create it from NightMail\'s manifest '
+              '(tool/setup_slack_app.sh), install it, and paste its Client '
+              'ID (Basic Information > App Credentials).',
+              style: TextStyle(color: c.textSecondary, fontSize: 12.5),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: _controller,
+              autofocus: true,
+              style: TextStyle(color: c.textPrimary, fontSize: 13),
+              decoration: const InputDecoration(
+                labelText: 'Client ID',
+                hintText: '1234567890.1234567890123',
+                isDense: true,
+              ),
+              onSubmitted: (v) => Navigator.of(context).pop(v.trim()),
+            ),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('Cancel'),
+        ),
+        FilledButton(
+          onPressed: () => Navigator.of(context).pop(_controller.text.trim()),
+          child: const Text('Sign in with Slack'),
         ),
       ],
     );

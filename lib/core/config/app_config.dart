@@ -38,6 +38,13 @@ class AppConfig {
     defaultValue: 'nightmail://auth-callback',
   );
 
+  /// The Slack app a "Connect a Slack workspace" starts with. Each workspace
+  /// runs its own internal app (`tool/setup_slack_app.sh`) — an internal app
+  /// keeps Slack's Tier 3 history limits, a distributed one outside the
+  /// Marketplace drops to one call a minute — so this is only the default
+  /// the Settings dialog offers; the id used is stored with the workspace.
+  static const slackClientId = String.fromEnvironment('SLACK_CLIENT_ID');
+
   // No literal default: GitHub push protection blocks a Google OAuth Client
   // ID/Secret pair committed to source, even a non-confidential "Desktop
   // app"-type one (see Google's native-app OAuth docs). Supply the real

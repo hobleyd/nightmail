@@ -120,9 +120,11 @@ would re-break.
   needs action" out of cached mail, the scan budget, auto-resolution rules
 - [`docs/claude/chat.md`](docs/claude/chat.md) — the Chat pane and window:
   Teams chats and channels over Graph on Microsoft 365 and NightMail Server
-  (Talk), Google Chat on Workspace accounts, colleagues-only people, the
-  two-step Microsoft consent (channels need admin approval), polling, and
-  search without a server route on Nightware and Google
+  (Talk), Google Chat on Workspace accounts, Slack workspaces (one internal
+  app each, PKCE, `slack:{team}` chat ids, never the email re-auth path),
+  the Chat button's menu of systems, colleagues-only people, the two-step
+  Microsoft consent (channels need admin approval), polling, and search
+  without a server route on Nightware and Google
 - [`docs/claude/share-target.md`](docs/claude/share-target.md) — NightMail
   in the phone's share sheet: the pulled share channel, Android's intent
   handling, the iOS Share Extension and its App Group

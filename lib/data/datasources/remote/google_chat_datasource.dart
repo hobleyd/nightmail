@@ -326,6 +326,9 @@ class GoogleChatDatasource implements ChatRemoteDatasource {
   }
 
   @override
+  Future<Set<String>?> directoryMembers(List<String> emails) async => null;
+
+  @override
   Future<List<ChatSearchHit>> search(String query) =>
       throw UnsupportedError('Google Chat has no user message search');
 

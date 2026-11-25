@@ -1,22 +1,62 @@
 import 'dart:async';
 
+import 'package:equatable/equatable.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 
+import '../../../domain/entities/chat.dart';
 import '../../../domain/repositories/chat_repository.dart';
 import '../../../infrastructure/accounts/account_manager.dart';
 
-/// How many of the active account's chats have something the user has not
-/// read — the number behind the dot on the Chat button.
+/// What the Chat button shows: which chat systems it opens and how many
+/// unread chats each has.
+class ChatUnreadState extends Equatable {
+  const ChatUnreadState({
+    this.sources = const [],
+    this.unread = const {},
+    this.chosenId,
+  });
+
+  /// The active account's own chat first (when it has one), then each
+  /// connected Slack workspace — [ChatRepository.sources].
+  final List<ChatSource> sources;
+
+  /// Unread chats by [ChatSource.id].
+  final Map<String, int> unread;
+
+  /// The system last picked from the menu, by id; may name one no longer
+  /// offered (an account switch), see [chosen].
+  final String? chosenId;
+
+  /// What the Chat pane shows: the system last picked while it is still
+  /// offered, otherwise the first — the account's own chat when it has one.
+  ChatSource? get chosen =>
+      sources.where((s) => s.id == chosenId).firstOrNull ?? sources.firstOrNull;
+
+  int get total => unread.values.fold(0, (a, b) => a + b);
+
+  int unreadIn(String sourceId) => unread[sourceId] ?? 0;
+
+  /// More than one system: the button asks which, as a menu.
+  bool get hasChoice => sources.length > 1;
+
+  @override
+  List<Object?> get props => [sources, unread, chosenId];
+}
+
+/// The chat systems behind the Chat button and how many of each's chats
+/// have something the user has not read — the dot, and the menu's per-system
+/// dots.
 ///
 /// Nothing pushes chat to NightMail, so this polls: one page of recent chats
-/// every [pollInterval] ([ChatRepository.unreadCount]). A chat read in this
-/// window clears at once ([ChatRepository.reads]); one read in the chat
-/// window — its own isolate — or in Teams clears on the next poll.
-class ChatUnreadCubit extends Cubit<int> {
+/// per system every [pollInterval] ([ChatRepository.unreadCount]). A chat read
+/// in this window clears at once ([ChatRepository.reads]); one read in the
+/// chat window — its own isolate — or in Teams or Slack clears on the next
+/// poll.
+class ChatUnreadCubit extends Cubit<ChatUnreadState> {
   ChatUnreadCubit({
     required this._accountManager,
     required this._repository,
-  }) : super(0);
+  }) : super(const ChatUnreadState());
 
   final AccountManager _accountManager;
   final ChatRepository _repository;
@@ -25,6 +65,7 @@ class ChatUnreadCubit extends Cubit<int> {
 
   Timer? _timer;
   StreamSubscription<String>? _reads;
+  StreamSubscription<void>? _sourcesChanged;
 
   /// Bumped per [refresh] so a slow answer for the account being left never
   /// lands after the arriving one's.
@@ -32,9 +73,11 @@ class ChatUnreadCubit extends Cubit<int> {
 
   /// Safe to call repeatedly — HomePage calls it on every build.
   void start() {
-    _reads ??= _repository.reads.listen((accountId) {
-      if (accountId == _accountManager.activeAccount?.id) unawaited(refresh());
+    _reads ??= _repository.reads.listen((id) {
+      if (state.sources.any((s) => s.id == id)) unawaited(refresh());
     });
+    _sourcesChanged ??=
+        _repository.sourcesChanged.listen((_) => unawaited(refresh()));
     if (_timer != null) return;
     _timer = Timer.periodic(pollInterval, (_) => refresh());
     unawaited(refresh());
@@ -42,19 +85,45 @@ class ChatUnreadCubit extends Cubit<int> {
 
   Future<void> refresh() async {
     final gen = ++_generation;
-    final accountId = _accountManager.activeAccount?.id;
-    if (accountId == null) {
-      if (!isClosed) emit(0);
-      return;
-    }
-    final count = await _repository.unreadCount(accountId);
-    if (gen == _generation && !isClosed) emit(count);
+    final sources =
+        await _repository.sources(_accountManager.activeAccount?.id);
+    if (gen != _generation || isClosed) return;
+    // The menu appears with its systems at once; the counts follow.
+    emit(ChatUnreadState(sources: sources, chosenId: state.chosenId, unread: {
+      for (final s in sources) s.id: ?state.unread[s.id],
+    }));
+    final counts = await Future.wait(sources.map((s) =>
+        s.needsReconnect ? Future.value(0) : _repository.unreadCount(s.id)));
+    if (gen != _generation || isClosed) return;
+    emit(ChatUnreadState(sources: sources, chosenId: state.chosenId, unread: {
+      for (var i = 0; i < sources.length; i++) sources[i].id: counts[i],
+    }));
+  }
+
+  /// Points the Chat pane at [sourceId] (from the button's menu).
+  void choose(String sourceId) {
+    _switched = sourceId != state.chosen?.id;
+    emit(ChatUnreadState(
+        sources: state.sources, unread: state.unread, chosenId: sourceId));
+  }
+
+  bool _switched = false;
+
+  /// Whether the click being handled picked a different system from the one
+  /// the pane was on — which switches an open pane rather than closing it.
+  /// Read once: false again after, and always false without a menu, so the
+  /// button is the plain toggle it always was.
+  bool takeSwitched() {
+    final switched = _switched;
+    _switched = false;
+    return switched;
   }
 
   @override
   Future<void> close() {
     _timer?.cancel();
     _reads?.cancel();
+    _sourcesChanged?.cancel();
     return super.close();
   }
 }

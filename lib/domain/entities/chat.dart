@@ -8,6 +8,40 @@ import 'package:equatable/equatable.dart';
 /// [space] is a named Google Chat space.
 enum ChatKind { oneOnOne, group, meeting, channel, space }
 
+/// Which chat system a [ChatSource] is.
+enum ChatSourceKind { teams, nightmailServer, googleChat, slack }
+
+/// One chat system the Chat button can open: the active account's own
+/// ("platform") chat, or a connected Slack workspace.
+///
+/// [id] is what every [ChatRepository] call takes as its `accountId`: the
+/// email account's id for the platform chat, `slack:{teamId}` for Slack.
+class ChatSource extends Equatable {
+  const ChatSource({
+    required this.id,
+    required this.kind,
+    required this.label,
+    this.needsReconnect = false,
+  });
+
+  final String id;
+  final ChatSourceKind kind;
+
+  /// "Teams", "Google Chat", "Slack · Acme" — what the Chat menu shows.
+  final String label;
+
+  /// A Slack workspace whose token Slack no longer accepts.
+  final bool needsReconnect;
+
+  bool get isSlack => kind == ChatSourceKind.slack;
+
+  /// Whether a chat id names a Slack workspace rather than an email account.
+  static bool isSlackId(String? id) => id?.startsWith('slack:') ?? false;
+
+  @override
+  List<Object?> get props => [id, kind, label, needsReconnect];
+}
+
 /// One person in a conversation.
 class ChatMember extends Equatable {
   const ChatMember({

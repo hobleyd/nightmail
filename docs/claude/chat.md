@@ -1,4 +1,4 @@
-# Chat — Teams chats and channels, and Google Chat
+# Chat — Teams chats and channels, Google Chat, and Slack
 
 The Chat button (third in `ViewShortcutButtons`, right of Tasks) opens a
 pane beside the reading pane (`HomeView.chat`, `ChatPanel`) — a one-on-one
@@ -7,6 +7,34 @@ with, from the dropdown. Double-clicking it
 opens the chat window (`'chat'` sub-window, `ChatWindowApp`): every chat and
 channel on the left, grouped (Chats; Teams › channels) and newest first; the
 open one's history on the right, channel threads beside it; search on top.
+
+## More than one chat system: the Chat button's menu
+
+The account's own chat (Teams, NightMail Server, Google Chat — "platform
+chat") and any Slack workspace connected in Settings > General are the
+**chat systems** (`ChatRepository.sources`, `ChatSource`): platform first,
+when the account has one, then each workspace. Nothing changes until a
+second system exists.
+
+- **One system** — the account's own, or Slack alone for an IMAP or
+  `@gmail.com` account — and the button toggles the pane as before.
+- **Two or more** and a click opens a menu of them (`_ChatButton` in
+  `view_shortcut_buttons.dart`), each with its own red dot and count, a tick
+  on the one the pane shows, "Reconnect" on a refused workspace. The icon's
+  dot is any system's unread; the tooltip names which ("Chat — 3 unread in
+  Slack · Acme"). Picking one sets `ChatUnreadCubit.choose` and the pane
+  follows `ChatUnreadState.chosen`. Picking the one already open closes the
+  pane (the toggle); picking another while it is open switches it. Whether a
+  pick switched is decided when it is made (`ChatUnreadCubit.takeSwitched`),
+  not by remembering what the pane was opened on — that broke the plain
+  toggle after an account switch and for a pane restored open at launch.
+- **The double-click** still opens the chat window, which starts on the
+  active account's platform chat; Slack workspaces are further entries in
+  its picker (and where it starts when the account has no chat).
+
+`ChatUnreadCubit` is now the button's whole model: the systems, unread per
+system (`unreadCount` for each), and the choice. An account switch re-reads
+the systems; a stale choice falls back to the first.
 
 ## Colleagues, and outsiders you already chat with
 
@@ -252,3 +280,94 @@ outside person has no photo in your directory and keeps their initials.
   `` `code` ``, bare links).
 - **Search:** Google has none a user can call (`spaces.search` is admin-only),
   so it is the same recent-history scan as Nightware.
+
+## Slack
+
+`SlackChatDatasource` speaks Slack's Web API as the user (a user token, never
+a bot) of one workspace. A workspace is a chat system of its own, not tied to
+any email account, so every `ChatRepository` call that takes an `accountId`
+also takes `slack:{teamId}` (`ChatSource.isSlackId`); `ChatRepositoryImpl._ds`
+routes it. Each `_accounts.*` path in the repository branches on it
+explicitly — access, consent, own address, colleagues, reachable — rather
+than falling into an account lookup that answers null.
+
+- **One internal app per workspace.** Slack cuts `conversations.history` and
+  `conversations.replies` to one call a minute (15 messages) for a
+  distributed app outside the Marketplace; an internal app — installed only
+  in the workspace that created it — keeps Tier 3 (50+ a minute). So
+  `tool/setup_slack_app.sh` creates the app in the user's workspace from
+  `tool/slack_app_manifest.json`, and the Client ID is **stored with the
+  workspace** (`SlackWorkspace.clientId`): a refresh must name the app that
+  issued the token, and two workspaces are two apps. `SLACK_CLIENT_ID` is
+  only the Settings dialog's default. Shipping one distributed or
+  Marketplace app instead would be a product decision, and the history
+  limits are what it would cost.
+- **Sign-in is OAuth v2 with PKCE** (`SlackWorkspaces.connect`): a public
+  client, no secret in the app, `user_scope` only (Slack refuses bot scopes
+  on a desktop redirect). Desktop uses `LoopbackAuthFlow` on
+  `http://localhost:34573/slack` (its own port, so it never takes Gmail's
+  34572 over; `localhost` because that is what Slack's PKCE guide treats as a
+  desktop redirect — the server binds IPv4, which browsers fall back to);
+  iOS/Android use `nightmail://slack-callback` through `flutter_web_auth_2`.
+  Both are in the manifest. The `state` check is the same as the other
+  providers'.
+- **Tokens live in the Keychain, read on every call** (`slack_workspaces`
+  key). The main window and the chat window are separate isolates and both
+  call Slack. A non-rotating `xoxp-` token (desktop, rotation off in the
+  manifest) never expires. A rotating one (always, for the custom scheme) is
+  refreshed five minutes before expiry; its refresh token is single-use, so
+  a refusal first re-reads the Keychain — if the other window already
+  refreshed, its pair is used; only otherwise is the workspace flagged.
+  PKCE refresh tokens also expire after 30 days unused.
+- **Slack's failures never touch the email accounts.** A refused token
+  (`invalid_auth`, `token_revoked`, `missing_scope`, a dead refresh token…)
+  sets `SlackWorkspace.needsReconnect` and throws `SlackReconnectException`
+  — a `ServerException`, deliberately not an `AuthException`, which means
+  "re-auth this email account" everywhere else. The workspace then reports
+  `ChatAccess.needsConsent`, so the pane and window show the consent prompt
+  as "Reconnect Slack"; Settings and the menu show "Reconnect" too.
+- **Scopes** (`SlackWorkspaces.userScopes`, mirrored in the manifest), one
+  per method: `*:read` for `users.conversations`/`conversations.info`,
+  `*:history`, `users:read`, `users:read.email` (`users.lookupByEmail`),
+  `chat:write`, `im:write`/`mpim:write` (`conversations.open`, and
+  `conversations.mark` on DMs — channels are never marked, so no
+  `channels:write`), `files:read` (images), `search:read`. A scope added
+  later surfaces as `missing_scope` → reconnect, which grants it.
+- **Mapping:** `im` → one-on-one (titled by the other person), `mpim` →
+  group (titled from its `mpdm-a--b-1` name less the user's handle), public
+  and private channels → `ChatKind.space`, threaded, titled `#name`, under
+  "Channels" in the window. `conversations.history` leaves thread replies
+  out, so a post carries `reply_count` and the thread panel reads
+  `conversations.replies`. A message's id is its `ts`; a reply's
+  `replyToId` its `thread_ts`.
+- **No listing carries activity**, so `channelActivity` (one
+  `conversations.history` of 1) fills it in for every Slack conversation;
+  the window asks once per load, four at a time, DMs and group DMs first and
+  at most 40 (`ChatListCubit._slackActivityPerLoad` — a user in 150
+  channels would otherwise spend minutes of Tier 3 before the open
+  conversation could poll), and the repository keeps what it learned across
+  refreshes. Teams channels are filled as before.
+- **People:** a message names its sender by id; `users.info` (Tier 4) fills
+  `_users` (session cache, 40 per call at most). The pane offers the
+  people on an email that `users.lookupByEmail` finds in the workspace
+  (`directoryMembers`, 12 per email, misses remembered) — the mail
+  account's domains mean nothing to Slack. `findOneOnOne` looks the DM up in
+  the listed IMs and never calls `conversations.open`, which would create
+  one; that waits for the first message (`createOneOnOne`).
+- **Unread** is DMs and group DMs only, as Teams leaves channels out. One
+  `users.conversations` of `im,mpim`, then `conversations.info` for 15 per
+  poll — the ones with the newest known activity first, the rest going
+  round in turn. A DM's info carries `unread_count_display`; a group DM's
+  `last_read`, checked against the messages after it.
+- **Bodies** are mrkdwn (`mrkdwnToHtml`): Slack sends `&`, `<`, `>` escaped,
+  so the only raw `<…>` are its controls — `<@U…>` (named from `_users`),
+  `<#C…|name>`, `<!here>`, `<url|label>` (http(s)/mailto only). Common
+  `:shortcodes:` become emoji; others stay as text. Outgoing text escapes
+  `&<>` and is otherwise mrkdwn as typed.
+- **Images:** files on `files.slack.com` are fetched with the token (their
+  `thumb_720`); anything else, including avatars, over https without it.
+- **Search:** `search.messages` (Tier 2, user tokens), so
+  `searchesOnServer` is true — no recent-history scan.
+- A 429 waits out a `Retry-After` of up to 20 s once, then fails readably.
+- A workspace connected in Settings reaches an already-open chat window
+  (another isolate) when that window is next opened.

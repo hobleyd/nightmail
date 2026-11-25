@@ -167,8 +167,11 @@ expire): "load older" always continues from the fresh page.
 
 ## No push; polling, with deltas where the provider has them
 
-Graph change notifications need a webhook and Nightware leaves chat
-notifications out (ADR 0009 D1). The open conversation is polled every 10 s
+Graph change notifications need a webhook, which NightMail can't offer
+(Nightware has them since ADR 0009 D11, for other clients). What NightMail
+gets instead is the `chat` signal on a NightMail Server's change stream
+(nightware ADR 0007 D5), which refreshes the unread dot — see below. The open
+conversation is polled every 10 s
 (`ChatConversationCubit.pollInterval`) — for what changed since a
 **watermark**, the newest *server* timestamp seen (never the device clock,
 whose skew would silently drop messages):
@@ -257,6 +260,13 @@ account's recent chats is unread (`ChatUnreadCubit`, main window only).
   (root plus own addresses — every Microsoft 365 account shares one root).
   Nightware names users by Keycloak id in `/me` and in `from.user.id` alike
   (ADR 0009 D2). Until it is known nothing is unread — no false dots.
+- **A NightMail Server signals it**: `ChatUnreadCubit` also refreshes when
+  the account's change stream names `chat` (including on `ready`), so a new
+  message or a chat read elsewhere shows within ~10 s. The server's signal
+  covers new messages, reads, renames and chats joined or left — not edits,
+  deletions or reactions — and only reaches the main window (the stream is
+  main-window only), so the chat window and the open conversation keep their
+  timers.
 - **The poll is light**: every 60 s, only for an account with chat access
   (never prompts consent), one page of `/me/chats` with
   `$expand=lastMessagePreview` alone (`listRecentChats`) — not

@@ -6,6 +6,7 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import '../../../domain/entities/chat.dart';
 import '../../../domain/repositories/chat_repository.dart';
 import '../../../infrastructure/accounts/account_manager.dart';
+import '../../../infrastructure/sync/change_stream_service.dart';
 
 /// What the Chat button shows: which chat systems it opens and how many
 /// unread chats each has.
@@ -52,25 +53,29 @@ class ChatUnreadState extends Equatable {
 /// have something the user has not read — the dot, and the menu's per-system
 /// dots.
 ///
-/// Nothing pushes chat to NightMail, so this polls: one page of recent chats
-/// per system every [pollInterval] ([ChatRepository.unreadCount]). A chat read
-/// in this window clears at once ([ChatRepository.reads]); one read in the
-/// chat window — its own isolate — or in Teams or Slack clears on the next
-/// poll.
+/// This polls: one page of recent chats per system every [pollInterval]
+/// ([ChatRepository.unreadCount]). A chat read in this window clears at once
+/// ([ChatRepository.reads]); one read in the chat window — its own isolate —
+/// or in Teams or Slack clears on the next poll. A NightMail Server account
+/// also refreshes when its change stream says `chat` (nightware ADR 0007 D5):
+/// a new message or a read elsewhere shows within seconds, not a minute.
 class ChatUnreadCubit extends Cubit<ChatUnreadState> {
   ChatUnreadCubit({
     required this._accountManager,
     required this._repository,
+    this._changeSignals,
   }) : super(const ChatUnreadState());
 
   final AccountManager _accountManager;
   final ChatRepository _repository;
+  final Stream<ChangeSignal>? _changeSignals;
 
   static const pollInterval = Duration(seconds: 60);
 
   Timer? _timer;
   StreamSubscription<String>? _reads;
   StreamSubscription<void>? _sourcesChanged;
+  StreamSubscription<ChangeSignal>? _changes;
 
   /// Bumped per [refresh] so a slow answer for the account being left never
   /// lands after the arriving one's.
@@ -83,6 +88,15 @@ class ChatUnreadCubit extends Cubit<ChatUnreadState> {
     });
     _sourcesChanged ??=
         _repository.sourcesChanged.listen((_) => unawaited(refresh()));
+    // `ready` names `chat` too, so a (re)connected stream refreshes once —
+    // nothing in between was signalled. A server without the area never
+    // names it, and the timer carries on as before.
+    _changes ??= _changeSignals?.listen((signal) {
+      if (signal.concerns('chat') &&
+          state.sources.any((s) => s.id == signal.accountId)) {
+        unawaited(refresh());
+      }
+    });
     if (_timer != null) return;
     _timer = Timer.periodic(pollInterval, (_) => refresh());
     unawaited(refresh());
@@ -152,6 +166,7 @@ class ChatUnreadCubit extends Cubit<ChatUnreadState> {
     _timer?.cancel();
     _reads?.cancel();
     _sourcesChanged?.cancel();
+    _changes?.cancel();
     return super.close();
   }
 }

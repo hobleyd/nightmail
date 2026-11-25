@@ -659,6 +659,7 @@ Future<void> configureDependencies() async {
     () => ChatUnreadCubit(
       accountManager: sl<AccountManager>(),
       repository: sl<ChatRepository>(),
+      changeSignals: sl<ChangeStreamService>().signals,
     ),
   );
 

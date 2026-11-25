@@ -1,8 +1,11 @@
+import 'dart:async';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:nightmail/domain/entities/chat.dart';
 import 'package:nightmail/domain/repositories/chat_repository.dart';
 import 'package:nightmail/infrastructure/accounts/account.dart';
 import 'package:nightmail/infrastructure/accounts/account_manager.dart';
+import 'package:nightmail/infrastructure/sync/change_stream_service.dart';
 import 'package:nightmail/presentation/blocs/chat/chat_unread_cubit.dart';
 
 /// The Chat button's model: the systems, unread per system, and whether a
@@ -62,6 +65,55 @@ void main() {
     expect(c.takeSwitched(), isFalse);
   });
 
+  group('change stream', () {
+    late StreamController<ChangeSignal> signals;
+    late _Repo repo;
+    late ChatUnreadCubit c;
+
+    setUp(() async {
+      signals = StreamController<ChangeSignal>.broadcast();
+      repo = _Repo(const [teams, slack], const {'work': 1}, ChatKind.oneOnOne);
+      c = ChatUnreadCubit(
+        accountManager: _Accounts(),
+        repository: repo,
+        changeSignals: signals.stream,
+      )..start();
+      await pumpEventQueue();
+    });
+
+    tearDown(() async {
+      await c.close();
+      await signals.close();
+    });
+
+    test('a chat signal for the account refreshes at once, not at the next '
+        'poll', () async {
+      final before = repo.listings;
+      signals.add(const ChangeSignal('work', {'chat'}));
+      await pumpEventQueue();
+      expect(repo.listings, greaterThan(before));
+    });
+
+    test('so does a (re)connected stream that watches chat — nothing in '
+        'between was signalled', () async {
+      final before = repo.listings;
+      signals.add(const ChangeSignal('work', {'mail', 'chat'}, isReady: true));
+      await pumpEventQueue();
+      expect(repo.listings, greaterThan(before));
+    });
+
+    test('mail, calendar, an older server without chat, or another account '
+        'leave it to the timer', () async {
+      final before = repo.listings;
+      signals
+        ..add(const ChangeSignal('work', {'mail', 'calendar'}))
+        ..add(const ChangeSignal('work', {'mail', 'calendar'}, isReady: true))
+        ..add(const ChangeSignal('other', {'chat'}));
+      await pumpEventQueue();
+      expect(repo.listings, before);
+    });
+  });
+
   test('a choice no longer offered falls back to the first', () async {
     final c = await cubit(const [teams, slack]);
     c.choose('slack:T9');
@@ -81,17 +133,25 @@ class _Repo extends Fake implements ChatRepository {
   final Map<String, int> _unread;
   final ChatKind _kind;
 
+  /// How many times unread chats were listed — once per system a refresh.
+  int listings = 0;
+
   @override
   Future<List<ChatSource>> sources(String? accountId) async => _sources;
 
   @override
-  Future<List<ChatConversation>> unreadConversations(String accountId) async =>
-      [
-        for (var i = 0; i < (_unread[accountId] ?? 0); i++)
-          ChatConversation(
-              id: '$accountId-$i',
-              kind: _kind,
-              title: 'Chat $i',
-              unread: true),
-      ];
+  Stream<String> get reads => const Stream.empty();
+
+  @override
+  Stream<void> get sourcesChanged => const Stream.empty();
+
+  @override
+  Future<List<ChatConversation>> unreadConversations(String accountId) async {
+    listings++;
+    return [
+      for (var i = 0; i < (_unread[accountId] ?? 0); i++)
+        ChatConversation(
+            id: '$accountId-$i', kind: _kind, title: 'Chat $i', unread: true),
+    ];
+  }
 }

@@ -15,8 +15,8 @@ class ChangeSignal {
 
   final String accountId;
 
-  /// The areas that changed (`mail`, `calendar`); on a [isReady] signal, the
-  /// areas the server will watch from now on.
+  /// The areas that changed (`mail`, `calendar`, `chat`); on a [isReady]
+  /// signal, the areas the server will watch from now on.
   final Set<String> areas;
 
   /// A (re)connection just finished reading its baseline. Nothing between the

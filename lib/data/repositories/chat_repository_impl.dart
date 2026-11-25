@@ -583,6 +583,19 @@ class ChatRepositoryImpl implements ChatRepository {
       });
 
   @override
+  bool canReact(String accountId, ChatConversation conversation) =>
+      _ds(accountId)?.canReact(conversation) ?? false;
+
+  @override
+  Future<Either<Failure, bool>> react(
+    String accountId,
+    ChatConversation conversation,
+    ChatMessage message,
+    String emoji,
+  ) =>
+      _guard(accountId, (ds) => ds.react(conversation, message, emoji));
+
+  @override
   Future<Either<Failure, (ChatConversation, ChatMessage)>> startOneOnOne(
     String accountId,
     String email,

@@ -231,6 +231,109 @@ void main() {
       expect(cubit.state.editing, isNull);
     });
   });
+
+  group('reactions', () {
+    Future<void> opened(List<ChatMessage> messages) async {
+      repo.page = ChatMessagePage(messages: messages);
+      await cubit.open('acct', chat);
+      await pumpEventQueue();
+      expect(cubit.state.ownUserId, 'UME');
+    }
+
+    ChatMessage reacted(String id, List<ChatReaction> reactions) => ChatMessage(
+          id: id,
+          createdAt: t0,
+          senderName: 'Ann',
+          senderUserId: 'UANN',
+          bodyHtml: 'hi',
+          reactions: reactions,
+        );
+
+    test('anyone\'s message takes one, counted once the server has it',
+        () async {
+      await opened([msg('a', 1)]);
+      expect(cubit.canReact(cubit.state.messages[0]), isTrue);
+      await cubit.react(cubit.state.messages[0], '🎉');
+      await cubit.react(cubit.state.messages[0], '🎉');
+      expect(repo.reactions, [('a', '🎉')],
+          reason: 'the second is the user\'s own already there');
+      final r = cubit.state.messages[0].reactions.single;
+      expect(r, const ChatReaction(emoji: '🎉', count: 1, userIds: ['UME']));
+      expect(cubit.isOwnReaction(r), isTrue);
+      expect(repo.saved.single.reactions.single.count, 1, reason: 'cached');
+    });
+
+    test('joins someone else\'s reaction; never doubles the user\'s own',
+        () async {
+      await opened([
+        reacted('a', const [
+          ChatReaction(emoji: '👍', count: 1, userIds: ['UANN']),
+          ChatReaction(emoji: '❤️', count: 2, userIds: ['UME', 'UANN']),
+        ]),
+      ]);
+      await cubit.react(cubit.state.messages[0], '👍');
+      await cubit.react(cubit.state.messages[0], '❤️');
+      expect(repo.reactions, [('a', '👍')]);
+      expect(cubit.state.messages[0].reactions.map((r) => r.count), [2, 2]);
+    });
+
+    test('a reply in the open thread takes it there too', () async {
+      const channel = ChatConversation(
+          id: 'ch', kind: ChatKind.channel, title: 'G', teamId: 'T');
+      final reply = ChatMessage(
+          id: 'r1',
+          createdAt: t0,
+          senderName: 'Ann',
+          bodyHtml: 'ok',
+          replyToId: 'p1');
+      repo.page = ChatMessagePage(messages: [
+        ChatMessage(
+            id: 'p1',
+            createdAt: t0,
+            senderName: 'Ann',
+            bodyHtml: 'post',
+            replies: [reply]),
+      ]);
+      await cubit.open('acct', channel);
+      await cubit.react(reply, '👀');
+      expect(
+          cubit.state.messages.single.replies.single.reactions.single.emoji,
+          '👀');
+    });
+
+    test('a repeat the server reports is not counted', () async {
+      await opened([msg('a', 1)]);
+      repo.reactAdds = false;
+      await cubit.react(cubit.state.messages[0], '👍');
+      expect(repo.reactions, [('a', '👍')]);
+      expect(cubit.state.messages[0].reactions, isEmpty);
+    });
+
+    test('a refusal is worded and changes nothing', () async {
+      await opened([msg('a', 1)]);
+      repo.reactFailure = const ServerFailure(message: 'Connect again');
+      await cubit.react(cubit.state.messages[0], '👍');
+      expect(cubit.state.error, 'Could not add the reaction: Connect again');
+      expect(cubit.state.messages[0].reactions, isEmpty);
+    });
+
+    test('not offered on a deleted message or where the provider cannot',
+        () async {
+      await opened([
+        ChatMessage(
+            id: 'd',
+            createdAt: t0,
+            senderName: '',
+            bodyHtml: '',
+            isDeleted: true),
+        msg('a', 1),
+      ]);
+      expect(cubit.canReact(cubit.state.messages[0]), isFalse);
+      repo.reactable = false;
+      expect(cubit.canReact(cubit.state.messages[1]), isFalse);
+    });
+  });
+
 }
 
 class _Repo implements ChatRepository {
@@ -286,6 +389,22 @@ class _Repo implements ChatRepository {
   Future<String?> ownUserId(String accountId,
           {ChatConversation? conversation}) async =>
       'UME';
+
+  bool reactable = true;
+  bool reactAdds = true;
+  Failure? reactFailure;
+  final reactions = <(String, String)>[];
+
+  @override
+  bool canReact(String accountId, ChatConversation conversation) => reactable;
+
+  @override
+  Future<Either<Failure, bool>> react(String accountId,
+      ChatConversation conversation, ChatMessage message, String emoji) async {
+    if (reactFailure != null) return Left(reactFailure!);
+    reactions.add((message.id, emoji));
+    return Right(reactAdds);
+  }
 
   bool editable = true;
   Failure? editFailure;

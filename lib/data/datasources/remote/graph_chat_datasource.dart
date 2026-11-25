@@ -354,15 +354,8 @@ class GraphChatDatasource implements ChatRemoteDatasource {
     ChatMessage message,
     String text,
   ) async {
-    final channel =
-        '/teams/${conversation.teamId}/channels/${conversation.id}/messages';
-    final path = !conversation.isChannel
-        ? '/chats/${conversation.id}/messages/${message.id}'
-        : message.replyToId == null
-            ? '$channel/${message.id}'
-            : '$channel/${message.replyToId}/replies/${message.id}';
     // 204, no body: the edit is what was sent.
-    await _patch(path, {
+    await _patch(_messagePath(conversation, message), {
       'body': {'contentType': 'text', 'content': text},
     });
     return message.withEdit(
@@ -370,6 +363,37 @@ class GraphChatDatasource implements ChatRemoteDatasource {
       editableText: text,
       editedAt: DateTime.now(),
     );
+  }
+
+  /// A chat message, a channel post, or a reply under its post.
+  static String _messagePath(ChatConversation conversation, ChatMessage m) {
+    final channel =
+        '/teams/${conversation.teamId}/channels/${conversation.id}/messages';
+    return !conversation.isChannel
+        ? '/chats/${conversation.id}/messages/${m.id}'
+        : m.replyToId == null
+            ? '$channel/${m.id}'
+            : '$channel/${m.replyToId}/replies/${m.id}';
+  }
+
+  /// Chats under `Chat.ReadWrite`; channels under `ChannelMessage.Send`,
+  /// which (unlike an edit) is all Microsoft asks for. A NightMail Server
+  /// serves the same routes.
+  @override
+  bool canReact(ChatConversation conversation) => true;
+
+  /// `setReaction` with the emoji itself — Graph takes unicode, and keeps a
+  /// repeat as the one reaction it already has, so a repeat is only known
+  /// by the caller (from [ChatReaction.userIds]); 204 always says added.
+  @override
+  Future<bool> react(
+    ChatConversation conversation,
+    ChatMessage message,
+    String emoji,
+  ) async {
+    await _post('${_messagePath(conversation, message)}/setReaction',
+        {'reactionType': emoji});
+    return true;
   }
 
   @override
@@ -615,9 +639,15 @@ class GraphChatDatasource implements ChatRemoteDatasource {
     if (isSystem) content = _escape(_describeEvent(raw['eventDetail']));
 
     final reactionCounts = <String, int>{};
+    final reactors = <String, List<String>>{};
     for (final r in _list(raw['reactions'])) {
       final type = _reactionEmoji(r['reactionType'] as String?);
-      if (type != null) reactionCounts[type] = (reactionCounts[type] ?? 0) + 1;
+      if (type == null) continue;
+      reactionCounts[type] = (reactionCounts[type] ?? 0) + 1;
+      final by = r['user'];
+      final user = by is Map ? by['user'] : null;
+      final id = user is Map ? user['id'] as String? : null;
+      if (id != null) (reactors[type] ??= []).add(id);
     }
 
     final replies = _list(raw['replies']).map(_parseMessage).toList()
@@ -638,7 +668,11 @@ class GraphChatDatasource implements ChatRemoteDatasource {
       isSystem: isSystem,
       reactions: [
         for (final e in reactionCounts.entries)
-          ChatReaction(emoji: e.key, count: e.value),
+          ChatReaction(
+            emoji: e.key,
+            count: e.value,
+            userIds: reactors[e.key] ?? const [],
+          ),
       ],
       replies: replies,
       replyCount: raw['replies@odata.count'] as int?,

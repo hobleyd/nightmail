@@ -185,6 +185,19 @@ abstract interface class ChatRepository {
     String text,
   );
 
+  /// Whether messages in [conversation] can take the user's reactions — see
+  /// `ChatRemoteDatasource.canReact`.
+  bool canReact(String accountId, ChatConversation conversation);
+
+  /// Adds the user's [emoji] reaction to [message], anyone's. Right: whether
+  /// that added one (false: the user had already given it).
+  Future<Either<Failure, bool>> react(
+    String accountId,
+    ChatConversation conversation,
+    ChatMessage message,
+    String emoji,
+  );
+
   /// Creates the one-on-one chat with [email] and sends [text] to it.
   Future<Either<Failure, (ChatConversation, ChatMessage)>> startOneOnOne(
     String accountId,

@@ -1,5 +1,6 @@
 import 'dart:typed_data';
 
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
@@ -170,6 +171,93 @@ void main() {
       foreground = true;
       await cubit.open('a', chat);
       expect(repo.marked, ['c']);
+      await cubit.close();
+    });
+  });
+
+  group('reactions', () {
+    Future<(_Repo, ChatConversationCubit)> pump(
+        WidgetTester tester, ChatMessage m) async {
+      final repo = _Repo([m], ownId: 'u-me');
+      final cubit = ChatConversationCubit(repository: repo);
+      await cubit.open('a',
+          const ChatConversation(id: 'c', kind: ChatKind.group, title: 'G'));
+      await tester.pumpWidget(MaterialApp(
+        home: Scaffold(
+          body: BlocProvider.value(
+            value: cubit,
+            child: const ChatConversationView(),
+          ),
+        ),
+      ));
+      await tester.pumpAndSettle();
+      return (repo, cubit);
+    }
+
+    double opacityOf(WidgetTester tester) => tester
+        .widget<Opacity>(find
+            .ancestor(
+                of: find.byTooltip('Add reaction'),
+                matching: find.byType(Opacity))
+            .first)
+        .opacity;
+
+    testWidgets('someone else\'s message: the hover button\'s menu adds one',
+        (tester) async {
+      final (repo, cubit) = await pump(tester, msg('1', 'Ann Lee', 'u-ann', 1));
+      expect(find.byTooltip('Edit'), findsNothing);
+      expect(opacityOf(tester), 0, reason: 'shown on hover, like the pencil');
+      final mouse = await tester.createGesture(kind: PointerDeviceKind.mouse);
+      await mouse.addPointer(location: Offset.zero);
+      await mouse.moveTo(tester.getCenter(find.text('message 1')));
+      await tester.pumpAndSettle();
+      expect(opacityOf(tester), 1);
+
+      await tester.tap(find.byTooltip('Add reaction'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('🎉'));
+      await tester.pumpAndSettle();
+      expect(repo.reactions, [('1', '🎉')]);
+      expect(find.text('🎉'), findsOneWidget, reason: 'the chip, menu closed');
+      await mouse.removePointer();
+      await cubit.close();
+    }, variant: TargetPlatformVariant.only(TargetPlatform.macOS));
+
+    testWidgets('a touch screen has no hover: a long press offers them',
+        (tester) async {
+      final (repo, cubit) = await pump(tester, msg('1', 'Ann Lee', 'u-ann', 1));
+      expect(find.byTooltip('Add reaction'), findsNothing);
+      await tester.longPress(find.text('message 1'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('🙏'));
+      await tester.pumpAndSettle();
+      expect(repo.reactions, [('1', '🙏')]);
+      await cubit.close();
+    });
+
+    testWidgets('tapping someone\'s reaction adds the user\'s; their own '
+        'is not tapped again', (tester) async {
+      final (repo, cubit) = await pump(
+        tester,
+        ChatMessage(
+          id: '1',
+          createdAt: DateTime(2026, 11, 25, 10),
+          senderName: 'Ann Lee',
+          senderUserId: 'u-ann',
+          bodyHtml: 'hi',
+          reactions: const [
+            ChatReaction(emoji: '👍', count: 1, userIds: ['u-ann']),
+            ChatReaction(emoji: '❤️', count: 1, userIds: ['u-me']),
+          ],
+        ),
+      );
+      await tester.tap(find.text('👍'));
+      await tester.pumpAndSettle();
+      expect(repo.reactions, [('1', '👍')]);
+      expect(find.text('👍 2'), findsOneWidget);
+      await tester.tap(find.text('❤️'));
+      await tester.pumpAndSettle();
+      expect(repo.reactions, [('1', '👍')]);
       await cubit.close();
     });
   });
@@ -386,6 +474,18 @@ class _Repo extends Fake implements ChatRepository {
 
   @override
   bool canEdit(String accountId, ChatConversation conversation) => true;
+
+  final reactions = <(String, String)>[];
+
+  @override
+  bool canReact(String accountId, ChatConversation conversation) => true;
+
+  @override
+  Future<Either<Failure, bool>> react(String accountId,
+      ChatConversation conversation, ChatMessage message, String emoji) async {
+    reactions.add((message.id, emoji));
+    return const Right(true);
+  }
 
   @override
   Future<Either<Failure, ChatMessage>> editMessage(

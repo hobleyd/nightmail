@@ -89,6 +89,20 @@ abstract interface class ChatRemoteDatasource {
     String text,
   );
 
+  /// Whether anyone's messages in [conversation] can take a reaction from
+  /// the user with the access this datasource holds.
+  bool canReact(ChatConversation conversation);
+
+  /// Adds the user's [emoji] reaction to [message] — a character, or a
+  /// Slack workspace's own `:name:`. True when that added one; false when
+  /// the server says the user had already given it, so the caller does not
+  /// count it twice.
+  Future<bool> react(
+    ChatConversation conversation,
+    ChatMessage message,
+    String emoji,
+  );
+
   /// Creates (or returns the existing) one-on-one with [email].
   Future<ChatConversation> createOneOnOne({
     required String ownEmail,

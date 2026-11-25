@@ -190,7 +190,12 @@ class ChatLocalDatasourceImpl implements ChatLocalDatasource {
         if (m.reactions.isNotEmpty)
           'reactions': [
             for (final r in m.reactions)
-              {'emoji': r.emoji, 'count': r.count, 'image': ?r.imageUrl},
+              {
+                'emoji': r.emoji,
+                'count': r.count,
+                'image': ?r.imageUrl,
+                if (r.userIds.isNotEmpty) 'users': r.userIds,
+              },
           ],
         if (m.replies.isNotEmpty)
           'replies': [for (final r in m.replies) messageToJson(r)],
@@ -218,6 +223,10 @@ class ChatLocalDatasourceImpl implements ChatLocalDatasource {
                 emoji: r['emoji'] as String? ?? '',
                 count: (r['count'] as num?)?.toInt() ?? 1,
                 imageUrl: r['image'] as String?,
+                userIds: [
+                  for (final u in (r['users'] as List?) ?? const [])
+                    if (u is String) u,
+                ],
               ),
         ],
         replies: [

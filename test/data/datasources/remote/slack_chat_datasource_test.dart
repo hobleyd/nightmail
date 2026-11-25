@@ -4,6 +4,7 @@ import 'dart:typed_data';
 import 'package:dio/dio.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:nightmail/core/error/exceptions.dart';
+import 'package:nightmail/core/text/emoji.dart';
 import 'package:nightmail/data/datasources/remote/slack_chat_datasource.dart';
 import 'package:nightmail/domain/entities/chat.dart';
 import 'package:nightmail/infrastructure/slack/slack_workspaces.dart';
@@ -747,6 +748,90 @@ void main() {
       expect(edited.editableText, 'a < b');
       expect(edited.editedAt, isNotNull);
       expect(edited.reactions, const [ChatReaction(emoji: '👍', count: 1)]);
+    });
+  });
+
+  group('reactions', () {
+    const general = ChatConversation(
+        id: 'C1', kind: ChatKind.space, title: '#general', threaded: true);
+    final message = ChatMessage(
+      id: '1700000000.000200',
+      createdAt: DateTime(2026),
+      senderName: 'Ann',
+      senderUserId: 'UANN',
+      bodyHtml: 'hi',
+    );
+
+    test('every reaction the menu offers has a Slack name', () {
+      for (final e in quickReactions) {
+        expect(SlackChatDatasource.slackReactionName(e), isNotNull,
+            reason: e);
+      }
+      expect(SlackChatDatasource.slackReactionName('❤'), 'heart');
+      expect(SlackChatDatasource.slackReactionName('❤️'), 'heart');
+      expect(SlackChatDatasource.slackReactionName('👍🏽'), '+1::skin-tone-4');
+      expect(SlackChatDatasource.slackReactionName(':party_parrot:'),
+          'party_parrot');
+    });
+
+    test('reactions.add names the emoji and the message', () async {
+      await connected(scopes: SlackWorkspaces.userScopes.toSet());
+      routes['reactions.add'] = (o) {
+        expect(o.data, {
+          'channel': 'C1',
+          'timestamp': '1700000000.000200',
+          'name': '+1',
+        });
+        return {'ok': true};
+      };
+      expect(await datasource().react(general, message, '👍'), isTrue);
+    });
+
+    test('already_reacted is the user\'s reaction already there', () async {
+      await connected(scopes: SlackWorkspaces.userScopes.toSet());
+      routes['reactions.add'] = (_) => {'ok': false, 'error': 'already_reacted'};
+      expect(await datasource().react(general, message, '👍'), isFalse);
+    });
+
+    test('a workspace without reactions:write is asked to connect again, '
+        'not flagged', () async {
+      await connected(scopes: const {'chat:write'});
+      await expectLater(
+          datasource().react(general, message, '👍'),
+          throwsA(isA<ServerException>().having(
+              (e) => e.message, 'message', contains('Connect this Slack'))));
+      expect(requests, isEmpty);
+
+      // Granted as far as NightMail knew, refused by Slack.
+      await connected(scopes: SlackWorkspaces.userScopes.toSet());
+      routes['reactions.add'] = (_) => {'ok': false, 'error': 'missing_scope'};
+      await expectLater(datasource().react(general, message, '👍'),
+          throwsA(isA<ServerException>()));
+      expect((await workspaces.byTeam('T1'))!.needsReconnect, isFalse);
+    });
+
+    test('a reaction keeps who gave it', () async {
+      routes['conversations.history'] = (_) => {
+            'ok': true,
+            'messages': [
+              {
+                'ts': '1.1',
+                'user': 'UANN',
+                'text': 'hi',
+                'reactions': [
+                  {
+                    'name': 'tada',
+                    'count': 2,
+                    'users': ['UME', 'UANN'],
+                  },
+                ],
+              },
+            ],
+          };
+      routes['users.info'] = (_) => user('UANN', 'Ann');
+      final m = (await datasource().messages(general)).messages.single;
+      expect(m.reactions.single,
+          const ChatReaction(emoji: '🎉', count: 2, userIds: ['UME', 'UANN']));
     });
   });
 }

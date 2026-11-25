@@ -615,19 +615,74 @@ class ChatConversationCubit extends Cubit<ChatConversationState> {
         return false;
       },
       (edited) {
-        ChatMessage swap(ChatMessage m) => m.id == edited.id
-            ? edited
-            : m.replies.any((r) => r.id == edited.id)
-                ? m.withReplies([for (final r in m.replies) swap(r)])
-                : m;
-        emit(state.copyWith(
-          sending: false,
-          editing: () => null,
-          messages: [for (final m in state.messages) swap(m)],
-          threadReplies: [for (final m in state.threadReplies) swap(m)],
-        ));
-        _cache();
+        _swap(edited.id, (_) => edited,
+            (s) => s.copyWith(sending: false, editing: () => null));
         return true;
+      },
+    );
+  }
+
+  /// [state] with message [id] — in the list, under its post, or in the open
+  /// thread — replaced by [change] of it, then [also], emitted and cached.
+  void _swap(
+    String id,
+    ChatMessage Function(ChatMessage) change, [
+    ChatConversationState Function(ChatConversationState)? also,
+  ]) {
+    ChatMessage swap(ChatMessage m) => m.id == id
+        ? change(m)
+        : m.replies.any((r) => r.id == id)
+            ? m.withReplies([for (final r in m.replies) swap(r)])
+            : m;
+    final next = state.copyWith(
+      messages: [for (final m in state.messages) swap(m)],
+      threadReplies: [for (final m in state.threadReplies) swap(m)],
+    );
+    emit(also == null ? next : also(next));
+    _cache();
+  }
+
+  /// Whether the user can react to [m] — anyone's message, not a deleted or
+  /// system one.
+  bool canReact(ChatMessage m) {
+    final accountId = state.accountId;
+    final conversation = state.conversation;
+    return accountId != null &&
+        conversation != null &&
+        !m.isDeleted &&
+        !m.isSystem &&
+        _repo.canReact(accountId, conversation);
+  }
+
+  /// Whether [r] is known to include the user's own reaction.
+  bool isOwnReaction(ChatReaction r) {
+    final own = state.ownUserId;
+    return own != null && r.userIds.contains(own);
+  }
+
+  /// Adds the user's [emoji] reaction to [m]. Nothing when the user's is
+  /// already there (as far as the provider says who reacted); counted once
+  /// the server has it, and only if it was new.
+  Future<void> react(ChatMessage m, String emoji) async {
+    final accountId = state.accountId;
+    final conversation = state.conversation;
+    if (!canReact(m) || accountId == null || conversation == null) return;
+    bool given(ChatMessage x) =>
+        x.reactions.any((r) => r.emoji == emoji && isOwnReaction(r));
+    if (given(m)) return;
+    final gen = _generation;
+    final result = await _repo.react(accountId, conversation, m, emoji);
+    if (gen != _generation || isClosed) return;
+    result.match(
+      (f) => emit(state.copyWith(
+          error: () => f is AuthFailure || f is NetworkFailure
+              ? _messageOf(f)
+              : 'Could not add the reaction: ${f.message}')),
+      (added) {
+        if (!added) return;
+        // A poll may have brought the reaction in while the call ran.
+        _swap(m.id,
+            (x) => given(x) ? x : x.withReaction(emoji, state.ownUserId));
       },
     );
   }

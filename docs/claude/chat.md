@@ -383,6 +383,38 @@ anything else in the conversation's (`ChatConversationState.editingInThread`).
 - An edit of the newest message updates the list's preview
   (`ChatRepositoryImpl._retouch`) without moving the conversation.
 
+## Reacting to a message
+
+- **Anyone's message**, not a deleted or system one
+  (`ChatConversationCubit.canReact`). On desktop a smiley button sits beside
+  the pencil's slot and shows on hover (`_Hover` wraps a tile that offers
+  either); a touch screen has no hover, so a long press on the message opens
+  the same menu. The menu is `quickReactions` (`core/text/emoji.dart`):
+  Teams' six, then six more — no picker dependency. Tapping a reaction chip
+  that is not the user's adds the user's; the user's own chips are outlined.
+- **Adding only.** Removing a reaction is not offered.
+- **Calls and scopes:** Graph `POST …/setReaction` `{reactionType: "🎉"}` on
+  the chat message, post or reply (`Chat.ReadWrite`; a Microsoft 365
+  *channel* needs only `ChannelMessage.Send`, which NightMail already holds,
+  so unlike an edit it works there; nightware serves the same routes and
+  takes unicode). Google `POST {message}/reactions`
+  `{emoji: {unicode}}` under `chat.messages`. Slack `reactions.add` by name
+  (`emojiShortcode`, presentation selector ignored, so ❤ and ❤️ are both
+  `heart`; a custom emoji's `:name:` as is) under `reactions:write`.
+- **Never counted twice.** `ChatReaction.userIds` keeps who reacted where
+  the listing says (Graph `user.user.id`, Slack `users`; Google's summaries
+  name no one). The cubit skips a reaction the user already gave, and
+  `react` reports whether the server added one: Graph keeps a repeat as one
+  (204 either way), Google answers 409, Slack `already_reacted` — the last
+  two come back false and nothing is counted. The count goes up only after
+  the server has it, and not if a poll brought it in meanwhile.
+- **Slack's `reactions:write` was added later.** A workspace connected
+  before lacks it: `react` checks `SlackWorkspace.scopes` first and says
+  "Connect this Slack workspace again in Settings to add reactions."
+  rather than flagging the workspace, and a `missing_scope` from
+  `reactions.add` is not a reconnect (`_call`). The Slack app must have the
+  scope too: `tool/setup_slack_app.sh --update <app id>`.
+
 ## Rendering
 
 Bodies are HTML on both providers, rendered by `ChatMessageBody` as styled
@@ -528,7 +560,8 @@ than falling into an account lookup that answers null.
   `*:history`, `users:read`, `users:read.email` (`users.lookupByEmail`),
   `chat:write`, `im:write`/`mpim:write` (`conversations.open`, and
   `conversations.mark` on DMs), `channels:write`/`groups:write`
-  (`conversations.mark` on channels), `files:read` (images), `search:read`.
+  (`conversations.mark` on channels), `files:read` (images), `search:read`,
+  `reactions:write` (`reactions.add`).
   A scope added later surfaces as `missing_scope` → reconnect, which grants
   it — except where noted below.
 - **Mapping:** `im` → one-on-one (titled by the other person), `mpim` →

@@ -507,6 +507,39 @@ void main() {
           reason: 'a read mention is plain text with an annotation over it');
     });
   });
+
+  group('reactions', () {
+    const chat =
+        ChatConversation(id: 'spaces/D', kind: ChatKind.oneOnOne, title: 'A');
+    final message = ChatMessage(
+      id: 'spaces/D/messages/M1',
+      createdAt: DateTime(2026),
+      senderName: 'Ann',
+      bodyHtml: 'hi',
+    );
+
+    test('reactions.create with the emoji\'s unicode', () async {
+      routes['spaces/D/messages/M1/reactions'] = (o) {
+        expect(o.method, 'POST');
+        expect(o.data, {
+          'emoji': {'unicode': '👍'},
+        });
+        return {'name': 'spaces/D/messages/M1/reactions/R1'};
+      };
+      expect(await datasource().react(chat, message, '👍'), isTrue);
+    });
+
+    test('a repeat (409) is the user\'s reaction already there', () async {
+      routes['spaces/D/messages/M1/reactions'] = (_) => 409;
+      expect(await datasource().react(chat, message, '👍'), isFalse);
+    });
+
+    test('any other refusal fails', () async {
+      routes['spaces/D/messages/M1/reactions'] = (_) => 400;
+      await expectLater(datasource().react(chat, message, '👍'),
+          throwsA(isA<ServerException>()));
+    });
+  });
 }
 
 const _json = {

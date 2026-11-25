@@ -47,7 +47,9 @@ void main() {
     bodyHtml: '<b>Launch</b> notes',
     subject: 'Launch',
     editedAt: DateTime.utc(2026, 11, 20, 10),
-    reactions: const [ChatReaction(emoji: '👍🏼', count: 2)],
+    reactions: const [
+      ChatReaction(emoji: '👍🏼', count: 2, userIds: ['u1', 'u2']),
+    ],
     replies: [
       ChatMessage(
         id: 'r1',

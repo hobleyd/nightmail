@@ -600,6 +600,71 @@ void main() {
           isNull);
     });
   });
+
+  group('reactions', () {
+    ChatMessage anyones(String id, {String? replyToId}) => ChatMessage(
+          id: id,
+          createdAt: DateTime(2026),
+          senderName: 'Ann',
+          senderUserId: 'u-ann',
+          bodyHtml: 'hi',
+          replyToId: replyToId,
+        );
+
+    test('setReaction goes to a chat message, a post and a reply, as unicode',
+        () async {
+      routes['/setReaction'] = (o) {
+        expect(o.method, 'POST');
+        expect(o.data, {'reactionType': '🎉'});
+        return <String, Object?>{};
+      };
+      final ds = datasource(server: false);
+      const chat =
+          ChatConversation(id: '19:c', kind: ChatKind.oneOnOne, title: 'Ann');
+      const channel = ChatConversation(
+          id: '19:ch', kind: ChatKind.channel, title: 'G', teamId: 'T');
+      expect(await ds.react(chat, anyones('m1'), '🎉'), isTrue);
+      await ds.react(channel, anyones('p1'), '🎉');
+      await ds.react(channel, anyones('r1', replyToId: 'p1'), '🎉');
+      expect(requests.map((r) => r.uri.path.split('/v1.0').last), [
+        '/chats/19:c/messages/m1/setReaction',
+        '/teams/T/channels/19:ch/messages/p1/setReaction',
+        '/teams/T/channels/19:ch/messages/p1/replies/r1/setReaction',
+      ]);
+      expect(ds.canReact(channel), isTrue,
+          reason: 'ChannelMessage.Send covers a channel reaction');
+    });
+
+    test('a reaction keeps who gave it', () async {
+      routes['/chats/c/messages'] = (_) => {
+            'value': [
+              {
+                'id': '1',
+                'createdDateTime': '2026-11-23T01:00:00Z',
+                'body': {'contentType': 'text', 'content': 'hi'},
+                'reactions': [
+                  {
+                    'reactionType': 'like',
+                    'user': {
+                      'user': {'id': 'u-me'},
+                    },
+                  },
+                  {
+                    'reactionType': '👍',
+                    'user': {
+                      'user': {'id': 'u-ann'},
+                    },
+                  },
+                ],
+              },
+            ],
+          };
+      final page = await datasource().messages(
+          const ChatConversation(id: 'c', kind: ChatKind.group, title: 'G'));
+      expect(page.messages.single.reactions.single,
+          const ChatReaction(emoji: '👍', count: 2, userIds: ['u-me', 'u-ann']));
+    });
+  });
 }
 
 const _json = {

@@ -360,6 +360,30 @@ class GoogleChatDatasource implements ChatRemoteDatasource {
     );
   }
 
+  /// `reactions.create`, under the `chat.messages` NightMail already holds.
+  @override
+  bool canReact(ChatConversation conversation) => true;
+
+  /// A repeat answers 409 (`ALREADY_EXISTS`): the reaction is there, it is
+  /// just not a new one — the summaries Google lists name no one, so this is
+  /// the only way to tell.
+  @override
+  Future<bool> react(
+    ChatConversation conversation,
+    ChatMessage message,
+    String emoji,
+  ) async {
+    try {
+      await _post('/${message.id}/reactions', {
+        'emoji': {'unicode': emoji},
+      });
+      return true;
+    } on ServerException catch (e) {
+      if (e.statusCode == 409) return false;
+      rethrow;
+    }
+  }
+
   /// `spaces.setup` returns the existing direct message when there is one.
   @override
   Future<ChatConversation> createOneOnOne({

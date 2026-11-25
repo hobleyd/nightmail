@@ -4,6 +4,7 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:intl/intl.dart';
 
 import '../../../core/platform/touch_metrics.dart';
+import '../../../core/text/emoji.dart';
 import '../../../core/theme/app_colors.dart';
 import '../../../domain/entities/chat.dart';
 import '../../blocs/chat/chat_conversation_cubit.dart';
@@ -356,6 +357,10 @@ class _MessageTile extends StatelessWidget {
       ),
     );
 
+    final cubit = context.read<ChatConversationCubit>();
+    final editable = cubit.canEdit(m);
+    final reactable = cubit.canReact(m);
+
     // What sits in the sender's bubble (a chat) or card (a channel post).
     final bubbleContent = Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -395,13 +400,13 @@ class _MessageTile extends StatelessWidget {
               runSpacing: 4,
               children: [
                 for (final r in m.reactions)
-                  Container(
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
-                    decoration: BoxDecoration(
-                      color: c.badgeBg,
-                      borderRadius: BorderRadius.circular(10),
-                    ),
+                  _ReactionChip(
+                    reaction: r,
+                    own: cubit.isOwnReaction(r),
+                    // Tapping someone else's adds the user's own.
+                    onTap: reactable && !cubit.isOwnReaction(r)
+                        ? () => cubit.react(m, r.emoji)
+                        : null,
                     child: r.imageUrl == null
                         ? Text(
                             r.count > 1 ? '${r.emoji} ${r.count}' : r.emoji,
@@ -482,8 +487,6 @@ class _MessageTile extends StatelessWidget {
     // The avatar heads a run of one sender's messages; the rest of the run
     // keeps its column so the bubbles line up under the first.
     const avatarSize = 30.0;
-    final cubit = context.read<ChatConversationCubit>();
-    final editable = cubit.canEdit(m);
     final beingEdited = context.select<ChatConversationCubit, bool>(
         (c) => c.state.editing?.id == m.id);
     Widget row(bool hovering) => Row(
@@ -496,9 +499,40 @@ class _MessageTile extends StatelessWidget {
               : null,
         ),
         const SizedBox(width: 8),
-        Expanded(child: content),
-        // Its slot is kept whether shown or not, so hovering never reflows
-        // the bubble. A touch screen has no hover: the pencil stays.
+        Expanded(
+          // A touch screen has no hover: a long press offers the reactions.
+          child: reactable && isTouchPlatform
+              ? GestureDetector(
+                  behavior: HitTestBehavior.opaque,
+                  onLongPressStart: (d) =>
+                      _pickReaction(context, d.globalPosition, m),
+                  child: content,
+                )
+              : content,
+        ),
+        // Their slots are kept whether shown or not, so hovering never
+        // reflows the bubble.
+        if (reactable && !isTouchPlatform)
+          Opacity(
+            opacity: hovering ? 1 : 0,
+            child: Builder(
+              builder: (button) => IconButton(
+                icon: Icon(Icons.add_reaction_outlined,
+                    size: 14, color: c.textTertiary),
+                tooltip: 'Add reaction',
+                visualDensity: VisualDensity.compact,
+                padding: EdgeInsets.zero,
+                constraints: BoxConstraints.tightFor(width: 24, height: 24),
+                onPressed: () {
+                  final box = button.findRenderObject() as RenderBox?;
+                  if (box == null) return;
+                  _pickReaction(context,
+                      box.localToGlobal(box.size.bottomLeft(Offset.zero)), m);
+                },
+              ),
+            ),
+          ),
+        // A touch screen has no hover: the pencil stays.
         if (editable)
           Opacity(
             opacity: hovering || isTouchPlatform || beingEdited ? 1 : 0,
@@ -537,9 +571,109 @@ class _MessageTile extends StatelessWidget {
           : beingEdited
               ? BoxDecoration(color: c.selectionBg)
               : null,
-      child: editable && !isTouchPlatform
+      child: (editable || reactable) && !isTouchPlatform
           ? _Hover(builder: row)
           : row(false),
+    );
+  }
+
+  /// The reaction menu at [at]; the emoji picked goes on [m].
+  static Future<void> _pickReaction(
+      BuildContext context, Offset at, ChatMessage m) async {
+    final cubit = context.read<ChatConversationCubit>();
+    final overlay =
+        Overlay.of(context).context.findRenderObject() as RenderBox;
+    final emoji = await showMenu<String>(
+      context: context,
+      position: RelativeRect.fromRect(
+          at & const Size(1, 1), Offset.zero & overlay.size),
+      items: const [_ReactionGrid()],
+    );
+    if (emoji != null) await cubit.react(m, emoji);
+  }
+}
+
+/// [quickReactions] as one row of a popup menu; a tap closes the menu with
+/// that emoji.
+class _ReactionGrid extends PopupMenuEntry<String> {
+  const _ReactionGrid();
+
+  @override
+  double get height => 40;
+
+  @override
+  bool represents(String? value) => false;
+
+  @override
+  State<_ReactionGrid> createState() => _ReactionGridState();
+}
+
+class _ReactionGridState extends State<_ReactionGrid> {
+  @override
+  Widget build(BuildContext context) {
+    final size = isTouchPlatform ? 40.0 : 30.0;
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+      child: SizedBox(
+        width: size * 6,
+        child: Wrap(
+          children: [
+            for (final e in quickReactions)
+              InkWell(
+                borderRadius: BorderRadius.circular(6),
+                onTap: () => Navigator.of(context).pop(e),
+                child: SizedBox(
+                  width: size,
+                  height: size,
+                  child: Center(
+                    child: Text(e,
+                        style: TextStyle(fontSize: isTouchPlatform ? 22 : 17)),
+                  ),
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// One reaction under a message: outlined when it includes the user's own,
+/// and — when [onTap] is given — a tap adds the user's.
+class _ReactionChip extends StatelessWidget {
+  const _ReactionChip({
+    required this.reaction,
+    required this.own,
+    required this.onTap,
+    required this.child,
+  });
+
+  final ChatReaction reaction;
+  final bool own;
+  final VoidCallback? onTap;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.colors;
+    final chip = Container(
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
+      decoration: BoxDecoration(
+        color: c.badgeBg,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(
+            color: own ? AppColors.accent : Colors.transparent),
+      ),
+      child: child,
+    );
+    if (onTap == null) return chip;
+    return Tooltip(
+      message: 'React with ${reaction.emoji}',
+      child: InkWell(
+        borderRadius: BorderRadius.circular(10),
+        onTap: onTap,
+        child: chip,
+      ),
     );
   }
 }

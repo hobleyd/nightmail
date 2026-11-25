@@ -28,7 +28,8 @@
         "groups:write",
         "files:read",
         "search:read",
-        "emoji:read"
+        "emoji:read",
+        "reactions:write"
       ]
     },
     "pkce_enabled": true

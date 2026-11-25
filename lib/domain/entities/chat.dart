@@ -169,7 +169,12 @@ class ChatConversation extends Equatable {
 
 /// One emoji reaction and how many gave it.
 class ChatReaction extends Equatable {
-  const ChatReaction({required this.emoji, required this.count, this.imageUrl});
+  const ChatReaction({
+    required this.emoji,
+    required this.count,
+    this.imageUrl,
+    this.userIds = const [],
+  });
 
   /// The character(s), or — for a workspace's own emoji — its `:name:`.
   final String emoji;
@@ -178,8 +183,21 @@ class ChatReaction extends Equatable {
   /// A workspace's own emoji (Slack): the picture to show instead of [emoji].
   final String? imageUrl;
 
+  /// Who gave it, as [ChatMessage.senderUserId] names people, as far as the
+  /// provider lists them (Graph and Slack do; Google's summary does not).
+  /// What tells the user's own reaction apart, so it is not counted twice.
+  final List<String> userIds;
+
+  /// This reaction with [userId]'s added to it.
+  ChatReaction plus(String? userId) => ChatReaction(
+        emoji: emoji,
+        count: count + 1,
+        imageUrl: imageUrl,
+        userIds: [...userIds, ?userId],
+      );
+
   @override
-  List<Object?> get props => [emoji, count, imageUrl];
+  List<Object?> get props => [emoji, count, imageUrl, userIds];
 }
 
 /// A message in a chat, or a post or reply in a channel.
@@ -265,11 +283,29 @@ class ChatMessage extends Equatable {
   /// This post with [replies] in place of its own.
   ChatMessage withReplies(List<ChatMessage> replies) => _copy(replies: replies);
 
+  /// This message after [userId] (the user) reacted with [emoji]: one more
+  /// on that reaction, or a new one at the end.
+  ChatMessage withReaction(String emoji, String? userId) {
+    final i = reactions.indexWhere((r) => r.emoji == emoji);
+    return _copy(
+      reactions: i < 0
+          ? [
+              ...reactions,
+              ChatReaction(emoji: emoji, count: 1, userIds: [?userId]),
+            ]
+          : [
+              for (var j = 0; j < reactions.length; j++)
+                j == i ? reactions[j].plus(userId) : reactions[j],
+            ],
+    );
+  }
+
   ChatMessage _copy({
     String? bodyHtml,
     String? editableText,
     DateTime? editedAt,
     List<ChatMessage>? replies,
+    List<ChatReaction>? reactions,
   }) =>
       ChatMessage(
         id: id,
@@ -282,7 +318,7 @@ class ChatMessage extends Equatable {
         editedAt: editedAt ?? this.editedAt,
         isDeleted: isDeleted,
         isSystem: isSystem,
-        reactions: reactions,
+        reactions: reactions ?? this.reactions,
         replies: replies ?? this.replies,
         replyCount: replyCount,
         attachmentNames: attachmentNames,

@@ -522,6 +522,53 @@ class SlackChatDatasource implements ChatRemoteDatasource {
     );
   }
 
+  /// `reactions.add` (`reactions:write`), anywhere the user can read.
+  @override
+  bool canReact(ChatConversation conversation) => true;
+
+  /// Slack takes a name, not the character: a standard emoji's from the
+  /// table, a workspace's own from its `:name:`. A workspace connected before
+  /// reactions were offered lacks `reactions:write` until it is connected
+  /// again, which is said here rather than flagging the workspace. `already_reacted` is the
+  /// user's reaction already being there.
+  @override
+  Future<bool> react(
+    ChatConversation conversation,
+    ChatMessage message,
+    String emoji,
+  ) async {
+    final name = slackReactionName(emoji);
+    if (name == null) {
+      throw ServerException(message: 'Slack has no emoji for $emoji.');
+    }
+    final scopes = (await _workspaces.byTeam(teamId))?.scopes;
+    if (scopes == null || !scopes.contains('reactions:write')) {
+      throw const ServerException(
+          message: 'Connect this Slack workspace again in Settings to add '
+              'reactions.');
+    }
+    try {
+      await _call(
+        'reactions.add',
+        {'channel': conversation.id, 'timestamp': message.id, 'name': name},
+        post: true,
+      );
+      return true;
+    } on SlackApiException catch (e) {
+      if (e.error == 'already_reacted') return false;
+      throw ServerException(message: _readable(e.error));
+    }
+  }
+
+  /// The name `reactions.add` wants for [emoji]: a custom emoji's `:name:`
+  /// without its colons, else the standard emoji's (skin tone included).
+  @visibleForTesting
+  static String? slackReactionName(String emoji) {
+    final custom = RegExp(r'^:([^:\s]+):$').firstMatch(emoji);
+    if (custom != null) return custom[1];
+    return emojiShortcode(emoji);
+  }
+
   @override
   Future<ChatConversation> createOneOnOne({
     required String ownEmail,
@@ -706,7 +753,8 @@ class SlackChatDatasource implements ChatRemoteDatasource {
       replyCount: (m['reply_count'] as num?)?.toInt(),
       reactions: [
         for (final r in _list(m['reactions']))
-          if (r['name'] is String) _reaction(r['name'] as String, r['count']),
+          if (r['name'] is String)
+            _reaction(r['name'] as String, r['count'], r['users']),
       ],
       attachmentNames: [
         for (final f in files)
@@ -1170,15 +1218,22 @@ class SlackChatDatasource implements ChatRemoteDatasource {
 
   /// A reaction by Slack's name for it: standard (`+1`, `wave::skin-tone-2`),
   /// or the workspace's own, shown as its picture.
-  ChatReaction _reaction(String name, Object? count) {
+  ChatReaction _reaction(String name, Object? count, Object? users) {
     final n = (count as num?)?.toInt() ?? 1;
+    // Slack lists some of who reacted (all, for a handful).
+    final ids = [
+      for (final u in users is List ? users : const []) if (u is String) u,
+    ];
     final standard = shortcodeEmoji(name);
-    if (standard != null) return ChatReaction(emoji: standard, count: n);
+    if (standard != null) {
+      return ChatReaction(emoji: standard, count: n, userIds: ids);
+    }
     final custom = _customEmoji[teamId]?[name.split('::').first];
     return ChatReaction(
       emoji: custom?.text ?? ':$name:',
       count: n,
       imageUrl: custom?.url,
+      userIds: ids,
     );
   }
 
@@ -1257,8 +1312,13 @@ class SlackChatDatasource implements ChatRemoteDatasource {
         // Custom emoji and marking a channel read are extras: a token
         // granted before `emoji:read` or `channels:write` was asked for
         // keeps working, just without them.
-        if ((method == 'emoji.list' || method == 'conversations.mark') &&
+        if ((method == 'emoji.list' ||
+                method == 'conversations.mark' ||
+                method == 'reactions.add') &&
             error == 'missing_scope') {
+          throw SlackApiException(error);
+        }
+        if (method == 'reactions.add' && error == 'already_reacted') {
           throw SlackApiException(error);
         }
         if (_reconnectErrors.contains(error)) {

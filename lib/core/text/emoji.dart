@@ -8,6 +8,31 @@ String? shortcodeEmoji(String name) {
   return _toned(parts.first, parts.length > 1 ? parts[1] : null);
 }
 
+/// The reactions the chat's reaction menu offers: Teams' six first (what
+/// Graph's legacy `like`…`angry` stand for), then the ones Slack and Google
+/// Chat users reach for most. Each has a Slack name (`emojiShortcode`).
+const quickReactions = [
+  '👍', '❤️', '😆', '😮', '😢', '😠', //
+  '🎉', '🙏', '👀', '✅', '🔥', '💯',
+];
+
+/// The Slack name for [emoji] — `+1` for 👍, `+1::skin-tone-4` for 👍🏽 —
+/// or null when it is not a standard emoji. The first name the table gives
+/// a character wins. Presentation selectors (U+FE0F) are ignored either
+/// side, so ❤ and ❤️ are both `heart`.
+String? emojiShortcode(String emoji) =>
+    _byEmoji[_bare(emoji)];
+
+String _bare(String s) => s.replaceAll('\u{FE0F}', '');
+
+final Map<String, String> _byEmoji = () {
+  final m = <String, String>{};
+  for (final e in emojiShortcodes.entries) {
+    m.putIfAbsent(_bare(e.value), () => e.key);
+  }
+  return m;
+}();
+
 /// [name], in [tone] (`skin-tone-3`) when given: the exact sequence
 /// emoji-data has for it, else the plain emoji with the modifier after it.
 String? _toned(String name, String? tone) {

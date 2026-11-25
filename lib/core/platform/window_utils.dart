@@ -131,7 +131,10 @@ Future<WindowController> _createSubWindow(
 
   debugPrint('[Window] opening $label');
   final controller = await WindowController.create(
-    WindowConfiguration(arguments: jsonEncode(args)),
+    WindowConfiguration(
+      arguments: jsonEncode(args),
+      nonActivating: config.nonActivating,
+    ),
   );
   _lastCreated = (
     hash: hash,

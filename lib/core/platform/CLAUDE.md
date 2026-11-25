@@ -283,6 +283,27 @@ is a deliberate second window and opens. Every create logs `[Window] opening
 <type>` and every fold logs why, so a report of two windows can be read off
 `diagnostics.log`. `window_utils_test.dart` pins it.
 
+### A reminder window never activates the app
+
+The meeting-reminders window pops up over whatever app the user is in. As an
+ordinary `NSWindow` it activated NightMail twice over: `WindowController.show()`
+(`window_show`) calls `NSApp.activate(ignoringOtherApps: true)`, and a click on
+the window activates the app too — each time pulling the main window up over
+the user's work just to press Dismiss.
+
+So `WindowConfiguration.nonActivating` (macOS only, added to the vendored
+`desktop_multi_window`) creates the window as `CustomPanel`, an `NSPanel` with
+`.nonactivatingPanel`, and its `window_show` just `orderFrontRegardless()`s.
+`createSubWindow` passes the flag through. Three things matter:
+
+- **`hidesOnDeactivate = false`.** A panel's default is to hide whenever its
+  app is inactive, which for a non-activating panel is almost always.
+- **Clicks still land.** `FlutterView` accepts first mouse, and
+  `becomesKeyOnlyIfNeeded` keeps a button click from even making it key.
+- **`window_manager` treats it as a panel.** `setAlwaysOnTop(false)` would
+  clear `.nonactivatingPanel`; the reminder window only ever sets it true. Its
+  focus/blur events come from key status rather than main.
+
 ### Closing a sub-window is a request, not an act
 
 `windowManager.close()` *posts* the close (Windows `SC_CLOSE`) and reports

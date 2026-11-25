@@ -102,7 +102,9 @@ class MultiWindowManager: NSObject {
 
         let config = WindowConfiguration.fromJson(arguments)
 
-        let window = CustomWindow(configuration: config)
+        let window: NSWindow = config.nonActivating
+            ? CustomPanel(configuration: config)
+            : CustomWindow(configuration: config)
 
         let project = FlutterDartProject()
         project.dartEntrypointArguments = ["multi_window", windowId, config.arguments]

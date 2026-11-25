@@ -192,11 +192,13 @@ dependency_overrides:
   #   #294 SMTP DATA kept the folded continuation lines of a long Bcc header
   enough_mail:
     path: packages/enough_mail
-  # Locally patched copies, Linux only (the other platforms are untouched;
-  # see lib/core/platform/CLAUDE.md, "Linux sub-windows"). Both are the
-  # latest release; drop each once upstream ships the fix:
-  #   desktop_multi_window 0.3.1 — a sub-window's FlView is wrapped in a
-  #     GtkOverlay before it is added, so html_view can embed in it
+  # Locally patched copies (see lib/core/platform/CLAUDE.md, "Linux
+  # sub-windows" and "A reminder window never activates the app"). Both are
+  # the latest release; drop each once upstream ships the fix:
+  #   desktop_multi_window 0.3.1 — Linux: a sub-window's FlView is wrapped in
+  #     a GtkOverlay before it is added, so html_view can embed in it. macOS:
+  #     `WindowConfiguration.nonActivating` makes the window an NSPanel that
+  #     never activates the app
   #   window_manager 0.5.2 — the button-press emission hook is removed when
   #     the plugin is disposed (use-after-free after a sub-window closes)
   desktop_multi_window:

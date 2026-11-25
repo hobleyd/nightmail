@@ -27,6 +27,29 @@ class CustomWindow: NSWindow {
 
 }
 
+/// A window that never activates the app: clicking it, or showing it, leaves
+/// the app's other windows where they are. For a reminder that pops up over
+/// whatever the user is working in.
+class CustomPanel: NSPanel {
+
+    init(configuration: WindowConfiguration) {
+        super.init(
+            contentRect: NSRect(x: 10, y: 10, width: 800, height: 600),
+            styleMask: [.miniaturizable, .closable, .titled, .resizable, .nonactivatingPanel],
+            backing: .buffered,
+            defer: false)
+
+        self.isReleasedWhenClosed = false
+        // A panel hides whenever its app is not active, which for a
+        // non-activating one is nearly always.
+        self.hidesOnDeactivate = false
+        // A click on a button needs no key window; one in a text field still
+        // makes the panel key.
+        self.becomesKeyOnlyIfNeeded = true
+    }
+
+}
+
 class FlutterWindow: NSObject {
     let windowId: WindowId
     let windowArgument: String
@@ -98,6 +121,10 @@ class FlutterWindow: NSObject {
 
     func handleWindowMethod(method: String, arguments: Any?, result: @escaping FlutterResult) {
         switch method {
+        case "window_show" where window.styleMask.contains(.nonactivatingPanel):
+            window.setIsVisible(true)
+            window.orderFrontRegardless()
+            result(nil)
         case "window_show":
             window.makeKeyAndOrderFront(nil)
             window.setIsVisible(true)

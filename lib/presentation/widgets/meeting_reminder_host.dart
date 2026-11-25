@@ -92,6 +92,9 @@ class _MeetingReminderHostState extends State<MeetingReminderHost> {
           'type': meetingRemindersWindowType,
           'rows': rows,
         }),
+        // On macOS a click on it, or its popping up, must not bring the
+        // main window forward over whatever the user is working in.
+        nonActivating: true,
       ),
     );
   }

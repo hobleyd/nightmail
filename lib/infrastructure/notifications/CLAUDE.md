@@ -266,7 +266,10 @@ the setting does not affect them.
   A failed fetch keeps the account's previous events, as the rows do.
 - **Dismissals are in memory only**, so a restart mid-countdown shows the
   current step again. The window is always-on-top: it usually opens while
-  another app is in front.
+  another app is in front. On macOS it is also a non-activating panel, so
+  opening it or clicking it does not bring the main window forward — see
+  [`lib/core/platform/CLAUDE.md`](../../core/platform/CLAUDE.md) "A reminder
+  window never activates the app".
 - **Only a new step opens or fronts the dialog** (`MeetingReminderUpdate.alert`).
   Rows leaving, dismissals and the setting just update what is showing, so
   closing the window is not undone until some meeting's next alert.

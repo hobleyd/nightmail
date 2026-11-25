@@ -431,9 +431,10 @@ than falling into an account lookup that answers null.
   per method: `*:read` for `users.conversations`/`conversations.info`,
   `*:history`, `users:read`, `users:read.email` (`users.lookupByEmail`),
   `chat:write`, `im:write`/`mpim:write` (`conversations.open`, and
-  `conversations.mark` on DMs — channels are never marked, so no
-  `channels:write`), `files:read` (images), `search:read`. A scope added
-  later surfaces as `missing_scope` → reconnect, which grants it.
+  `conversations.mark` on DMs), `channels:write`/`groups:write`
+  (`conversations.mark` on channels), `files:read` (images), `search:read`.
+  A scope added later surfaces as `missing_scope` → reconnect, which grants
+  it — except where noted below.
 - **Mapping:** `im` → one-on-one (titled by the other person), `mpim` →
   group (titled from its `mpdm-a--b-1` name less the user's handle), public
   and private channels → `ChatKind.space`, threaded, titled `#name`, under
@@ -455,11 +456,32 @@ than falling into an account lookup that answers null.
   account's domains mean nothing to Slack. `findOneOnOne` looks the DM up in
   the listed IMs and never calls `conversations.open`, which would create
   one; that waits for the first message (`createOneOnOne`).
-- **Unread** is DMs and group DMs only, as Teams leaves channels out. One
-  `users.conversations` of `im,mpim`, then `conversations.info` for 15 per
-  poll — the ones with the newest known activity first, the rest going
-  round in turn. A DM's info carries `unread_count_display`; a group DM's
-  `last_read`, checked against the messages after it.
+- **Unread** covers DMs, group DMs *and channels* — Slack's sidebar bolds
+  an unread channel, and a user reading both expects the same here. Unlike
+  Teams, Slack keeps a per-user `last_read` on channels, so nothing stops
+  it. One `users.conversations` of every type, then `conversations.info`
+  for 15 DMs and 8 channels per poll (`_pick`): half the slots for the
+  newest known activity, half going round the rest in Slack's listing
+  order — stable between polls, so every channel is reached within
+  `channels / 4` minutes (re-sorting the pool each poll skipped some). The
+  main window and the chat window each poll, so that is ~46 of Tier 3's
+  50+ a minute. A DM's info carries `unread_count_display`; a group DM's
+  and a channel's `last_read`, checked against the newest 5 messages —
+  read without `oldest`, so a read channel's activity is learned too.
+  People's, bots' (`bot_message`), file-share and broadcast messages
+  count; joins, leaves and topic changes do not (`_unreadSubtypes`).
+  Muted channels are bolded too: mute state is not in the Web API.
+- **The dot leaves Slack channels out** (`ChatUnreadCubit._counts`), as
+  Slack's badge does — a channel message is not waiting on the user. They
+  are bolded in the window and offered in the pane's dropdown.
+- **Marking a channel read** needs `channels:write` and `groups:write`
+  (added 1.58.1). A workspace connected before lacks them: `markRead` skips
+  the call when `SlackWorkspace.scopes` does not hold both, and a
+  `missing_scope` from `conversations.mark` is *not* a reconnect (`_call`),
+  like `emoji.list`. The repository still counts the channel read in that
+  isolate until something newer arrives; it just stays unread in Slack
+  until the user reconnects (Settings shows "Reconnect", via
+  `missingScopes`).
 - **Bodies** are mrkdwn (`mrkdwnToHtml`): Slack sends `&`, `<`, `>` escaped,
   so the only raw `<…>` are its controls — `<@U…>` (named from `_users`),
   `<#C…|name>`, `<!here>`, `<url|label>` (http(s)/mailto only).

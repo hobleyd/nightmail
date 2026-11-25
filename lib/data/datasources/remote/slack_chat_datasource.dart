@@ -57,13 +57,26 @@ class SlackChatDatasource implements ChatRemoteDatasource {
   static final _ims = <String, Map<String, String>>{};
   static final _imsListedAt = <String, DateTime>{};
 
-  /// Where the unread poll's round-robin over conversations without known
-  /// activity has got to, per team.
+  /// Where the unread poll's round-robin has got to, per `team|dm` and
+  /// `team|channel`.
   static final _rotation = <String, int>{};
 
-  /// How many direct and group messages one unread poll asks about:
-  /// `conversations.info` is Tier 3 (50+ a minute) and the window shares it.
+  /// How many direct and group messages, and how many channels, one unread
+  /// poll asks about: `conversations.info` is Tier 3 (50+ a minute), and
+  /// the main window and the chat window each poll once a minute.
   static const _unreadChecked = 15;
+  static const _channelsChecked = 8;
+
+  /// Message subtypes that make a conversation unread, as Slack's sidebar
+  /// counts them: people's and bots' messages, not joins, leaves or topic
+  /// changes.
+  static const _unreadSubtypes = {
+    null,
+    'bot_message',
+    'file_share',
+    'me_message',
+    'thread_broadcast',
+  };
 
   /// A workspace's own emoji by name, per team, from `emoji.list`: a picture
   /// URL, or — for an alias of a standard one — its characters. Read at most
@@ -132,32 +145,25 @@ class SlackChatDatasource implements ChatRemoteDatasource {
     return out;
   }
 
-  /// Direct and group messages only: channels in Slack are read loosely, as
-  /// Teams channels are, and carry no dot. Each poll asks about the
-  /// [_unreadChecked] most recently active, the slots left over going round
-  /// the ones whose activity is not yet known.
+  /// Direct and group messages, and channels — which Slack's sidebar bolds
+  /// too; the Chat button's dot leaves channels out (`ChatUnreadCubit`), as
+  /// Slack's badge does. Each poll asks about the most recently active of
+  /// each ([_unreadChecked], [_channelsChecked]); the other half of the
+  /// slots go round the rest in turn, so a channel that wakes after a quiet
+  /// spell is reached within a few polls, not never.
   @override
   Future<List<ChatConversation>> listRecentChats() async {
-    final raw = await _memberships('mpim,im');
+    final raw =
+        await _memberships('public_channel,private_channel,mpim,im');
     final own = await _ownId();
     if (own == null || raw.isEmpty) return const [];
-    String? latestOf(Map<String, dynamic> c) => _latest['$teamId|${c['id']}'];
-    final known = raw.where((c) => latestOf(c) != null).toList()
-      ..sort((a, b) => latestOf(b)!.compareTo(latestOf(a)!));
-    final unknown = raw.where((c) => latestOf(c) == null).toList();
-    final picked = known.take(_unreadChecked ~/ 2 + 3).toList();
-    if (unknown.isNotEmpty) {
-      final start = (_rotation[teamId] ?? 0) % unknown.length;
-      final room = _unreadChecked - picked.length;
-      for (var i = 0; i < room && i < unknown.length; i++) {
-        picked.add(unknown[(start + i) % unknown.length]);
-      }
-      _rotation[teamId] = start + room;
-    }
-    for (final c in known.skip(picked.length)) {
-      if (picked.length >= _unreadChecked) break;
-      if (!picked.contains(c)) picked.add(c);
-    }
+    bool isDm(Map<String, dynamic> c) =>
+        c['is_im'] == true || c['is_mpim'] == true;
+    final picked = [
+      ..._pick(raw.where(isDm).toList(), _unreadChecked, 'dm'),
+      ..._pick(raw.where((c) => !isDm(c)).toList(), _channelsChecked,
+          'channel'),
+    ];
 
     final out = <ChatConversation>[];
     for (var i = 0; i < picked.length; i += 4) {
@@ -183,10 +189,32 @@ class SlackChatDatasource implements ChatRemoteDatasource {
     return out;
   }
 
+  /// [n] of [all]: half the most recently active, the rest in turn — in
+  /// Slack's listing order, which holds still between polls where activity
+  /// does not, so every one is reached within `all / (n / 2)` polls.
+  List<Map<String, dynamic>> _pick(
+      List<Map<String, dynamic>> all, int n, String kind) {
+    if (all.length <= n) return all;
+    String? latestOf(Map<String, dynamic> c) => _latest['$teamId|${c['id']}'];
+    final known = all.where((c) => latestOf(c) != null).toList()
+      ..sort((a, b) => latestOf(b)!.compareTo(latestOf(a)!));
+    final picked = known.take(n ~/ 2).toList();
+    final rest = all.where((c) => !picked.contains(c)).toList();
+    final key = '$teamId|$kind';
+    final start = (_rotation[key] ?? 0) % rest.length;
+    final room = n - picked.length;
+    for (var i = 0; i < room; i++) {
+      picked.add(rest[(start + i) % rest.length]);
+    }
+    _rotation[key] = start + room;
+    return picked;
+  }
+
   /// Whether someone else has written in [channel] since the user last read
   /// it. A DM's `conversations.info` says so outright
-  /// (`unread_count_display`); a group DM's names `last_read`, and the newest
-  /// message after it decides.
+  /// (`unread_count_display`); a group DM's and a channel's name
+  /// `last_read`, and the newest messages decide — read whether or not any
+  /// came after it, so a quiet channel's activity is learned too.
   Future<({bool unread, DateTime? latest})> _readState(
       Map<String, dynamic> channel, String own) async {
     final id = channel['id'] as String;
@@ -199,28 +227,33 @@ class SlackChatDatasource implements ChatRemoteDatasource {
       return (unread: count > 0, latest: _ts(_latest['$teamId|$id']));
     }
     final lastRead = channel['last_read'] as String?;
-    final history = await _call('conversations.history', {
-      'channel': id,
-      'limit': '5',
-      if (lastRead != null && lastRead != '0000000000.000000')
-        'oldest': lastRead,
-    });
+    final history = await _call(
+        'conversations.history', {'channel': id, 'limit': '5'});
     final newer = _list(history['messages']);
     final top = newer.firstOrNull?['ts'] as String?;
     if (top != null) _latest['$teamId|$id'] = top;
     final unread = lastRead != null &&
         newer.any((m) =>
             m['user'] != own &&
-            m['subtype'] == null &&
+            _unreadSubtypes.contains(m['subtype']) &&
             (m['ts'] as String).compareTo(lastRead) > 0);
     return (unread: unread, latest: _ts(_latest['$teamId|$id']));
   }
 
-  /// Direct and group messages only — the scopes asked for (`im:write`,
-  /// `mpim:write`) do not reach channels, and channels carry no dot.
+  /// A channel only with `channels:write` and `groups:write`, which
+  /// workspaces connected before channels were bolded lack until they are
+  /// connected again: without them the repository still counts it read
+  /// here until something newer arrives, it just stays unread in Slack.
   @override
   Future<void> markRead(ChatConversation chat) async {
-    if (chat.kind != ChatKind.oneOnOne && chat.kind != ChatKind.group) return;
+    if (chat.kind == ChatKind.space) {
+      final scopes = (await _workspaces.byTeam(teamId))?.scopes;
+      if (scopes == null ||
+          !scopes.contains('channels:write') ||
+          !scopes.contains('groups:write')) {
+        return;
+      }
+    }
     final newest = _list((await _call('conversations.history',
             {'channel': chat.id, 'limit': '1'}))['messages'])
         .firstOrNull?['ts'] as String?;
@@ -905,9 +938,11 @@ class SlackChatDatasource implements ChatRemoteDatasource {
         final data = r.data ?? const {};
         if (data['ok'] == true) return data;
         final error = data['error'] as String? ?? 'unknown_error';
-        // Custom emoji are an extra: a token granted before `emoji:read`
-        // was asked for keeps working, just without them.
-        if (method == 'emoji.list' && error == 'missing_scope') {
+        // Custom emoji and marking a channel read are extras: a token
+        // granted before `emoji:read` or `channels:write` was asked for
+        // keeps working, just without them.
+        if ((method == 'emoji.list' || method == 'conversations.mark') &&
+            error == 'missing_scope') {
           throw SlackApiException(error);
         }
         if (_reconnectErrors.contains(error)) {

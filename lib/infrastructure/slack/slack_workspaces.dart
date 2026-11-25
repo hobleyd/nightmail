@@ -158,8 +158,9 @@ class SlackWorkspaces {
   /// `conversations.history`/`replies` (`*:history`), `users.info`
   /// (`users:read`), `users.lookupByEmail` (`users:read.email`),
   /// `chat.postMessage` (`chat:write`), `conversations.open` and
-  /// `conversations.mark` on direct messages (`im:write`, `mpim:write` —
-  /// channels are never marked, so no `channels:write`), `url_private` images
+  /// `conversations.mark` (`im:write`, `mpim:write`, and `channels:write`/
+  /// `groups:write` for channels, asked since channels are bolded when
+  /// unread), `url_private` images
   /// (`files:read`), `search.messages` (`search:read`) and the workspace's own
   /// emoji, `emoji.list` (`emoji:read`).
   static const userScopes = [
@@ -176,6 +177,8 @@ class SlackWorkspaces {
     'chat:write',
     'im:write',
     'mpim:write',
+    'channels:write',
+    'groups:write',
     'files:read',
     'search:read',
     'emoji:read',

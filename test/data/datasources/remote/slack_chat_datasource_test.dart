@@ -33,7 +33,8 @@ void main() {
   SlackChatDatasource datasource() =>
       SlackChatDatasource(workspaces: workspaces, teamId: 'T1', dio: stub());
 
-  Future<void> connected({bool needsReconnect = false}) =>
+  Future<void> connected(
+          {bool needsReconnect = false, Set<String>? scopes}) =>
       storage.write(
           key: 'slack_workspaces',
           value: jsonEncode([
@@ -44,6 +45,7 @@ void main() {
               clientId: '1.2',
               accessToken: 'xoxp-1',
               needsReconnect: needsReconnect,
+              scopes: scopes,
             ).toJson(),
           ]));
 
@@ -300,10 +302,8 @@ void main() {
         1);
   });
 
-  test('a DM is unread when Slack counts it; a channel is never asked',
-      () async {
+  test('a DM is unread when Slack counts it', () async {
     routes['users.conversations'] = (o) {
-      expect(o.queryParameters['types'], 'mpim,im');
       return {
         'ok': true,
         'channels': [
@@ -323,6 +323,123 @@ void main() {
         };
     final recent = await datasource().listRecentChats();
     expect({for (final c in recent) c.id: c.unread}, {'D1': true, 'D2': false});
+  });
+
+  test('a channel is unread when someone — or a bot — wrote after last_read, '
+      'not for a join', () async {
+    routes['users.conversations'] = (o) {
+      expect(o.queryParameters['types'], contains('public_channel'));
+      return {
+        'ok': true,
+        'channels': [
+          {'id': 'C1', 'is_channel': true, 'name': 'secops'},
+          {'id': 'C2', 'is_channel': true, 'name': 'random'},
+          {'id': 'C3', 'is_channel': true, 'name': 'quiet'},
+        ],
+      };
+    };
+    routes['conversations.info'] = (o) => {
+          'ok': true,
+          'channel': {
+            'id': o.queryParameters['channel'],
+            'is_channel': true,
+            'last_read': '1700000100.000000',
+          },
+        };
+    routes['conversations.history'] = (o) {
+      expect(o.queryParameters.containsKey('oldest'), isFalse,
+          reason: 'the newest are read either way, for activity');
+      return {
+        'ok': true,
+        'messages': switch (o.queryParameters['channel']) {
+          'C1' => [
+              {'ts': '1700000200.000000', 'bot_id': 'B1', 'subtype': 'bot_message'},
+            ],
+          'C2' => [
+              {'ts': '1700000200.000000', 'user': 'UANN', 'subtype': 'channel_join'},
+            ],
+          _ => [
+              {'ts': '1700000090.000000', 'user': 'UANN'},
+            ],
+        },
+      };
+    };
+    final recent = await datasource().listRecentChats();
+    expect({for (final c in recent) c.id: c.unread},
+        {'C1': true, 'C2': false, 'C3': false});
+    expect(recent.firstWhere((c) => c.id == 'C3').lastActivity, isNotNull,
+        reason: 'a read channel\'s activity is learned too');
+  });
+
+  test('every channel is reached in turn, however many', () async {
+    routes['users.conversations'] = (_) => {
+          'ok': true,
+          'channels': [
+            for (var i = 0; i < 30; i++)
+              {'id': 'C$i', 'is_channel': true, 'name': 'c$i'},
+          ],
+        };
+    routes['conversations.info'] = (o) => {
+          'ok': true,
+          'channel': {'id': o.queryParameters['channel'], 'last_read': '1.0'},
+        };
+    routes['conversations.history'] = (o) => {
+          'ok': true,
+          'messages': [
+            {'ts': '${o.queryParameters['channel']!.substring(1)}.5'},
+          ],
+        };
+    final ds = datasource();
+    final asked = <String>{};
+    for (var poll = 0; poll < 8; poll++) {
+      requests.clear();
+      await ds.listRecentChats();
+      final infos = requests
+          .where((r) => r.uri.pathSegments.last == 'conversations.info');
+      expect(infos.length, lessThanOrEqualTo(8));
+      asked.addAll(infos.map((r) => r.queryParameters['channel'] as String));
+    }
+    expect(asked, hasLength(30));
+  });
+
+  group('marking a channel read', () {
+    const channel =
+        ChatConversation(id: 'C1', kind: ChatKind.space, title: '#g');
+
+    setUp(() {
+      routes['conversations.history'] = (_) => {
+            'ok': true,
+            'messages': [
+              {'ts': '200.0', 'user': 'UANN'},
+            ],
+          };
+    });
+
+    test('is skipped for a workspace connected without channels:write',
+        () async {
+      await datasource().markRead(channel);
+      expect(requests, isEmpty);
+    });
+
+    test('marks the newest message once the scopes are granted', () async {
+      await connected(scopes: const {'channels:write', 'groups:write'});
+      routes['conversations.mark'] = (o) {
+        expect((o.data as Map)['ts'], '200.0');
+        return {'ok': true};
+      };
+      await datasource().markRead(channel);
+      expect(requests.map((r) => r.uri.pathSegments.last),
+          contains('conversations.mark'));
+    });
+
+    test('a refusal for a missing scope does not ask to reconnect',
+        () async {
+      await connected(scopes: const {'channels:write', 'groups:write'});
+      routes['conversations.mark'] =
+          (_) => {'ok': false, 'error': 'missing_scope'};
+      await expectLater(datasource().markRead(channel), throwsA(anything));
+      expect((await workspaces.byTeam('T1'))!.needsReconnect, isFalse);
+    });
   });
 
   test('a refused token flags the workspace, as a ServerException', () async {

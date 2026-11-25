@@ -24,6 +24,8 @@
         "chat:write",
         "im:write",
         "mpim:write",
+        "channels:write",
+        "groups:write",
         "files:read",
         "search:read",
         "emoji:read"

@@ -327,10 +327,16 @@ fetches anything itself, and without a loader an image reads "[image]".
   the body as `<img src="gchat-media:{resourceName}">` (an opaque ref, like a
   nextLink cursor) and `image` downloads it from `media/{resourceName}
   ?alt=media` with the token. A Drive attachment stays a named attachment.
-- `fetchImageBytes` (`chat_images.dart`) returns null for anything that is
-  not an `image/*` answer under 15 MB — chat images are decoration, never an
-  error. The repository remembers results (misses too) per `account|src`,
-  300 deep, so polling never re-fetches.
+  The URL is built whole (`baseUrl/media/…`): a resource name is base64 and
+  can hold `//`, which Dio folds to `/` in a relative path.
+- `fetchImageBytes` (`chat_images.dart`) asks with `Accept: image/*` (not
+  the API client's JSON) and returns null for anything that is neither an
+  `image/*` answer nor bytes that start like a picture (`looksLikeImage`:
+  media download can serve a screenshot as a binary blob), or over 15 MB — chat images are decoration, never an
+  error. Each miss logs `[ChatImage] host status "type"` to
+  `diagnostics.log`. The repository remembers results (misses too) per
+  `account|src`, 300 deep, so polling never re-fetches — a fix only shows
+  after a restart.
 
 ### Who is talking
 

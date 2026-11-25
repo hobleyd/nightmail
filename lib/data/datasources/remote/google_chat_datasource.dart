@@ -480,7 +480,10 @@ class GoogleChatDatasource implements ChatRemoteDatasource {
   Future<Uint8List?> image(String src) async {
     if (src.startsWith('$mediaScheme:')) {
       final ref = Uri.decodeComponent(src.substring(mediaScheme.length + 1));
-      return fetchImageBytes(_dio, '/media/$ref', query: {'alt': 'media'});
+      // A whole URL, not a path: Dio folds `//` in a relative path to `/`,
+      // and a resource name is base64 that can contain it.
+      return fetchImageBytes(_dio, '${_dio.options.baseUrl}/media/$ref',
+          query: {'alt': 'media'});
     }
     final uri = Uri.tryParse(src);
     if (uri == null || uri.scheme != 'https') return null;

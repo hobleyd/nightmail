@@ -121,6 +121,26 @@ void main() {
       expect(requests.last.uri.queryParameters['alt'], 'media');
     });
 
+    test('media served as a binary blob still shows when it is a picture',
+        () async {
+      const png = [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A];
+      routes['/media/R2'] = (200, 'application/octet-stream', png);
+      expect(await ds().image('${GoogleChatDatasource.mediaScheme}:R2'), png);
+      expect(requests.last.headers['Accept'], startsWith('image/'));
+
+      routes['/media/R3'] = (200, 'application/octet-stream', [1, 2, 3]);
+      expect(await ds().image('${GoogleChatDatasource.mediaScheme}:R3'), isNull);
+    });
+
+    test('a resource name with `//` in it reaches the server intact',
+        () async {
+      routes['/media/Cl//x+y=='] = (200, 'image/png', [4]);
+      final src = '${GoogleChatDatasource.mediaScheme}:'
+          '${Uri.encodeComponent('Cl//x+y==')}';
+      expect(await ds().image(src), [4]);
+      expect(requests.last.uri.path, '/v1/media/Cl//x+y==');
+    });
+
     test('a person without a photo of their own has none', () async {
       routes['/people/123'] = (
         200,

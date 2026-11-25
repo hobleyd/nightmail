@@ -184,6 +184,8 @@ Settings → Accounts.
 - On a NightMail Server, the Chat button's unread dot appears within seconds of a new message, not at the next minute's check
 - The Chat pane's dropdown also offers your unread chats, beside the people on the email
 - Search from the Chat pane's dropdown to message anyone in your address book you can chat with, or any chat or channel, by name
+- Edit your own chat messages on Teams, NightMail Server, Google Chat and Slack
+- Open the chat window straight onto the conversation in the Chat pane
 
 ### Contacts
 - Typeahead in the compose window drawing from three sources:

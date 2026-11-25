@@ -177,6 +177,10 @@ Settings → Accounts.
 - A red dot on the Chat button when someone has written in a chat you haven't read; opening the chat marks it read in Teams or Google Chat too
 - Slack: connect one or more workspaces under Settings > General — direct messages, group messages and channels with threads, search, pictures and avatars, in the same pane and window
 - With Slack beside your account's own chat, the Chat button becomes a menu of chat systems, each with its own unread dot and count; an IMAP account with Slack opens Slack directly
+- Chats open instantly from an encrypted local cache, then fetch only what changed since (Teams, Slack and Google Chat)
+- Slack messages and reactions show every emoji, including the workspace's own custom emoji
+- The chat window bolds only chats with unread messages and sorts by most recent or by name
+- The Chat pane's dropdown also offers your unread chats, beside the people on the email
 
 ### Contacts
 - Typeahead in the compose window drawing from three sources:

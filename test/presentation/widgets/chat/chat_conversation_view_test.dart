@@ -1,6 +1,7 @@
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:fpdart/fpdart.dart';
@@ -172,6 +173,78 @@ void main() {
       await cubit.close();
     });
   });
+
+  group('editing', () {
+    ChatMessage mine(String id, String text, int minute) => ChatMessage(
+          id: id,
+          createdAt: DateTime(2026, 11, 25, 10, minute),
+          senderName: 'Me',
+          senderUserId: 'u-me',
+          bodyHtml: text,
+          editableText: text,
+        );
+
+    Future<(_Repo, ChatConversationCubit)> pump(WidgetTester tester) async {
+      final repo = _Repo([
+        mine('2', 'second', 2),
+        msg('1', 'Ann Lee', 'u-ann', 1),
+      ], ownId: 'u-me');
+      final cubit = ChatConversationCubit(repository: repo);
+      await cubit.open('a',
+          const ChatConversation(id: 'c', kind: ChatKind.group, title: 'G'));
+      await tester.pumpWidget(MaterialApp(
+        home: Scaffold(
+          body: BlocProvider.value(
+            value: cubit,
+            child: const ChatConversationView(),
+          ),
+        ),
+      ));
+      await tester.pumpAndSettle();
+      return (repo, cubit);
+    }
+
+    testWidgets('the pencil edits in the composer; Enter saves, the draft '
+        'comes back', (tester) async {
+      final (repo, cubit) = await pump(tester);
+      expect(find.byTooltip('Edit'), findsOneWidget,
+          reason: 'only on the user\'s own message');
+      await tester.enterText(find.byType(TextField), 'half a thought');
+      await tester.tap(find.byTooltip('Edit'));
+      await tester.pumpAndSettle();
+      expect(find.textContaining('Editing message'), findsOneWidget);
+      expect(find.byTooltip('Save'), findsOneWidget);
+      final field = tester.widget<TextField>(find.byType(TextField));
+      expect(field.controller!.text, 'second');
+
+      await tester.enterText(find.byType(TextField), 'second, fixed');
+      await tester.tap(find.byTooltip('Save'));
+      await tester.pumpAndSettle();
+      expect(repo.edits, [('2', 'second, fixed')]);
+      expect(find.textContaining('Editing message'), findsNothing);
+      expect(tester.widget<TextField>(find.byType(TextField)).controller!.text,
+          'half a thought');
+      expect(find.text('Edited'), findsOneWidget);
+      await cubit.close();
+    });
+
+    testWidgets('Up in an empty box edits the last one; Esc leaves it',
+        (tester) async {
+      final (repo, cubit) = await pump(tester);
+      await tester.tap(find.byType(TextField));
+      await tester.pump();
+      await tester.sendKeyEvent(LogicalKeyboardKey.arrowUp);
+      await tester.pumpAndSettle();
+      expect(cubit.state.editing?.id, '2');
+      await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+      await tester.pumpAndSettle();
+      expect(cubit.state.editing, isNull);
+      expect(tester.widget<TextField>(find.byType(TextField)).controller!.text,
+          isEmpty);
+      expect(repo.edits, isEmpty);
+      await cubit.close();
+    });
+  });
 }
 
 class _Repo extends Fake implements ChatRepository {
@@ -220,4 +293,21 @@ class _Repo extends Fake implements ChatRepository {
   @override
   Future<void> cacheMessages(String accountId, ChatConversation conversation,
       List<ChatMessage> messages) async {}
+
+  final edits = <(String, String)>[];
+
+  @override
+  bool canEdit(String accountId, ChatConversation conversation) => true;
+
+  @override
+  Future<Either<Failure, ChatMessage>> editMessage(
+    String accountId,
+    ChatConversation conversation,
+    ChatMessage message,
+    String text,
+  ) async {
+    edits.add((message.id, text));
+    return Right(message.withEdit(
+        bodyHtml: text, editableText: text, editedAt: DateTime(2026)));
+  }
 }

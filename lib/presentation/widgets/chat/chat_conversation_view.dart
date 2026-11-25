@@ -478,7 +478,11 @@ class _MessageTile extends StatelessWidget {
     // The avatar heads a run of one sender's messages; the rest of the run
     // keeps its column so the bubbles line up under the first.
     const avatarSize = 30.0;
-    final row = Row(
+    final cubit = context.read<ChatConversationCubit>();
+    final editable = cubit.canEdit(m);
+    final beingEdited = context.select<ChatConversationCubit, bool>(
+        (c) => c.state.editing?.id == m.id);
+    Widget row(bool hovering) => Row(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         SizedBox(
@@ -489,6 +493,24 @@ class _MessageTile extends StatelessWidget {
         ),
         const SizedBox(width: 8),
         Expanded(child: content),
+        // Its slot is kept whether shown or not, so hovering never reflows
+        // the bubble. A touch screen has no hover: the pencil stays.
+        if (editable)
+          Opacity(
+            opacity: hovering || isTouchPlatform || beingEdited ? 1 : 0,
+            child: IconButton(
+              icon: Icon(Icons.edit_outlined,
+                  size: isTouchPlatform ? 18 : 14,
+                  color: beingEdited ? AppColors.accent : c.textTertiary),
+              tooltip: 'Edit',
+              visualDensity: VisualDensity.compact,
+              padding: EdgeInsets.zero,
+              constraints: BoxConstraints.tightFor(
+                  width: isTouchPlatform ? 36 : 24,
+                  height: isTouchPlatform ? 36 : 24),
+              onPressed: () => cubit.startEdit(m),
+            ),
+          ),
       ],
     );
 
@@ -501,15 +523,42 @@ class _MessageTile extends StatelessWidget {
       decoration: isPost
           ? BoxDecoration(
               // A post wears its author's colour like a chat bubble does.
-              color: selected ? c.selectionBg : person.bubble,
+              color: selected || beingEdited ? c.selectionBg : person.bubble,
               border: Border.all(
-                  color: selected ? c.selectionBorder : c.separator),
+                  color: selected || beingEdited
+                      ? c.selectionBorder
+                      : c.separator),
               borderRadius: BorderRadius.circular(8),
             )
-          : null,
-      child: row,
+          : beingEdited
+              ? BoxDecoration(color: c.selectionBg)
+              : null,
+      child: editable && !isTouchPlatform
+          ? _Hover(builder: row)
+          : row(false),
     );
   }
+}
+
+/// [builder] told whether the pointer is over it.
+class _Hover extends StatefulWidget {
+  const _Hover({required this.builder});
+
+  final Widget Function(bool hovering) builder;
+
+  @override
+  State<_Hover> createState() => _HoverState();
+}
+
+class _HoverState extends State<_Hover> {
+  bool _hovering = false;
+
+  @override
+  Widget build(BuildContext context) => MouseRegion(
+        onEnter: (_) => setState(() => _hovering = true),
+        onExit: (_) => setState(() => _hovering = false),
+        child: widget.builder(_hovering),
+      );
 }
 
 class _ThreadPanel extends StatelessWidget {
@@ -600,17 +649,25 @@ class _ThreadPanel extends StatelessWidget {
             ),
           ),
         ),
-        _Composer(hint: 'Reply', sending: sending),
+        _Composer(hint: 'Reply', sending: sending, inThread: true),
       ],
     );
   }
 }
 
 class _Composer extends StatefulWidget {
-  const _Composer({required this.hint, required this.sending});
+  const _Composer({
+    required this.hint,
+    required this.sending,
+    this.inThread = false,
+  });
 
   final String hint;
   final bool sending;
+
+  /// The open thread's composer: it edits the thread's replies, the other
+  /// one everything else.
+  final bool inThread;
 
   @override
   State<_Composer> createState() => _ComposerState();
@@ -627,33 +684,118 @@ class _ComposerState extends State<_Composer> {
     super.dispose();
   }
 
+  /// What was typed before an edit took the box over, given back after it.
+  String? _draft;
+
+  bool _mine(ChatConversationState s) =>
+      s.editing != null && s.editingInThread == widget.inThread;
+
   Future<void> _send() async {
     final text = _controller.text;
     if (text.trim().isEmpty) return;
     final ok = await context.read<ChatConversationCubit>().send(text);
-    if (ok && mounted) _controller.clear();
+    // A saved edit hands the box back through the listener below.
+    if (ok && mounted && !_mine(context.read<ChatConversationCubit>().state)) {
+      _controller.clear();
+    }
     _focus.requestFocus();
+  }
+
+  /// Up in an empty box edits the user's newest message, as Slack and Teams
+  /// do. Anywhere else Up moves the caret, as always.
+  KeyEventResult _onKey(FocusNode node, KeyEvent event) {
+    if (event is! KeyDownEvent ||
+        event.logicalKey != LogicalKeyboardKey.arrowUp ||
+        _controller.text.isNotEmpty ||
+        HardwareKeyboard.instance.isShiftPressed) {
+      return KeyEventResult.ignored;
+    }
+    final cubit = context.read<ChatConversationCubit>();
+    final last = cubit.lastEditable(inThread: widget.inThread);
+    if (last == null) return KeyEventResult.ignored;
+    cubit.startEdit(last);
+    return KeyEventResult.handled;
+  }
+
+  void _onEditing(BuildContext context, ChatConversationState s) {
+    final editing = _mine(s) ? s.editing : null;
+    if (editing != null) {
+      _draft ??= _controller.text;
+      _controller.value = TextEditingValue(
+        text: editing.editableText ?? '',
+        selection: TextSelection.collapsed(
+            offset: (editing.editableText ?? '').length),
+      );
+      _focus.requestFocus();
+    } else if (_draft != null) {
+      _controller.text = _draft!;
+      _controller.selection =
+          TextSelection.collapsed(offset: _controller.text.length);
+      _draft = null;
+    }
   }
 
   @override
   Widget build(BuildContext context) {
     final c = context.colors;
-    return Container(
+    final editing = context.select<ChatConversationCubit, bool>(
+        (cubit) => _mine(cubit.state));
+    return BlocListener<ChatConversationCubit, ChatConversationState>(
+      listenWhen: (a, b) =>
+          a.editing?.id != b.editing?.id ||
+          a.editingInThread != b.editingInThread,
+      listener: _onEditing,
+      child: Container(
       padding: const EdgeInsets.fromLTRB(8, 6, 8, 8),
       decoration: BoxDecoration(
         border: Border(top: BorderSide(color: c.separator)),
       ),
-      child: Row(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          if (editing)
+            Padding(
+              padding: const EdgeInsets.only(left: 2, bottom: 4),
+              child: Row(
+                children: [
+                  Icon(Icons.edit_outlined,
+                      size: 13, color: AppColors.accent),
+                  const SizedBox(width: 5),
+                  Expanded(
+                    child: Text(
+                      'Editing message · Esc to cancel',
+                      style: TextStyle(fontSize: 11.5, color: c.textSecondary),
+                    ),
+                  ),
+                  InkWell(
+                    onTap: context.read<ChatConversationCubit>().cancelEdit,
+                    borderRadius: BorderRadius.circular(4),
+                    child: Padding(
+                      padding: const EdgeInsets.all(2),
+                      child: Icon(Icons.close,
+                          size: touchIcon(14), color: c.textTertiary),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          Row(
         crossAxisAlignment: CrossAxisAlignment.end,
         children: [
           Expanded(
-            // Enter sends; Shift+Enter is a new line.
+            // Enter sends; Shift+Enter is a new line. Esc leaves an edit.
             child: CallbackShortcuts(
               bindings: {
                 const SingleActivator(LogicalKeyboardKey.enter): _send,
                 const SingleActivator(LogicalKeyboardKey.numpadEnter): _send,
+                if (editing)
+                  const SingleActivator(LogicalKeyboardKey.escape):
+                      context.read<ChatConversationCubit>().cancelEdit,
               },
-              child: TextField(
+              child: Focus(
+                onKeyEvent: _onKey,
+                child: TextField(
                 controller: _controller,
                 focusNode: _focus,
                 minLines: 1,
@@ -679,6 +821,7 @@ class _ComposerState extends State<_Composer> {
                   ),
                 ),
               ),
+              ),
             ),
           ),
           const SizedBox(width: 4),
@@ -688,12 +831,15 @@ class _ComposerState extends State<_Composer> {
                     width: 16,
                     height: 16,
                     child: CircularProgressIndicator(strokeWidth: 2))
-                : const Icon(Icons.send_rounded,
+                : Icon(editing ? Icons.check_rounded : Icons.send_rounded,
                     size: 18, color: AppColors.accent),
-            tooltip: 'Send',
+            tooltip: editing ? 'Save' : 'Send',
             onPressed: widget.sending ? null : _send,
           ),
         ],
+      ),
+        ],
+      ),
       ),
     );
   }

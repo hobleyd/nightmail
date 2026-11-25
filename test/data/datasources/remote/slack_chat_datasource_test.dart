@@ -676,6 +676,79 @@ void main() {
     );
     expect(sent.id, '200.2');
   });
+
+  group('editing', () {
+    test('a typed message comes back as typed, bare links and escapes undone',
+        () {
+      expect(
+          SlackChatDatasource.editableTextOf({
+            'text': 'a &lt; b &amp; see <https://x.test/a?b=1&amp;c=2> or '
+                '<mailto:ann@x.test|ann@x.test>',
+          }),
+          'a < b & see https://x.test/a?b=1&c=2 or ann@x.test');
+    });
+
+    test('a mention, labelled link, file or layout is not offered', () {
+      String? of(Map<String, dynamic> m) =>
+          SlackChatDatasource.editableTextOf(m);
+      expect(of({'text': 'hi <@U1>'}), isNull);
+      expect(of({'text': 'see <https://x.test|the doc>'}), isNull);
+      expect(of({'text': '<!here> lunch'}), isNull);
+      expect(
+          of({
+            'text': 'pic',
+            'files': [
+              {'id': 'F1'},
+            ],
+          }),
+          isNull);
+      expect(
+          of({
+            'text': 'x',
+            'blocks': [
+              {'type': 'section'},
+            ],
+          }),
+          isNull);
+      expect(of({'text': ''}), isNull);
+    });
+
+    test('chat.update sends the escaped text and keeps what it does not echo',
+        () async {
+      routes['chat.update'] = (o) {
+        final form = o.data as Map;
+        expect(form['channel'], 'D1');
+        expect(form['ts'], '100.1');
+        expect(form['text'], 'a &lt; b');
+        return {
+          'ok': true,
+          'ts': '100.1',
+          'text': 'a &lt; b',
+          'message': {
+            'text': 'a &lt; b',
+            'edited': {'user': 'UME', 'ts': '1700000100.000000'},
+          },
+        };
+      };
+      final edited = await datasource().edit(
+        const ChatConversation(id: 'D1', kind: ChatKind.oneOnOne, title: 'A'),
+        ChatMessage(
+          id: '100.1',
+          createdAt: DateTime(2026),
+          senderName: 'Me',
+          senderUserId: 'UME',
+          bodyHtml: 'a',
+          editableText: 'a',
+          reactions: const [ChatReaction(emoji: '👍', count: 1)],
+        ),
+        'a < b',
+      );
+      expect(edited.bodyHtml, 'a &lt; b');
+      expect(edited.editableText, 'a < b');
+      expect(edited.editedAt, isNotNull);
+      expect(edited.reactions, const [ChatReaction(emoji: '👍', count: 1)]);
+    });
+  });
 }
 
 const _json = {

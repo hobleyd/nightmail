@@ -337,6 +337,29 @@ class GoogleChatDatasource implements ChatRemoteDatasource {
     return _parseMessage(data);
   }
 
+  @override
+  bool canEdit(ChatConversation conversation) => true;
+
+  /// `messages.patch` of the text alone; pictures and the thread stay.
+  @override
+  Future<ChatMessage> edit(
+    ChatConversation conversation,
+    ChatMessage message,
+    String text,
+  ) async {
+    final data = await _patch(
+      '/${message.id}',
+      {'text': text},
+      query: {'updateMask': 'text'},
+    );
+    final echoed = data['name'] is String ? _parseMessage(data) : null;
+    return message.withEdit(
+      bodyHtml: echoed?.bodyHtml ?? chatTextToHtml(text),
+      editableText: text,
+      editedAt: echoed?.editedAt ?? DateTime.now(),
+    );
+  }
+
   /// `spaces.setup` returns the existing direct message when there is one.
   @override
   Future<ChatConversation> createOneOnOne({
@@ -411,6 +434,7 @@ class GoogleChatDatasource implements ChatRemoteDatasource {
       editedAt: _date(raw['lastUpdateTime']),
       isDeleted: raw['deleteTime'] != null,
       threadId: thread is Map ? thread['name'] as String? : null,
+      editableText: editableTextOf(raw),
       reactions: [
         for (final r in _list(raw['emojiReactionSummaries']))
           if (r['emoji'] is Map &&
@@ -519,6 +543,18 @@ class GoogleChatDatasource implements ChatRemoteDatasource {
     } catch (_) {
       return null;
     }
+  }
+
+  /// A message's `text` to edit, or null when there is none or it holds
+  /// Chat's `<users/…>` mentions or `<url|label>` links — markup the edit box
+  /// would show raw.
+  @visibleForTesting
+  static String? editableTextOf(Map<String, dynamic> raw) {
+    final text = raw['text'] as String? ?? '';
+    if (text.trim().isEmpty || RegExp(r'<[^<>\s]+>').hasMatch(text)) {
+      return null;
+    }
+    return text;
   }
 
   /// Google Chat's plain `text` as the HTML the chat renderer reads: escaped,

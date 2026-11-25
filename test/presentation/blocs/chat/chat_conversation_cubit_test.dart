@@ -160,6 +160,77 @@ void main() {
       expect(ids(), ['b', 'a']);
     });
   });
+
+  group('editing', () {
+    ChatMessage mine(String id, int minute, {String? text = 'typo'}) =>
+        ChatMessage(
+          id: id,
+          createdAt: t0.add(Duration(minutes: minute)),
+          senderName: 'Me',
+          senderUserId: 'UME',
+          bodyHtml: text ?? 'x',
+          editableText: text,
+        );
+
+    Future<void> opened(List<ChatMessage> messages) async {
+      repo.page = ChatMessagePage(messages: messages);
+      await cubit.open('acct', chat);
+      await pumpEventQueue();
+      expect(cubit.state.ownUserId, 'UME');
+    }
+
+    test('only the user\'s own, editable messages offer it', () async {
+      await opened([mine('m2', 2), msg('a', 1), mine('m0', 0, text: null)]);
+      expect(cubit.canEdit(cubit.state.messages[0]), isTrue);
+      expect(cubit.canEdit(cubit.state.messages[1]), isFalse,
+          reason: 'someone else\'s');
+      expect(cubit.canEdit(cubit.state.messages[2]), isFalse,
+          reason: 'plain text cannot say it again');
+      repo.editable = false;
+      expect(cubit.canEdit(cubit.state.messages[0]), isFalse,
+          reason: 'the provider cannot edit here');
+    });
+
+    test('send while editing replaces the text in place, then sends again',
+        () async {
+      await opened([mine('m2', 2), msg('a', 1), mine('m0', 0)]);
+      expect(cubit.lastEditable(inThread: false)?.id, 'm2');
+      cubit.startEdit(cubit.state.messages[2]);
+      expect(cubit.state.editing?.id, 'm0');
+      expect(await cubit.send('  fixed '), isTrue);
+      expect(repo.edits, [('m0', 'fixed')]);
+      expect(cubit.state.editing, isNull);
+      expect(ids(), ['m2', 'a', 'm0'], reason: 'it keeps its place');
+      final m0 = cubit.state.messages[2];
+      expect(m0.bodyHtml, '<i>fixed</i>');
+      expect(m0.editedAt, isNotNull);
+      expect(repo.saved[2].bodyHtml, '<i>fixed</i>', reason: 'cached');
+    });
+
+    test('an unchanged edit just closes; a refused one stays open', () async {
+      await opened([mine('m2', 2)]);
+      cubit.startEdit(cubit.state.messages[0]);
+      expect(await cubit.send('typo'), isTrue);
+      expect(repo.edits, isEmpty);
+      expect(cubit.state.editing, isNull);
+
+      repo.editFailure = const ServerFailure(message: 'Too late to edit');
+      cubit.startEdit(cubit.state.messages[0]);
+      expect(await cubit.send('better'), isFalse);
+      expect(cubit.state.editing?.id, 'm2');
+      expect(cubit.state.error, contains('Too late to edit'));
+      cubit.cancelEdit();
+      expect(cubit.state.editing, isNull);
+    });
+
+    test('opening another conversation leaves the edit', () async {
+      await opened([mine('m2', 2)]);
+      cubit.startEdit(cubit.state.messages[0]);
+      await cubit.open('acct',
+          const ChatConversation(id: 'c2', kind: ChatKind.group, title: 'G'));
+      expect(cubit.state.editing, isNull);
+    });
+  });
 }
 
 class _Repo implements ChatRepository {
@@ -215,6 +286,29 @@ class _Repo implements ChatRepository {
   Future<String?> ownUserId(String accountId,
           {ChatConversation? conversation}) async =>
       'UME';
+
+  bool editable = true;
+  Failure? editFailure;
+  final edits = <(String, String)>[];
+
+  @override
+  bool canEdit(String accountId, ChatConversation conversation) => editable;
+
+  @override
+  Future<Either<Failure, ChatMessage>> editMessage(
+    String accountId,
+    ChatConversation conversation,
+    ChatMessage message,
+    String text,
+  ) async {
+    edits.add((message.id, text));
+    if (editFailure != null) return Left(editFailure!);
+    return Right(message.withEdit(
+      bodyHtml: '<i>$text</i>',
+      editableText: text,
+      editedAt: DateTime.utc(2026, 11, 25, 12),
+    ));
+  }
 
   @override
   dynamic noSuchMethod(Invocation invocation) =>

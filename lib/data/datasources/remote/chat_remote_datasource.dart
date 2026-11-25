@@ -74,6 +74,21 @@ abstract interface class ChatRemoteDatasource {
     ChatMessage? replyTo,
   });
 
+  /// Whether the user's own messages in [conversation] can be edited with the
+  /// access this datasource holds — false for a Microsoft 365 channel, whose
+  /// edits need `ChannelMessage.ReadWrite` (admin consent) on top of the
+  /// read-and-send pair NightMail asks for.
+  bool canEdit(ChatConversation conversation);
+
+  /// Replaces [message]'s text with [text] — one of the user's own, with an
+  /// [ChatMessage.editableText] — and returns it as edited: [message] with
+  /// the new body, so reactions and replies the server does not echo stay.
+  Future<ChatMessage> edit(
+    ChatConversation conversation,
+    ChatMessage message,
+    String text,
+  );
+
   /// Creates (or returns the existing) one-on-one with [email].
   Future<ChatConversation> createOneOnOne({
     required String ownEmail,

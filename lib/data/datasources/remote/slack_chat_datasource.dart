@@ -490,6 +490,35 @@ class SlackChatDatasource implements ChatRemoteDatasource {
 
   /// Opens (or returns the existing) direct message with [email]. Slack shows
   /// the other person nothing until the first message lands in it.
+  /// `chat:write` covers `chat.update` of the user's own messages.
+  @override
+  bool canEdit(ChatConversation conversation) => true;
+
+  @override
+  Future<ChatMessage> edit(
+    ChatConversation conversation,
+    ChatMessage message,
+    String text,
+  ) async {
+    final sent = escapeText(text);
+    final data = await _call(
+      'chat.update',
+      {'channel': conversation.id, 'ts': message.id, 'text': sent},
+      post: true,
+    );
+    final echoed = data['message'];
+    final edited = echoed is Map && echoed['edited'] is Map
+        ? _ts((echoed['edited'] as Map)['ts'] as String?)
+        : null;
+    return message.withEdit(
+      bodyHtml: mrkdwnToHtml(data['text'] as String? ?? sent,
+          userName: (id) => _users['$teamId|$id']?.name,
+          customEmoji: (name) => _customEmoji[teamId]?[name]),
+      editableText: text,
+      editedAt: edited ?? DateTime.now(),
+    );
+  }
+
   @override
   Future<ChatConversation> createOneOnOne({
     required String ownEmail,
@@ -681,7 +710,42 @@ class SlackChatDatasource implements ChatRemoteDatasource {
           if (!_isImage(f) && (f['name'] as String?)?.isNotEmpty == true)
             f['name'] as String,
       ],
+      editableText: editableTextOf(m),
     );
+  }
+
+  /// A message's text as the user typed it, for an edit, or null when plain
+  /// text cannot say it again: a file, an attachment, layout blocks, or a
+  /// mention, channel, `@here` or labelled link — sent text is escaped
+  /// ([escapeText]), so each of those would come back as its raw markup.
+  @visibleForTesting
+  static String? editableTextOf(Map<String, dynamic> m) {
+    if (_list(m['files']).isNotEmpty ||
+        _list(m['attachments']).isNotEmpty ||
+        _list(m['blocks']).any((b) => b['type'] != 'rich_text')) {
+      return null;
+    }
+    final raw = m['text'] as String? ?? '';
+    if (raw.trim().isEmpty) return null;
+    // A bare link Slack linked itself (`<https://x>`, or labelled with its
+    // own address) is just what was typed.
+    final text = raw.replaceAllMapped(RegExp(r'<([^<>|]+)(?:\|([^<>]*))?>'),
+        (m) {
+      final target = m[1]!;
+      final label = m[2];
+      final shown = target.startsWith('mailto:') ? target.substring(7) : target;
+      final isLink = target.startsWith('http://') ||
+          target.startsWith('https://') ||
+          target.startsWith('mailto:');
+      return isLink && (label == null || label == shown || label == target)
+          ? shown
+          : '\u0000';
+    });
+    if (text.contains('\u0000')) return null;
+    return text
+        .replaceAll('&lt;', '<')
+        .replaceAll('&gt;', '>')
+        .replaceAll('&amp;', '&');
   }
 
   static const _systemSubtypes = {

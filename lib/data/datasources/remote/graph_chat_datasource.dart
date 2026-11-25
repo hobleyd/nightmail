@@ -342,6 +342,36 @@ class GraphChatDatasource implements ChatRemoteDatasource {
 
   /// Creates (or, as both servers do for an existing pair, returns) the
   /// one-on-one chat between the signed-in user and [email].
+  /// A Microsoft 365 channel would need `ChannelMessage.ReadWrite`; a
+  /// NightMail Server lets anyone edit their own post.
+  @override
+  bool canEdit(ChatConversation conversation) =>
+      !conversation.isChannel || isNightmailServer;
+
+  @override
+  Future<ChatMessage> edit(
+    ChatConversation conversation,
+    ChatMessage message,
+    String text,
+  ) async {
+    final channel =
+        '/teams/${conversation.teamId}/channels/${conversation.id}/messages';
+    final path = !conversation.isChannel
+        ? '/chats/${conversation.id}/messages/${message.id}'
+        : message.replyToId == null
+            ? '$channel/${message.id}'
+            : '$channel/${message.replyToId}/replies/${message.id}';
+    // 204, no body: the edit is what was sent.
+    await _patch(path, {
+      'body': {'contentType': 'text', 'content': text},
+    });
+    return message.withEdit(
+      bodyHtml: _escape(text),
+      editableText: text,
+      editedAt: DateTime.now(),
+    );
+  }
+
   @override
   Future<ChatConversation> createOneOnOne({
     required String ownEmail,
@@ -617,8 +647,60 @@ class GraphChatDatasource implements ChatRemoteDatasource {
               (a['name'] as String?)?.isNotEmpty == true)
             a['name'] as String,
       ],
+      editableText: isSystem ? null : editableTextOf(raw),
     );
   }
+
+  /// A message's body as plain text that says the same, or null when it
+  /// cannot: a mention, an attachment (a file, a quoted reply, a card), or
+  /// HTML beyond the paragraphs, breaks, emoji and bare links Teams wraps
+  /// typed text in.
+  @visibleForTesting
+  static String? editableTextOf(Map<String, dynamic> raw) {
+    if (_list(raw['attachments']).isNotEmpty ||
+        _list(raw['mentions']).isNotEmpty) {
+      return null;
+    }
+    final body = raw['body'];
+    if (body is! Map) return null;
+    final content = body['content'] as String? ?? '';
+    if (body['contentType'] == 'text') {
+      return content.trim().isEmpty ? null : content;
+    }
+    const ci = false;
+    var s = content
+        .replaceAll(RegExp(r'\r?\n'), ' ')
+        .replaceAll(RegExp(r'<br\s*/?>', caseSensitive: ci), '\n')
+        .replaceAll(
+            RegExp(r'</(p|div)>\s*<(p|div)(\s[^>]*)?>', caseSensitive: ci),
+            '\n')
+        .replaceAll(RegExp(r'</?(p|div)(\s[^>]*)?>', caseSensitive: ci), '')
+        .replaceAllMapped(
+            RegExp(r'<emoji\s[^>]*alt="([^"]*)"[^>]*>(</emoji>)?',
+                caseSensitive: ci),
+            (m) => m[1]!);
+    var lossy = false;
+    s = s.replaceAllMapped(
+        RegExp(r'<a\s[^>]*href="([^"]*)"[^>]*>([^<]*)</a>', caseSensitive: ci),
+        (m) {
+      if (_decode(m[1]!) == _decode(m[2]!)) return m[2]!;
+      lossy = true;
+      return '';
+    });
+    if (lossy || s.contains('<')) return null;
+    final text = _decode(s).trim();
+    return text.isEmpty ? null : text;
+  }
+
+  static String _decode(String s) => s
+      .replaceAll('&nbsp;', ' ')
+      .replaceAll('&#160;', ' ')
+      .replaceAll('&lt;', '<')
+      .replaceAll('&gt;', '>')
+      .replaceAll('&quot;', '"')
+      .replaceAll('&#39;', "'")
+      .replaceAll('&apos;', "'")
+      .replaceAll('&amp;', '&');
 
   static String? _reactionEmoji(String? type) => switch (type) {
         null || '' => null,
@@ -753,6 +835,14 @@ class GraphChatDatasource implements ChatRemoteDatasource {
     try {
       final r = await _dio.post<Map<String, dynamic>>(path, data: body);
       return r.data ?? const {};
+    } on DioException catch (e) {
+      throw _map(e);
+    }
+  }
+
+  Future<void> _patch(String path, Map<String, dynamic> body) async {
+    try {
+      await _dio.patch<Object?>(path, data: body);
     } on DioException catch (e) {
       throw _map(e);
     }

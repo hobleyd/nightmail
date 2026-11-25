@@ -163,6 +163,19 @@ abstract interface class ChatRepository {
     ChatMessage? replyTo,
   });
 
+  /// Whether the user's own messages in [conversation] can be edited — see
+  /// `ChatRemoteDatasource.canEdit`.
+  bool canEdit(String accountId, ChatConversation conversation);
+
+  /// Changes the text of [message], one of the user's own, to [text], and
+  /// returns it as edited.
+  Future<Either<Failure, ChatMessage>> editMessage(
+    String accountId,
+    ChatConversation conversation,
+    ChatMessage message,
+    String text,
+  );
+
   /// Creates the one-on-one chat with [email] and sends [text] to it.
   Future<Either<Failure, (ChatConversation, ChatMessage)>> startOneOnOne(
     String accountId,

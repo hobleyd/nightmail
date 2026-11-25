@@ -55,6 +55,7 @@ void main() {
         senderName: 'Bob',
         bodyHtml: 'ok',
         replyToId: 'p1',
+        editableText: 'ok',
       ),
     ],
     replyCount: 4,

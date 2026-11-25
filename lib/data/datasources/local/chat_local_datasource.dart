@@ -195,6 +195,7 @@ class ChatLocalDatasourceImpl implements ChatLocalDatasource {
         'replyCount': ?m.replyCount,
         if (m.attachmentNames.isNotEmpty) 'attachments': m.attachmentNames,
         'threadId': ?m.threadId,
+        'editable': ?m.editableText,
       };
 
   static ChatMessage messageFromJson(Map<String, dynamic> j) => ChatMessage(
@@ -227,6 +228,7 @@ class ChatLocalDatasourceImpl implements ChatLocalDatasource {
             if (a is String) a,
         ],
         threadId: j['threadId'] as String?,
+        editableText: j['editable'] as String?,
       );
 
   static DateTime? _date(Object? v) =>

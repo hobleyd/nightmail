@@ -188,6 +188,7 @@ class ChatMessage extends Equatable {
     this.attachmentNames = const [],
     this.conversationTitle,
     this.threadId,
+    this.editableText,
   });
 
   final String id;
@@ -231,7 +232,51 @@ class ChatMessage extends Equatable {
   /// own [id] is its thread.
   final String? threadId;
 
+  /// The body as the user would type it to say the same again — what an
+  /// edit starts from. Null when plain text cannot say it (a mention, a
+  /// labelled link, formatting or a file the provider keeps in the body), so
+  /// such a message offers no edit rather than losing them on save.
+  final String? editableText;
+
   int get totalReplies => replyCount ?? replies.length;
+
+  /// This message after the user changed its text to [editableText].
+  ChatMessage withEdit({
+    required String bodyHtml,
+    required String? editableText,
+    required DateTime editedAt,
+  }) =>
+      _copy(
+          bodyHtml: bodyHtml, editableText: editableText, editedAt: editedAt);
+
+  /// This post with [replies] in place of its own.
+  ChatMessage withReplies(List<ChatMessage> replies) => _copy(replies: replies);
+
+  ChatMessage _copy({
+    String? bodyHtml,
+    String? editableText,
+    DateTime? editedAt,
+    List<ChatMessage>? replies,
+  }) =>
+      ChatMessage(
+        id: id,
+        createdAt: createdAt,
+        senderName: senderName,
+        senderUserId: senderUserId,
+        bodyHtml: bodyHtml ?? this.bodyHtml,
+        replyToId: replyToId,
+        subject: subject,
+        editedAt: editedAt ?? this.editedAt,
+        isDeleted: isDeleted,
+        isSystem: isSystem,
+        reactions: reactions,
+        replies: replies ?? this.replies,
+        replyCount: replyCount,
+        attachmentNames: attachmentNames,
+        conversationTitle: conversationTitle,
+        threadId: threadId,
+        editableText: editableText ?? this.editableText,
+      );
 
   @override
   List<Object?> get props => [
@@ -251,6 +296,7 @@ class ChatMessage extends Equatable {
         attachmentNames,
         conversationTitle,
         threadId,
+        editableText,
       ];
 }
 

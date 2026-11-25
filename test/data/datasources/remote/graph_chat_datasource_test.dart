@@ -495,6 +495,92 @@ void main() {
     routes['/me/chats'] = (_) => 401;
     expect(datasource().listChats(), throwsA(isA<AuthException>()));
   });
+
+  group('editing', () {
+    ChatMessage mine(String id, {String? replyToId}) => ChatMessage(
+          id: id,
+          createdAt: DateTime(2026),
+          senderName: 'Me',
+          senderUserId: 'u-me',
+          bodyHtml: 'old',
+          editableText: 'old',
+          replyToId: replyToId,
+        );
+
+    test('a chat message, a post and a reply each go to their own PATCH',
+        () async {
+      routes['/chats/19:c/messages/m1'] = (o) {
+        expect(o.method, 'PATCH');
+        expect(o.data, {
+          'body': {'contentType': 'text', 'content': 'a < b\nc'},
+        });
+        return <String, Object?>{};
+      };
+      routes['/teams/T/channels/19:ch/messages/p1'] = (_) => <String, Object?>{};
+      routes['/teams/T/channels/19:ch/messages/p1/replies/r1'] =
+          (_) => <String, Object?>{};
+      final ds = datasource();
+      final edited = await ds.edit(
+          const ChatConversation(
+              id: '19:c', kind: ChatKind.oneOnOne, title: 'Ann'),
+          mine('m1'),
+          'a < b\nc');
+      expect(edited.bodyHtml, 'a &lt; b<br>c');
+      expect(edited.editableText, 'a < b\nc');
+      expect(edited.editedAt, isNotNull);
+
+      const channel = ChatConversation(
+          id: '19:ch',
+          kind: ChatKind.channel,
+          title: 'General',
+          teamId: 'T');
+      await ds.edit(channel, mine('p1'), 'x');
+      await ds.edit(channel, mine('r1', replyToId: 'p1'), 'y');
+      expect(requests.map((r) => r.uri.path.split('/v1.0').last), [
+        '/chats/19:c/messages/m1',
+        '/teams/T/channels/19:ch/messages/p1',
+        '/teams/T/channels/19:ch/messages/p1/replies/r1',
+      ]);
+    });
+
+    test('a Microsoft 365 channel cannot be edited without its scope', () {
+      const channel = ChatConversation(
+          id: '19:ch', kind: ChatKind.channel, title: 'G', teamId: 'T');
+      const chat =
+          ChatConversation(id: '19:c', kind: ChatKind.oneOnOne, title: 'A');
+      expect(datasource(server: false).canEdit(channel), isFalse);
+      expect(datasource(server: false).canEdit(chat), isTrue);
+      expect(datasource().canEdit(channel), isTrue);
+    });
+
+    test('typed text is editable; mentions, attachments and markup are not',
+        () {
+      String? of(Map<String, dynamic> raw) =>
+          GraphChatDatasource.editableTextOf(raw);
+      Map<String, dynamic> html(String content) => {
+            'body': {'contentType': 'html', 'content': content},
+          };
+      expect(of({'body': {'contentType': 'text', 'content': 'a < b'}}),
+          'a < b');
+      expect(of(html('<p>one &amp; two</p>\n<p>three<br>four</p>')),
+          'one & two\nthree\nfour');
+      expect(
+          of(html('<p>hi <emoji id="smile" alt="😄" title="Smile"></emoji> '
+              'see <a href="https://x.test/a" rel="noreferrer">'
+              'https://x.test/a</a></p>')),
+          'hi 😄 see https://x.test/a');
+      expect(of(html('<p><a href="https://x.test">the doc</a></p>')), isNull);
+      expect(of(html('<p><b>bold</b></p>')), isNull);
+      expect(of({...html('<p>hi <at id="0">Ann</at></p>'), 'mentions': [{}]}),
+          isNull);
+      expect(
+          of({
+            ...html('<attachment id="1"></attachment><p>re</p>'),
+            'attachments': [{}],
+          }),
+          isNull);
+    });
+  });
 }
 
 const _json = {

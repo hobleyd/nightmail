@@ -435,6 +435,52 @@ void main() {
     expect(GoogleChatDatasource.chatTextToHtml('snake_case_name'),
         'snake_case_name');
   });
+
+  group('editing', () {
+    test('patches the text alone and takes the server\'s rendering', () async {
+      routes['spaces/D/messages/M1'] = (o) {
+        expect(o.method, 'PATCH');
+        expect(o.queryParameters['updateMask'], 'text');
+        expect(o.data, {'text': 'new *one*'});
+        return {
+          'name': 'spaces/D/messages/M1',
+          'text': 'new *one*',
+          'lastUpdateTime': '2026-11-25T10:00:00Z',
+          'sender': {'name': 'users/me'},
+        };
+      };
+      final edited = await datasource().edit(
+        const ChatConversation(
+            id: 'spaces/D', kind: ChatKind.oneOnOne, title: 'Ann'),
+        ChatMessage(
+          id: 'spaces/D/messages/M1',
+          createdAt: DateTime(2026),
+          senderName: 'Me',
+          senderUserId: 'users/me',
+          bodyHtml: 'old',
+          editableText: 'old',
+          threadId: 'spaces/D/threads/T',
+        ),
+        'new *one*',
+      );
+      expect(edited.bodyHtml, 'new <b>one</b>');
+      expect(edited.editableText, 'new *one*');
+      expect(edited.editedAt, DateTime.utc(2026, 11, 25, 10).toLocal());
+      expect(edited.threadId, 'spaces/D/threads/T');
+    });
+
+    test('a mention or labelled link is not offered for editing', () {
+      expect(GoogleChatDatasource.editableTextOf({'text': 'a < b'}), 'a < b');
+      expect(
+          GoogleChatDatasource.editableTextOf({'text': 'hi <users/123>'}),
+          isNull);
+      expect(
+          GoogleChatDatasource.editableTextOf(
+              {'text': '<https://x.test|doc>'}),
+          isNull);
+      expect(GoogleChatDatasource.editableTextOf({'text': ''}), isNull);
+    });
+  });
 }
 
 const _json = {

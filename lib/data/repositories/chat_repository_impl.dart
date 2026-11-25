@@ -546,6 +546,23 @@ class ChatRepositoryImpl implements ChatRepository {
       });
 
   @override
+  bool canEdit(String accountId, ChatConversation conversation) =>
+      _ds(accountId)?.canEdit(conversation) ?? false;
+
+  @override
+  Future<Either<Failure, ChatMessage>> editMessage(
+    String accountId,
+    ChatConversation conversation,
+    ChatMessage message,
+    String text,
+  ) =>
+      _guard(accountId, (ds) async {
+        final edited = await ds.edit(conversation, message, text);
+        _retouch(accountId, conversation, edited);
+        return edited;
+      });
+
+  @override
   Future<Either<Failure, (ChatConversation, ChatMessage)>> startOneOnOne(
     String accountId,
     String email,
@@ -587,6 +604,22 @@ class ChatRepositoryImpl implements ChatRepository {
         _touch(accountId, chat, sent);
         return (chat, sent);
       });
+
+  /// The list's preview of [c] follows an edit of its newest message; its
+  /// place in the list does not move.
+  void _retouch(String accountId, ChatConversation c, ChatMessage edited) {
+    final list = _conversations[accountId];
+    if (list == null) return;
+    final i = list.indexWhere((x) => x.key == c.key);
+    final last = i < 0 ? null : list[i].lastActivity;
+    if (last == null || last.isAfter(edited.createdAt)) return;
+    _conversations[accountId] = [
+      ...list.take(i),
+      list[i].copyWith(lastMessagePreview: htmlToPlainText(edited.bodyHtml)),
+      ...list.skip(i + 1),
+    ];
+    _saveList(accountId);
+  }
 
   void _touch(String accountId, ChatConversation c, ChatMessage sent) {
     final list = _conversations[accountId];

@@ -317,6 +317,52 @@ Nightware's conformance fixtures for these routes are copied into
 (`graph_chat_fixture_replay_test.dart`); refresh them when nightware changes
 one.
 
+## Editing your own messages
+
+The pencil on your own message (on hover with a mouse, always on a touch
+screen), or Up in an empty composer for your newest one, turns the composer
+into the edit: "Editing message" banner, Save instead of Send, Esc or × to
+leave it. Whatever was half-typed comes back afterwards
+(`_ComposerState._draft`). A thread reply is edited in the thread's composer,
+anything else in the conversation's (`ChatConversationState.editingInThread`).
+
+- **What is offered:** `ChatConversationCubit.canEdit` — your own
+  (`senderUserId == ownUserId`, so nothing until that is known), not deleted
+  or a system note, the provider can here (`ChatRemoteDatasource.canEdit`),
+  and the message has an `editableText`.
+- **`ChatMessage.editableText`** is the body as you would type it, set by
+  each parser from the raw message and kept in the cache (`editable`). It is
+  **null whenever plain text cannot say the message again** — so a message
+  whose save would silently strip something offers no edit at all:
+  - Slack (`editableTextOf`): any `<@U…>`, `<#C…>`, `<!here>` or labelled
+    link (sent text goes through `escapeText`, so they would come back as raw
+    markup), a file, an attachment or a layout block. A bare link Slack
+    linked itself is kept as typed; `&lt;`/`&gt;`/`&amp;` are undone.
+  - Graph (`editableTextOf`): a mention, any attachment (file, quoted reply,
+    card), or HTML beyond `<p>`/`<div>`/`<br>`, `<emoji alt>` and a link whose
+    label is its own address — the wrapping Teams gives typed text. Saved as
+    `contentType: text`.
+  - Google (`editableTextOf`): `<users/…>` mentions and `<url|label>` links.
+    `*bold*` and the like are typed text there, and round-trip.
+- **Calls:** Graph `PATCH` on the chat message, channel post or
+  `…/messages/{replyToId}/replies/{id}` (204, no body — the edit is what was
+  sent); Google `messages.patch?updateMask=text` (echoes the message; its
+  rendering wins); Slack `chat.update` (`chat:write` covers your own).
+  Every provider's result is merged onto the message shown
+  (`ChatMessage.withEdit`) rather than re-parsed, so reactions and replies the
+  response leaves out stay.
+- **Microsoft 365 channels can't be edited.** Graph wants
+  `ChannelMessage.ReadWrite` (admin consent) for a channel edit; NightMail
+  asks for `ChannelMessage.Read.All` + `ChannelMessage.Send` only, so
+  `GraphChatDatasource.canEdit` is false for an M365 channel and no pencil
+  shows. Adding the scope to `channelScopes` would make every existing token
+  fail `grantsChannels` and send every tenant back through admin consent — a
+  separate decision. NightMail Server channels edit fine (nightware maps the
+  PATCH routes onto Talk, which may refuse an old message; the refusal shows
+  as "Could not edit the message: …" with the edit left open).
+- An edit of the newest message updates the list's preview
+  (`ChatRepositoryImpl._retouch`) without moving the conversation.
+
 ## Rendering
 
 Bodies are HTML on both providers, rendered by `ChatMessageBody` as styled

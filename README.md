@@ -181,6 +181,7 @@ Settings → Accounts.
 - Slack messages and reactions show every emoji, including the workspace's own custom emoji
 - The chat window bolds only chats with unread messages and sorts by most recent or by name
 - The Chat pane's dropdown also offers your unread chats, beside the people on the email
+- Search from the Chat pane's dropdown to message anyone in your address book you can chat with, or any chat or channel, by name
 
 ### Contacts
 - Typeahead in the compose window drawing from three sources:

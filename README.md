@@ -183,6 +183,7 @@ Settings → Accounts.
 - Chats, spaces and channels quiet for a week tuck away behind a "Show N older" row; unread ones always show
 - On a NightMail Server, the Chat button's unread dot appears within seconds of a new message, not at the next minute's check
 - The top of the Chat pane lists your unread chats and channels, newest first; click one to read it below
+- Drag the divider under the Chat pane's unread list to give it or the conversation more room; the split is remembered
 - Search from the Chat pane's dropdown to message anyone in your address book you can chat with, or any chat or channel, by name
 - Edit your own chat messages on Teams, NightMail Server, Google Chat and Slack
 - Open the chat window straight onto the conversation in the Chat pane

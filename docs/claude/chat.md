@@ -686,7 +686,9 @@ than falling into an account lookup that answers null.
   hand), skin tones joined (`:wave::skin-tone-3:`, a reaction's
   `thumbsup::skin-tone-2`). Not inside code, and not glued to a word or
   digit (`a:b:c`, `10:30:00`), which is what keeps one-letter names like
-  `:a:`/`:b:` from eating text. Shortcodes are replaced *before* mrkdwn,
+  `:a:`/`:b:` from eating text. One exception, because Slack shows it as
+  the emoji and people type it: a name of 2+ characters straight after a
+  letter (`devbox:laughing:`). Shortcodes are replaced *before* mrkdwn,
   while code still has its backticks; link targets never pass through it.
   Outgoing text escapes `&<>` and is otherwise mrkdwn as typed.
 - **Custom emoji** (the workspace's own): `emoji.list` (`emoji:read`, Tier

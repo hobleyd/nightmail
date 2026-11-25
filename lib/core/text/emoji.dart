@@ -51,7 +51,8 @@ String? _toned(String name, String? tone) {
 /// `:+1:` and `:wave::skin-tone-3:` in [text] as the characters they stand
 /// for. Not inside `` `code` `` or ```` ```blocks``` ````, which Slack shows
 /// as typed, and not glued to a word or number either side, so `a:b:c` and
-/// `10:30:00` stay text. A name that is not a standard emoji is offered to
+/// `10:30:00` stay text — except a name of two or more characters right
+/// after a letter (`devbox:laughing:`), which Slack shows as the emoji. A name that is not a standard emoji is offered to
 /// [custom] (a workspace's own emoji); without an answer it stays `:name:`.
 String replaceShortcodes(
   String text, {
@@ -69,5 +70,6 @@ String replaceShortcodes(
 
 final _token = RegExp(
   r'```[\s\S]*?```|`[^`\n]+`'
-  r'|(?<!\w):([a-z0-9_+\-]+):(?::skin-tone-([2-6]):)?(?![\w])',
+  r'|(?:(?<!\w)|(?<=[A-Za-z])(?=:[a-z0-9_+\-]{2,}:))'
+  r':([a-z0-9_+\-]+):(?::skin-tone-([2-6]):)?(?![\w])',
 );

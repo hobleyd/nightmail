@@ -315,6 +315,10 @@ void main() {
       expect(html('`:x:` and ```:x:```'),
           '<code>:x:</code> and <pre>:x:</pre>');
       expect(html('a:b:c at 10:30:00'), 'a:b:c at 10:30:00');
+      expect(html('my devbox:laughing: ok:+1::skin-tone-2:'),
+          'my devbox😆 ok👍🏻',
+          reason: 'Slack shows a name glued to a word as the emoji');
+      expect(html('x:smile:y 1:smile:'), 'x:smile:y 1:smile:');
       expect(html('<https://x.test/a:b:c|:b: link>'),
           '<a href="https://x.test/a:b:c">:b: link</a>',
           reason: 'a link is not reformatted, its target least of all');

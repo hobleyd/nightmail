@@ -181,6 +181,7 @@ Settings → Accounts.
 - Slack messages and reactions show every emoji, including the workspace's own custom emoji
 - The chat window bolds only chats with unread messages and sorts by most recent or by name
 - Chats, spaces and channels quiet for a week tuck away behind a "Show N older" row; unread ones always show
+- On a NightMail Server, the Chat button's unread dot appears within seconds of a new message, not at the next minute's check
 - The Chat pane's dropdown also offers your unread chats, beside the people on the email
 - Search from the Chat pane's dropdown to message anyone in your address book you can chat with, or any chat or channel, by name
 

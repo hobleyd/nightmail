@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:typed_data';
 
 import 'package:equatable/equatable.dart';
+import 'package:flutter/foundation.dart' show visibleForTesting;
 import 'package:flutter/widgets.dart' show AppLifecycleState, WidgetsBinding;
 import 'package:flutter_bloc/flutter_bloc.dart';
 
@@ -172,8 +173,21 @@ class ChatConversationCubit extends Cubit<ChatConversationState> {
 
   static const pollInterval = Duration(seconds: 10);
 
+  /// Where a delta asks from wholly misses edits, deletions and reactions
+  /// (Slack, Google), every this-many polls reads the full newest page.
+  static const fullPageEvery = 6;
+
   Timer? _poll;
   int _generation = 0;
+
+  /// The newest server timestamp the open conversation is known up to —
+  /// what the next poll asks the changes since. Null before the first page.
+  DateTime? _watermark;
+
+  /// Whether the last delta also brought edits and reactions (Graph), so
+  /// polls need no full page.
+  bool _deltaComplete = false;
+  int _polls = 0;
 
   /// Checks what [accountId] can do, before anything is opened.
   Future<ChatAccess> checkAccess(String accountId) async {
@@ -207,6 +221,7 @@ class ChatConversationCubit extends Cubit<ChatConversationState> {
   Future<void> openPerson(String accountId, ChatPerson person) async {
     final gen = ++_generation;
     _poll?.cancel();
+    _resetPolls();
     emit(ChatConversationState(
       accountId: accountId,
       access: state.accountId == accountId ? state.access : null,
@@ -245,32 +260,88 @@ class ChatConversationCubit extends Cubit<ChatConversationState> {
   void clear() {
     ++_generation;
     _poll?.cancel();
+    _resetPolls();
     emit(ChatConversationState(
         accountId: state.accountId,
         access: state.access,
         ownUserId: state.ownUserId));
   }
 
+  /// Paints what the cache on disk last held for [conversation], then reads
+  /// the newest page and joins the two where they meet.
   Future<void> _load(
       String accountId, ChatConversation conversation, int gen) async {
     emit(state.copyWith(conversation: () => conversation, loading: true));
+    _resetPolls();
     final own = _learnOwnId(accountId, conversation, gen);
+    final cached = await _repo.cachedMessages(accountId, conversation);
+    if (gen != _generation || isClosed) return;
+    if (cached.isNotEmpty) {
+      emit(state.copyWith(messages: cached, loading: false));
+    }
     final page = await _repo.messages(accountId, conversation);
     if (gen != _generation || isClosed) return;
     page.match(
-      (f) => _fail(f),
+      (f) {
+        if (cached.isEmpty || f is! NetworkFailure) return _fail(f);
+        // Offline: what was cached stands, and the polls catch up later.
+        emit(state.copyWith(error: () => _messageOf(f)));
+        _startPolling(gen);
+      },
       (p) {
+        final messages = joinCached(p, cached);
         emit(state.copyWith(
-          messages: p.messages,
+          messages: messages,
           nextLink: () => p.nextLink,
           loading: false,
           error: () => null,
         ));
+        _watermark = newestStamp(p.messages);
+        unawaited(_repo.cacheMessages(accountId, conversation, messages));
         _startPolling(gen);
       },
     );
     await own;
     _markReadIfSeen();
+  }
+
+  /// The newest [page] with the [cached] messages older than it — only where
+  /// the two meet. A page that is the whole history, or that ends after the
+  /// newest cached message (more arrived than one page holds), stands alone:
+  /// anything else would show a gap as if nothing were missing.
+  @visibleForTesting
+  static List<ChatMessage> joinCached(
+      ChatMessagePage page, List<ChatMessage> cached) {
+    final fresh = page.messages;
+    if (fresh.isEmpty || cached.isEmpty || page.nextLink == null) return fresh;
+    final oldest = fresh.last.createdAt;
+    if (oldest.isAfter(cached.first.createdAt)) return fresh;
+    final ids = {for (final m in fresh) m.id};
+    return [
+      ...fresh,
+      for (final m in cached)
+        if (!ids.contains(m.id) && m.createdAt.isBefore(oldest)) m,
+    ];
+  }
+
+  /// The newest server time [messages] carry: a post or its edit.
+  @visibleForTesting
+  static DateTime? newestStamp(Iterable<ChatMessage> messages) {
+    DateTime? newest;
+    for (final m in messages) {
+      final t = m.editedAt != null && m.editedAt!.isAfter(m.createdAt)
+          ? m.editedAt!
+          : m.createdAt;
+      if (newest == null || t.isAfter(newest)) newest = t;
+    }
+    return newest;
+  }
+
+  void _cache() {
+    final accountId = state.accountId;
+    final conversation = state.conversation;
+    if (accountId == null || conversation == null) return;
+    unawaited(_repo.cacheMessages(accountId, conversation, state.messages));
   }
 
   /// Google names the user per space, so this asks with the conversation;
@@ -306,20 +377,52 @@ class ChatConversationCubit extends Cubit<ChatConversationState> {
     unawaited(_repo.markRead(accountId, conversation));
   }
 
+  /// Forgets the open conversation's place: a new one starts from its own
+  /// first page.
+  void _resetPolls() {
+    _watermark = null;
+    _deltaComplete = false;
+    _polls = 0;
+  }
+
   void _startPolling(int gen) {
     _poll?.cancel();
     _poll = Timer.periodic(pollInterval, (_) => _refresh(gen));
   }
 
-  /// Re-reads the newest page and merges it over what is shown: new messages
-  /// arrive, edits, deletions and reactions update, older pages stay.
+  /// Asks what changed since [_watermark] and merges it over what is shown.
+  /// Where the provider cannot say — or its deltas miss edits and reactions,
+  /// every [fullPageEvery] polls — re-reads the newest page instead: new
+  /// messages arrive, edits, deletions and reactions update, older pages
+  /// stay.
   Future<void> _refresh(int gen) async {
     final accountId = state.accountId;
     final conversation = state.conversation;
     if (accountId == null || conversation == null) return;
+    _polls++;
+    final since = _watermark;
+    if (since != null && (_deltaComplete || _polls % fullPageEvery != 0)) {
+      final delta = await _repo.messagesSince(accountId, conversation,
+          since.subtract(const Duration(seconds: 1)));
+      if (gen != _generation || isClosed) return;
+      final applied = delta.match((_) => true, (d) {
+        if (d == null) return false;
+        _deltaComplete = d.complete;
+        _applyDelta(d);
+        return true;
+      });
+      if (applied) {
+        if (state.threadPostId != null) unawaited(_reloadThread(gen));
+        return;
+      }
+    }
     final page = await _repo.messages(accountId, conversation);
     if (gen != _generation || isClosed) return;
     page.match((_) {}, (p) {
+      final stamp = newestStamp(p.messages);
+      if (stamp != null && (_watermark == null || stamp.isAfter(_watermark!))) {
+        _watermark = stamp;
+      }
       final fresh = {for (final m in p.messages) m.id: m};
       final oldest = p.messages.isEmpty ? null : p.messages.last.createdAt;
       final merged = [
@@ -332,10 +435,49 @@ class ChatConversationCubit extends Cubit<ChatConversationState> {
       if (merged.length != state.messages.length ||
           !_sameList(merged, state.messages)) {
         emit(state.copyWith(messages: merged));
+        _cache();
       }
       _markReadIfSeen();
     });
     if (state.threadPostId != null) unawaited(_reloadThread(gen));
+  }
+
+  /// One poll, now — what the timer does every [pollInterval].
+  @visibleForTesting
+  Future<void> pollNow() => _refresh(_generation);
+
+  /// Each message in [d] replaces the one with its id, or arrives. Graph's
+  /// delta also reports a reaction to a message weeks back: one older than
+  /// anything shown is not loaded yet, and inserting it would sit it below
+  /// the history with a gap above — "load older" reaches it in its place.
+  void _applyDelta(ChatMessageDelta d) {
+    final w = d.watermark;
+    if (w != null && (_watermark == null || w.isAfter(_watermark!))) {
+      _watermark = w;
+    }
+    if (d.messages.isEmpty) return;
+    final byId = {for (final m in state.messages) m.id: m};
+    final oldestShown = state.messages.lastOrNull?.createdAt;
+    var changed = false;
+    for (final m in d.messages) {
+      final shown = byId.containsKey(m.id);
+      if (!shown &&
+          oldestShown != null &&
+          m.createdAt.isBefore(oldestShown)) {
+        continue;
+      }
+      if (byId[m.id] != m) {
+        byId[m.id] = m;
+        changed = true;
+      }
+    }
+    if (changed) {
+      emit(state.copyWith(
+          messages: byId.values.toList()
+            ..sort((a, b) => b.createdAt.compareTo(a.createdAt))));
+      _cache();
+    }
+    _markReadIfSeen();
   }
 
   static bool _sameList(List<ChatMessage> a, List<ChatMessage> b) {
@@ -363,15 +505,20 @@ class ChatConversationCubit extends Cubit<ChatConversationState> {
     page.match(
       (f) => emit(state.copyWith(loadingOlder: false, error: () => _messageOf(f))),
       (p) {
-        final seen = {for (final m in state.messages) m.id};
+        // Messages the cache supplied below the fresh page come again here:
+        // the server's copy wins — edits, reactions, a workspace emoji the
+        // cached rendering predates — and new ones go on the end.
+        final fresh = {for (final m in p.messages) m.id: m};
+        final shown = {for (final m in state.messages) m.id};
         emit(state.copyWith(
           messages: [
-            ...state.messages,
-            ...p.messages.where((m) => !seen.contains(m.id)),
+            for (final m in state.messages) fresh[m.id] ?? m,
+            ...p.messages.where((m) => !shown.contains(m.id)),
           ],
           nextLink: () => p.nextLink,
           loadingOlder: false,
         ));
+        if (p.messages.any((m) => shown.contains(m.id))) _cache();
       },
     );
   }
@@ -429,6 +576,7 @@ class ChatConversationCubit extends Cubit<ChatConversationState> {
             ? state.copyWith(
                 sending: false, threadReplies: [...state.threadReplies, m])
             : state.copyWith(sending: false, messages: [m, ...state.messages]));
+        if (threadId == null) _cache();
         return true;
       },
     );

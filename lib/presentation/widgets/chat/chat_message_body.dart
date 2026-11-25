@@ -198,6 +198,25 @@ class _ChatHtml {
             listCounters[listCounters.length - 1] = n + 1;
             text('${n + 1}.  ');
           }
+        case 'img' when attrs.containsKey('data-emoji'):
+          // A workspace's own emoji (Slack): a picture the size of the text.
+          final src = attrs['src'] ?? '';
+          final load = loadImage;
+          final alt = attrs['alt'] ?? '';
+          if (load == null || src.isEmpty) {
+            text(alt);
+          } else {
+            out.add(WidgetSpan(
+              alignment: PlaceholderAlignment.middle,
+              child: ChatEmojiImage(
+                src: src,
+                load: load,
+                alt: alt,
+                size: (styles.last.fontSize ?? 13) * 1.35,
+              ),
+            ));
+            atLineStart = false;
+          }
         case 'img':
           final alt = attrs['alt'] ?? '';
           final isEmoji = (attrs['itemtype'] ?? '').contains('Emoji') ||
@@ -273,6 +292,63 @@ class _ChatHtml {
       .replaceAllMapped(RegExp(r'&#x([0-9a-fA-F]+);'),
           (m) => String.fromCharCode(int.parse(m.group(1)!, radix: 16)))
       .replaceAll('&amp;', '&');
+}
+
+/// A workspace's own emoji: [size] square, inline with the text, its `:name:`
+/// as the tooltip — and as the text while it loads or when it cannot be.
+class ChatEmojiImage extends StatefulWidget {
+  const ChatEmojiImage({
+    super.key,
+    required this.src,
+    required this.load,
+    required this.alt,
+    required this.size,
+  });
+
+  final String src;
+  final Future<Uint8List?> Function(String src) load;
+  final String alt;
+  final double size;
+
+  @override
+  State<ChatEmojiImage> createState() => _ChatEmojiImageState();
+}
+
+class _ChatEmojiImageState extends State<ChatEmojiImage> {
+  late Future<Uint8List?> _bytes = widget.load(widget.src);
+
+  @override
+  void didUpdateWidget(ChatEmojiImage old) {
+    super.didUpdateWidget(old);
+    if (old.src != widget.src) _bytes = widget.load(widget.src);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Tooltip(
+      message: widget.alt,
+      child: FutureBuilder<Uint8List?>(
+        future: _bytes,
+        builder: (context, snap) {
+          final bytes = snap.data;
+          if (bytes == null) {
+            return snap.connectionState == ConnectionState.done
+                ? Text(widget.alt)
+                : SizedBox.square(dimension: widget.size);
+          }
+          return Image.memory(
+            bytes,
+            width: widget.size,
+            height: widget.size,
+            fit: BoxFit.contain,
+            gaplessPlayback: true,
+            semanticLabel: widget.alt,
+            errorBuilder: (_, _, _) => Text(widget.alt),
+          );
+        },
+      ),
+    );
+  }
 }
 
 /// A picture in a message, at most [maxWidth] × [maxHeight]; tapping it opens

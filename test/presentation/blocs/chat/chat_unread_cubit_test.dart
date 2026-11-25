@@ -28,6 +28,9 @@ void main() {
         unread: const {'work': 1, 'slack:T1': 2});
     expect(c.state.unreadIn('slack:T1'), 2);
     expect(c.state.total, 3);
+    expect(c.state.unreadChats['slack:T1']!.map((c) => c.title),
+        ['Chat 0', 'Chat 1'],
+        reason: 'the chats themselves, for the pane\'s dropdown');
     expect(c.state.hasChoice, isTrue);
     expect(c.state.chosen, teams, reason: 'the account\'s own chat first');
   });
@@ -71,5 +74,13 @@ class _Repo extends Fake implements ChatRepository {
   Future<List<ChatSource>> sources(String? accountId) async => _sources;
 
   @override
-  Future<int> unreadCount(String accountId) async => _unread[accountId] ?? 0;
+  Future<List<ChatConversation>> unreadConversations(String accountId) async =>
+      [
+        for (var i = 0; i < (_unread[accountId] ?? 0); i++)
+          ChatConversation(
+              id: '$accountId-$i',
+              kind: ChatKind.oneOnOne,
+              title: 'Chat $i',
+              unread: true),
+      ];
 }

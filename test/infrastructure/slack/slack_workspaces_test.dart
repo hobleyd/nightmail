@@ -12,6 +12,7 @@ import 'package:nightmail/infrastructure/accounts/account_manager.dart';
 import 'package:nightmail/infrastructure/slack/slack_workspaces.dart';
 
 import '../../fakes/memory_secure_storage.dart';
+import '../../fakes/memory_chat_local_datasource.dart';
 
 /// Connected Slack workspaces: kept in the Keychain for every window,
 /// refreshed when a rotating token is about to expire — without losing to
@@ -137,6 +138,7 @@ void main() {
           accountManager: _Accounts(account),
           contacts: _NoContacts(),
           slack: store(),
+          local: MemoryChatLocalDatasource(),
         );
 
     test('the account\'s own chat comes first, then Slack', () async {
@@ -146,6 +148,26 @@ void main() {
         ('work', 'Teams'),
         ('slack:T1', 'Slack · Acme'),
       ]);
+    });
+
+    test('a workspace without every scope asked for offers a reconnect',
+        () async {
+      await save(workspace(refresh: null));
+      expect((await repo(work).sources('work')).last.missingScopes, isTrue,
+          reason: 'connected before scopes were recorded');
+      final full = SlackWorkspace(
+        teamId: 'T1',
+        teamName: 'Acme',
+        userId: 'UME',
+        clientId: '1.2',
+        accessToken: 'xoxp-1',
+        scopes: SlackWorkspaces.userScopes.toSet(),
+      );
+      await storage.write(
+          key: 'slack_workspaces', value: jsonEncode([full.toJson()]));
+      expect((await repo(work).sources('work')).last.missingScopes, isFalse);
+      expect(SlackWorkspace.fromJson(full.toJson())!.hasAllScopes, isTrue,
+          reason: 'stored with the workspace');
     });
 
     test('an IMAP account has Slack alone — no menu', () async {

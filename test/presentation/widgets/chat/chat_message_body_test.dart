@@ -97,6 +97,40 @@ void main() {
     expect(find.text('[image: chart.png]'), findsOneWidget);
     expect(find.byType(Image), findsNothing);
   });
+
+  testWidgets('a workspace emoji is a picture the size of the text',
+      (tester) async {
+    await tester.pumpWidget(MaterialApp(
+      home: Scaffold(
+        body: ChatMessageBody(
+          html: 'yes <img data-emoji="1" src="https://e/p.gif" alt=":pp:">',
+          style: const TextStyle(fontSize: 20),
+          loadImage: (_) async => _png,
+        ),
+      ),
+    ));
+    await tester.pumpAndSettle();
+    final emoji = tester.widget<ChatEmojiImage>(find.byType(ChatEmojiImage));
+    expect(emoji.size, 27, reason: '1.35 × the text');
+    expect(find.byType(ChatImage), findsNothing,
+        reason: 'not a picture to open full size');
+    expect(tester.getSize(find.byType(Image)), const Size(27, 27));
+  });
+
+  testWidgets('a workspace emoji that will not load reads its :name:',
+      (tester) async {
+    await tester.pumpWidget(MaterialApp(
+      home: Scaffold(
+        body: ChatMessageBody(
+          html: '<img data-emoji="1" src="https://e/p.gif" alt=":pp:">',
+          style: const TextStyle(),
+          loadImage: (_) async => null,
+        ),
+      ),
+    ));
+    await tester.pumpAndSettle();
+    expect(find.text(':pp:'), findsOneWidget);
+  });
 }
 
 /// A 1×1 transparent PNG.

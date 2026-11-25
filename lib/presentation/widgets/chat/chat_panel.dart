@@ -8,6 +8,7 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import '../../../core/platform/touch_metrics.dart';
 import '../../../core/platform/window_utils.dart';
 import '../../../core/theme/app_colors.dart';
+import '../../../domain/entities/chat.dart';
 import '../../../domain/entities/email.dart';
 import '../../../domain/repositories/chat_repository.dart';
 import '../../../infrastructure/accounts/account.dart';
@@ -33,6 +34,10 @@ import 'chat_conversation_view.dart';
 /// Chats on the system the Chat button's menu chose
 /// ([ChatUnreadState.chosen]): the account's own chat, or a Slack workspace —
 /// where the people on offer are the ones Slack finds by address.
+///
+/// The dropdown also offers that system's unread chats
+/// ([ChatUnreadState.unreadChats]), under the people: picking one opens it
+/// in place until another email is selected.
 class ChatPanel extends StatelessWidget {
   const ChatPanel({
     super.key,
@@ -76,6 +81,11 @@ class _ChatPanelBodyState extends State<_ChatPanelBody> {
   /// The address chosen in the dropdown, kept across emails while it is on
   /// them.
   String? _chosen;
+
+  /// An unread chat picked from the dropdown, and the email it was picked
+  /// on: a new email goes back to its people.
+  ChatConversation? _chat;
+  String? _chatEmailId;
 
   /// What the conversation cubit was last pointed at: `account|address`.
   String? _openedKey;
@@ -124,7 +134,8 @@ class _ChatPanelBodyState extends State<_ChatPanelBody> {
     ];
   }
 
-  Future<void> _sync(String accountId, ChatPerson? person) async {
+  Future<void> _sync(
+      String accountId, ChatPerson? person, ChatConversation? chat) async {
     final cubit = context.read<ChatConversationCubit>();
     if (accountId != _accountId) {
       _accountId = accountId;
@@ -140,15 +151,24 @@ class _ChatPanelBodyState extends State<_ChatPanelBody> {
         access == ChatAccess.needsConsent) {
       return;
     }
-    final key = person == null ? null : '$accountId|${person.email}';
+    final key = chat != null
+        ? '$accountId|chat:${chat.key}'
+        : person == null
+            ? null
+            : '$accountId|${person.email}';
     if (key == _openedKey) return;
     _openedKey = key;
-    if (person == null) {
+    if (chat != null) {
+      unawaited(cubit.open(accountId, chat));
+    } else if (person == null) {
       cubit.clear();
     } else {
       unawaited(cubit.openPerson(accountId, person));
     }
   }
+
+  /// The chat system [_chat] was picked on.
+  String? _chatSourceId;
 
   Future<void> _grant() async {
     final accountId = _accountId;
@@ -185,7 +205,8 @@ class _ChatPanelBodyState extends State<_ChatPanelBody> {
     // The chat system: what the button's menu chose, or — before the
     // systems are known, or for an account with none — the account itself,
     // whose access check then explains what is missing.
-    final source = context.watch<ChatUnreadCubit>().state.chosen;
+    final unreadState = context.watch<ChatUnreadCubit>().state;
+    final source = unreadState.chosen;
     final chatId = source?.id ?? account?.id;
     final everyone =
         account == null ? const <ChatPerson>[] : candidatesFor(email, account);
@@ -202,9 +223,29 @@ class _ChatPanelBodyState extends State<_ChatPanelBody> {
             .firstOrNull ??
         candidates.firstOrNull;
 
+    // A chat picked on another email, or on another chat system, is let go.
+    if (_chat != null &&
+        (_chatEmailId != email?.id || _chatSourceId != chatId)) {
+      _chat = null;
+    }
+    final chat = _chat;
+    final people = {for (final p in everyone) p.email};
+    final unreadChats = <ChatConversation>[
+      for (final c in unreadState.unreadChats[chatId] ?? const [])
+        // A one-on-one with someone on the email is already offered as them.
+        if (!(c.kind == ChatKind.oneOnOne &&
+            c.members.any((m) => people.contains(m.email))))
+          c,
+    ];
+    // Once read — or filtered — the open one stays until something else is
+    // picked: the dropdown's value must always be one of its items.
+    if (chat != null && !unreadChats.any((c) => c.key == chat.key)) {
+      unreadChats.add(chat);
+    }
+
     if (chatId != null) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted) _sync(chatId, person);
+        if (mounted) _sync(chatId, person, chat);
       });
     }
 
@@ -236,6 +277,8 @@ class _ChatPanelBodyState extends State<_ChatPanelBody> {
             ? source.label.replaceFirst('Slack · ', '')
             : null,
       );
+    } else if (chat != null) {
+      body = const ChatConversationView();
     } else if (everyone.isNotEmpty && colleagues == null) {
       body = const Center(
         child: SizedBox(
@@ -289,14 +332,25 @@ class _ChatPanelBodyState extends State<_ChatPanelBody> {
                   ),
                   const SizedBox(width: 8),
                   Expanded(
-                    child: candidates.length > 1
+                    child: candidates.length + unreadChats.length > 1 ||
+                            (person == null && unreadChats.isNotEmpty)
                         ? _PersonDropdown(
                             people: candidates,
-                            selected: person!,
-                            onChanged: (p) => setState(() => _chosen = p.email),
+                            chats: unreadChats,
+                            selectedPerson: chat == null ? person : null,
+                            selectedChat: chat,
+                            onPerson: (p) => setState(() {
+                              _chosen = p.email;
+                              _chat = null;
+                            }),
+                            onChat: (c) => setState(() {
+                              _chat = c;
+                              _chatEmailId = email?.id;
+                              _chatSourceId = chatId;
+                            }),
                           )
                         : Text(
-                            person?.label ?? 'Chat',
+                            chat?.title ?? person?.label ?? 'Chat',
                             overflow: TextOverflow.ellipsis,
                             style: TextStyle(
                               color: c.textPrimary,
@@ -332,23 +386,38 @@ class _ChatPanelBodyState extends State<_ChatPanelBody> {
   }
 }
 
+/// The people on the email, then — under "Unread" — the chat system's
+/// unread chats. Values are `p:{address}` and `c:{conversation key}`.
 class _PersonDropdown extends StatelessWidget {
   const _PersonDropdown({
     required this.people,
-    required this.selected,
-    required this.onChanged,
+    required this.chats,
+    required this.selectedPerson,
+    required this.selectedChat,
+    required this.onPerson,
+    required this.onChat,
   });
 
   final List<ChatPerson> people;
-  final ChatPerson selected;
-  final ValueChanged<ChatPerson> onChanged;
+  final List<ChatConversation> chats;
+  final ChatPerson? selectedPerson;
+  final ChatConversation? selectedChat;
+  final ValueChanged<ChatPerson> onPerson;
+  final ValueChanged<ChatConversation> onChat;
 
   @override
   Widget build(BuildContext context) {
     final c = context.colors;
+    final value = selectedChat != null
+        ? 'c:${selectedChat!.key}'
+        : selectedPerson != null
+            ? 'p:${selectedPerson!.email}'
+            : null;
     return DropdownButtonHideUnderline(
       child: DropdownButton<String>(
-        value: selected.email,
+        value: value,
+        hint: Text('${chats.length} unread',
+            style: TextStyle(color: c.textSecondary, fontSize: 14)),
         isExpanded: true,
         isDense: true,
         dropdownColor: c.surfacePanel,
@@ -357,19 +426,75 @@ class _PersonDropdown extends StatelessWidget {
           fontSize: 14,
           fontWeight: FontWeight.w600,
         ),
+        selectedItemBuilder: (_) => [
+          for (final p in people)
+            Text(p.label, overflow: TextOverflow.ellipsis),
+          if (chats.isNotEmpty) const SizedBox.shrink(),
+          for (final ch in chats)
+            Text(ch.title, overflow: TextOverflow.ellipsis),
+        ],
         items: [
           for (final p in people)
             DropdownMenuItem(
-              value: p.email,
+              value: 'p:${p.email}',
               child: Tooltip(
                 message: p.email,
                 child: Text(p.label, overflow: TextOverflow.ellipsis),
               ),
             ),
+          if (chats.isNotEmpty)
+            DropdownMenuItem<String>(
+              enabled: false,
+              child: Text(
+                'UNREAD',
+                style: TextStyle(
+                  fontSize: 10.5,
+                  letterSpacing: 0.6,
+                  fontWeight: FontWeight.w700,
+                  color: c.textMuted,
+                ),
+              ),
+            ),
+          for (final ch in chats)
+            DropdownMenuItem(
+              value: 'c:${ch.key}',
+              child: Row(
+                children: [
+                  Icon(
+                    switch (ch.kind) {
+                      ChatKind.oneOnOne => Icons.person_outline,
+                      ChatKind.channel || ChatKind.space => Icons.tag,
+                      _ => Icons.people_outline,
+                    },
+                    size: 15,
+                    color: c.textTertiary,
+                  ),
+                  const SizedBox(width: 6),
+                  Expanded(
+                    child: Text(ch.title, overflow: TextOverflow.ellipsis),
+                  ),
+                  if (ch.unread)
+                    Container(
+                      width: 7,
+                      height: 7,
+                      decoration: const BoxDecoration(
+                        color: AppColors.accent,
+                        shape: BoxShape.circle,
+                      ),
+                    ),
+                ],
+              ),
+            ),
         ],
-        onChanged: (email) {
-          final p = people.where((p) => p.email == email).firstOrNull;
-          if (p != null) onChanged(p);
+        onChanged: (v) {
+          if (v == null) return;
+          if (v.startsWith('p:')) {
+            final p = people.where((p) => 'p:${p.email}' == v).firstOrNull;
+            if (p != null) onPerson(p);
+          } else {
+            final ch = chats.where((ch) => 'c:${ch.key}' == v).firstOrNull;
+            if (ch != null) onChat(ch);
+          }
         },
       ),
     );

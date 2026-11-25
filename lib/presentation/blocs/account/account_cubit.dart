@@ -7,6 +7,7 @@ import 'package:flutter/services.dart' show PlatformException;
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
+import '../../../domain/repositories/chat_repository.dart';
 import '../../../domain/repositories/email_repository.dart';
 import '../../../domain/usecases/discover_nightware_server.dart';
 import '../../../infrastructure/accounts/account.dart';
@@ -83,6 +84,7 @@ class AccountCubit extends Cubit<AccountState> {
     required this._contactCacheSync,
     required this._taskReminderService,
     required this._discoverServer,
+    this._chatRepository,
   })  : super(const AccountLoading()) {
     _authFailureSub = _accountManager.authFailures.listen(_onAuthFailure);
     _authSuccessSub = _accountManager.authSuccesses.listen(_onAuthSuccess);
@@ -95,6 +97,9 @@ class AccountCubit extends Cubit<AccountState> {
   final ContactCacheSyncService _contactCacheSync;
   final TaskReminderService _taskReminderService;
   final DiscoverNightwareServer _discoverServer;
+
+  /// Optional only so tests that never remove an account need not build one.
+  final ChatRepository? _chatRepository;
   late final StreamSubscription<String> _authFailureSub;
   late final StreamSubscription<String> _authSuccessSub;
 
@@ -328,6 +333,7 @@ class AccountCubit extends Cubit<AccountState> {
     await _backgroundRefresh(
         'Calendar', () => _calendarCacheSync.clearAccount(accountId));
     await _syncContacts(() => _contactCacheSync.clearAccount(accountId));
+    await _chatRepository?.forgetAccount(accountId);
     if (_accountManager.hasAccounts) {
       await _emitLoaded();
     } else {

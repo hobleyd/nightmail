@@ -2,9 +2,10 @@ import 'dart:async';
 import 'dart:typed_data';
 
 import 'package:dio/dio.dart';
-import 'package:flutter/foundation.dart' show visibleForTesting;
+import 'package:flutter/foundation.dart' show debugPrint, visibleForTesting;
 
 import '../../../core/error/exceptions.dart';
+import '../../../core/text/emoji.dart';
 import '../../../domain/entities/chat.dart';
 import '../../../infrastructure/slack/slack_workspaces.dart';
 import 'chat_images.dart';
@@ -64,8 +65,17 @@ class SlackChatDatasource implements ChatRemoteDatasource {
   /// `conversations.info` is Tier 3 (50+ a minute) and the window shares it.
   static const _unreadChecked = 15;
 
+  /// A workspace's own emoji by name, per team, from `emoji.list`: a picture
+  /// URL, or — for an alias of a standard one — its characters. Read at most
+  /// once per [_customEmojiFresh]; empty without `emoji:read`.
+  static final _customEmoji = <String, Map<String, SlackCustomEmoji>>{};
+  static final _customEmojiAt = <String, DateTime>{};
+  static const _customEmojiFresh = Duration(hours: 1);
+
   @visibleForTesting
   static void forgetAll() {
+    _customEmoji.clear();
+    _customEmojiAt.clear();
     _users.clear();
     _byEmail.clear();
     _latest.clear();
@@ -331,12 +341,38 @@ class SlackChatDatasource implements ChatRemoteDatasource {
       _latest['$teamId|${conversation.id}'] = top;
     }
     await _resolveUsers(_userIdsIn(raw));
+    await _loadCustomEmoji();
     final next = (data['response_metadata'] as Map?)?['next_cursor'] as String?;
     return ChatMessagePage(
       messages: [for (final m in raw) _parseMessage(m)],
       nextLink: data['has_more'] == true && next != null && next.isNotEmpty
           ? next
           : null,
+    );
+  }
+
+  /// Messages posted since [since] (`oldest=`). Edits, deletions, reactions
+  /// and a thread's growing reply count do not show, so the repository still
+  /// reads a full page now and then. Slack's limit counts calls, not their
+  /// size, so this saves bytes and parsing rather than quota.
+  @override
+  Future<ChatMessageDelta?> messagesSince(
+      ChatConversation conversation, DateTime since) async {
+    final data = await _call('conversations.history', {
+      'channel': conversation.id,
+      'limit': '50',
+      'oldest': (since.microsecondsSinceEpoch / 1e6).toStringAsFixed(6),
+    });
+    // More than a page since: a fresh first page instead.
+    if (data['has_more'] == true) return null;
+    final raw = _list(data['messages']);
+    final top = raw.firstOrNull?['ts'] as String?;
+    if (top != null) _latest['$teamId|${conversation.id}'] = top;
+    await _resolveUsers(_userIdsIn(raw));
+    await _loadCustomEmoji();
+    return ChatMessageDelta(
+      messages: [for (final m in raw) _parseMessage(m)],
+      watermark: _ts(top),
     );
   }
 
@@ -359,6 +395,7 @@ class SlackChatDatasource implements ChatRemoteDatasource {
       if (data['has_more'] != true || cursor == null || cursor.isEmpty) break;
     }
     await _resolveUsers(_userIdsIn(raw));
+    await _loadCustomEmoji();
     return [
       for (final m in raw)
         if (m['ts'] != post.id) _parseMessage(m),
@@ -435,6 +472,7 @@ class SlackChatDatasource implements ChatRemoteDatasource {
         ? _list(messages['matches'])
         : const <Map<String, dynamic>>[];
     await _resolveUsers(_userIdsIn(matches));
+    await _loadCustomEmoji();
     return [
       for (final m in matches)
         if ((m['channel'] as Map?)?['id'] case final String channel)
@@ -563,7 +601,8 @@ class SlackChatDatasource implements ChatRemoteDatasource {
       senderName: name,
       senderUserId: user,
       bodyHtml: mrkdwnToHtml(m['text'] as String? ?? '',
-              userName: (id) => _users['$teamId|$id']?.name) +
+              userName: (id) => _users['$teamId|$id']?.name,
+              customEmoji: (name) => _customEmoji[teamId]?[name]) +
           _imagesHtml(files),
       // A reply names its thread; a thread's parent names itself.
       replyToId: threadTs != null && threadTs != ts ? threadTs : null,
@@ -573,11 +612,7 @@ class SlackChatDatasource implements ChatRemoteDatasource {
       replyCount: (m['reply_count'] as num?)?.toInt(),
       reactions: [
         for (final r in _list(m['reactions']))
-          if (r['name'] is String)
-            ChatReaction(
-              emoji: _emoji[r['name']] ?? ':${r['name']}:',
-              count: (r['count'] as num?)?.toInt() ?? 1,
-            ),
+          if (r['name'] is String) _reaction(r['name'] as String, r['count']),
       ],
       attachmentNames: [
         for (final f in files)
@@ -668,7 +703,7 @@ class SlackChatDatasource implements ChatRemoteDatasource {
       ? v.whereType<Map<String, dynamic>>().toList()
       : const [];
 
-  String _plain(String text) => text
+  String _plain(String text) => replaceShortcodes(text)
       .replaceAllMapped(_mention,
           (m) => '@${_users['$teamId|${m[1]}']?.name ?? m[1]}')
       .replaceAllMapped(RegExp(r'<([^>|]+)\|([^>]+)>'), (m) => m[2]!)
@@ -694,18 +729,22 @@ class SlackChatDatasource implements ChatRemoteDatasource {
   /// [userName]), `<#C…|name>` channels, `<!here>` and friends, and
   /// `<url|label>` links. The rest is `*bold*`, `_italic_`, `~strike~`,
   /// `` `code` ``, ```` ```blocks``` ```` and `&gt; ` quotes.
+  ///
+  /// [customEmoji] answers the workspace's own `:names:` — a picture becomes
+  /// an `<img data-emoji>` the renderer draws at text size.
   static String mrkdwnToHtml(
     String text, {
     String? Function(String userId)? userName,
+    SlackCustomEmoji? Function(String name)? customEmoji,
   }) {
     final out = StringBuffer();
     var last = 0;
     for (final m in RegExp(r'<([^<>]+)>').allMatches(text)) {
-      out.write(_format(text.substring(last, m.start)));
+      out.write(_format(text.substring(last, m.start), customEmoji));
       out.write(_control(m[1]!, userName));
       last = m.end;
     }
-    out.write(_format(text.substring(last)));
+    out.write(_format(text.substring(last), customEmoji));
     return out.toString();
   }
 
@@ -745,9 +784,21 @@ class SlackChatDatasource implements ChatRemoteDatasource {
       .replaceAll('>', '&gt;')
       .replaceAll('"', '&quot;');
 
-  static String _format(String text) {
+  static String _format(
+      String text, SlackCustomEmoji? Function(String name)? customEmoji) {
     if (text.isEmpty) return text;
-    var html = text;
+    // Shortcodes first, while code is still marked by its backticks. A
+    // custom emoji's <img> waits behind a placeholder, so the formatting
+    // below never reads an underscore in its URL as italics.
+    final images = <String>[];
+    var html = replaceShortcodes(text, custom: (name) {
+      final e = customEmoji?.call(name);
+      if (e == null) return null;
+      if (e.text != null) return e.text;
+      images.add('<img data-emoji="1" src="${_escape(e.url!)}" '
+          'alt=":${_escape(name)}:">');
+      return '\u{E000}${images.length - 1}\u{E001}';
+    });
     html = html.replaceAllMapped(
         RegExp(r'```\n?([\s\S]*?)```'), (m) => '<pre>${m[1]}</pre>');
     html = html.replaceAllMapped(
@@ -760,44 +811,75 @@ class SlackChatDatasource implements ChatRemoteDatasource {
         RegExp(r'(?<![\w~])~([^~\n]+)~(?![\w~])'), (m) => '<s>${m[1]}</s>');
     html = html.replaceAllMapped(RegExp(r'(^|\n)&gt; ?([^\n]*)'),
         (m) => '${m[1]}<blockquote>${m[2]}</blockquote>');
-    html = html.replaceAllMapped(
-        RegExp(r':([a-z0-9_+\-]+):'), (m) => _emoji[m[1]] ?? m[0]!);
+    if (images.isNotEmpty) {
+      html = html.replaceAllMapped(RegExp('\u{E000}(\\d+)\u{E001}'),
+          (m) => images[int.parse(m[1]!)]);
+    }
     // The renderer collapses whitespace, a code block's included.
     return html.replaceAll('\n', '<br>');
   }
 
-  /// The shortcodes Slack users type most, as the characters they stand for;
-  /// anything else stays `:name:`.
-  static const _emoji = {
-    '+1': '👍',
-    'thumbsup': '👍',
-    '-1': '👎',
-    'thumbsdown': '👎',
-    'smile': '😄',
-    'slightly_smiling_face': '🙂',
-    'grinning': '😀',
-    'joy': '😂',
-    'laughing': '😆',
-    'wink': '😉',
-    'heart': '❤️',
-    'tada': '🎉',
-    'pray': '🙏',
-    'clap': '👏',
-    'fire': '🔥',
-    'eyes': '👀',
-    'white_check_mark': '✅',
-    'heavy_check_mark': '✔️',
-    'x': '❌',
-    'warning': '⚠️',
-    'rocket': '🚀',
-    'thinking_face': '🤔',
-    'ok_hand': '👌',
-    'raised_hands': '🙌',
-    'wave': '👋',
-    '100': '💯',
-    'sweat_smile': '😅',
-    'cry': '😢',
-  };
+  /// A reaction by Slack's name for it: standard (`+1`, `wave::skin-tone-2`),
+  /// or the workspace's own, shown as its picture.
+  ChatReaction _reaction(String name, Object? count) {
+    final n = (count as num?)?.toInt() ?? 1;
+    final standard = shortcodeEmoji(name);
+    if (standard != null) return ChatReaction(emoji: standard, count: n);
+    final custom = _customEmoji[teamId]?[name.split('::').first];
+    return ChatReaction(
+      emoji: custom?.text ?? ':$name:',
+      count: n,
+      imageUrl: custom?.url,
+    );
+  }
+
+  /// The workspace's own emoji, at most once per [_customEmojiFresh]. Best
+  /// effort: a token from before `emoji:read` was asked for (or any other
+  /// failure) leaves names as `:name:` text rather than failing the read.
+  Future<void> _loadCustomEmoji() async {
+    final at = _customEmojiAt[teamId];
+    if (at != null && DateTime.now().difference(at) < _customEmojiFresh) {
+      return;
+    }
+    _customEmojiAt[teamId] = DateTime.now();
+    try {
+      final data = await _call('emoji.list', const {});
+      _customEmoji[teamId] = resolveCustomEmoji(
+          (data['emoji'] as Map?)?.cast<String, Object?>() ?? const {});
+    } on SlackReconnectException {
+      rethrow;
+    } catch (e) {
+      debugPrint('[Slack] no custom emoji for $teamId: $e');
+      _customEmoji[teamId] ??= const {};
+    }
+  }
+
+  /// `emoji.list`'s answer — a URL per name, or `alias:other` — with every
+  /// alias followed to a picture or to a standard emoji's characters.
+  @visibleForTesting
+  static Map<String, SlackCustomEmoji> resolveCustomEmoji(
+      Map<String, Object?> raw) {
+    SlackCustomEmoji? resolve(String name, int depth) {
+      final v = raw[name];
+      if (v is String && v.startsWith('alias:')) {
+        if (depth > 4) return null;
+        final target = v.substring(6);
+        final standard = shortcodeEmoji(target);
+        return standard != null
+            ? SlackCustomEmoji(text: standard)
+            : resolve(target, depth + 1);
+      }
+      if (v is String && v.startsWith('https://')) {
+        return SlackCustomEmoji(url: v);
+      }
+      return null;
+    }
+
+    return {
+      for (final name in raw.keys)
+        if (resolve(name, 0) case final e?) name: e,
+    };
+  }
 
   // ---- transport ----------------------------------------------------------
 
@@ -823,6 +905,11 @@ class SlackChatDatasource implements ChatRemoteDatasource {
         final data = r.data ?? const {};
         if (data['ok'] == true) return data;
         final error = data['error'] as String? ?? 'unknown_error';
+        // Custom emoji are an extra: a token granted before `emoji:read`
+        // was asked for keeps working, just without them.
+        if (method == 'emoji.list' && error == 'missing_scope') {
+          throw SlackApiException(error);
+        }
         if (_reconnectErrors.contains(error)) {
           await _workspaces.flagReconnect(teamId);
           final w = await _workspaces.byTeam(teamId);
@@ -882,6 +969,15 @@ class SlackChatDatasource implements ChatRemoteDatasource {
         'msg_too_long' => 'That message is too long for Slack.',
         _ => 'Slack: $error',
       };
+}
+
+/// A workspace's own emoji: a picture, or — an alias of a standard one —
+/// the characters.
+class SlackCustomEmoji {
+  const SlackCustomEmoji({this.url, this.text});
+
+  final String? url;
+  final String? text;
 }
 
 class _SlackUser {

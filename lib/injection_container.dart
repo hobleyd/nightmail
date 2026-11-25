@@ -42,6 +42,7 @@ import 'data/repositories/out_of_office_repository_impl.dart';
 import 'data/repositories/sender_repository_impl.dart';
 import 'data/repositories/spam_filter_repository_impl.dart';
 import 'data/repositories/system_contacts_repository_impl.dart';
+import 'data/datasources/local/chat_local_datasource.dart';
 import 'data/repositories/chat_repository_impl.dart';
 import 'infrastructure/slack/slack_workspaces.dart';
 import 'data/repositories/tasks_repository_impl.dart';
@@ -467,6 +468,10 @@ Future<void> configureDependencies() async {
       accountManager: sl<AccountManager>(),
       contacts: sl<ContactCacheRepository>(),
       slack: sl<SlackWorkspaces>(),
+      local: ChatLocalDatasourceImpl(
+        database: sl<AppDatabase>(),
+        encryption: sl<CacheEncryptionService>(),
+      ),
     ),
   );
   sl.registerLazySingleton<SpamFilterRepository>(
@@ -611,6 +616,7 @@ Future<void> configureDependencies() async {
       contactCacheSync: sl<ContactCacheSyncService>(),
       taskReminderService: sl<TaskReminderService>(),
       discoverServer: sl<DiscoverNightwareServer>(),
+      chatRepository: sl<ChatRepository>(),
     ),
   );
   sl.registerLazySingleton(
@@ -725,7 +731,8 @@ Future<void> configureDependencies() async {
       ));
   sl.registerFactory(
       () => ChatConversationCubit(repository: sl<ChatRepository>()));
-  sl.registerFactory(() => ChatListCubit(repository: sl<ChatRepository>()));
+  sl.registerFactory(() => ChatListCubit(
+      repository: sl<ChatRepository>(), settings: sl<AppSettings>()));
   sl.registerFactory(() => CommitmentsCubit(
         accountManager: sl<AccountManager>(),
         emailRepository: sl<EmailRepository>(),

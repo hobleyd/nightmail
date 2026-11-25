@@ -776,18 +776,24 @@ class _SlackSettingState extends State<_SlackSetting> {
                     style: TextStyle(color: c.textPrimary, fontSize: 13),
                   ),
                 ),
-                if (w.needsReconnect)
+                if (w.needsReconnect || w.missingScopes)
                   _busy == w.id
                       ? const SizedBox(
                           width: 16,
                           height: 16,
                           child: CircularProgressIndicator(strokeWidth: 2),
                         )
-                      : TextButton(
-                          onPressed: _busy != null
-                              ? null
-                              : () => _connect(reconnecting: w.id),
-                          child: const Text('Reconnect'),
+                      : Tooltip(
+                          message: w.needsReconnect
+                              ? 'Slack no longer accepts this sign-in.'
+                              : 'Sign in again to show this workspace\'s '
+                                  'custom emoji.',
+                          child: TextButton(
+                            onPressed: _busy != null
+                                ? null
+                                : () => _connect(reconnecting: w.id),
+                            child: const Text('Reconnect'),
+                          ),
                         ),
                 TextButton(
                   onPressed: _busy != null ? null : () => _disconnect(w),

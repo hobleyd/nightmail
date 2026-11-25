@@ -14,6 +14,7 @@ class ChatUnreadState extends Equatable {
     this.sources = const [],
     this.unread = const {},
     this.chosenId,
+    this.unreadChats = const {},
   });
 
   /// The active account's own chat first (when it has one), then each
@@ -22,6 +23,10 @@ class ChatUnreadState extends Equatable {
 
   /// Unread chats by [ChatSource.id].
   final Map<String, int> unread;
+
+  /// The unread chats themselves by [ChatSource.id] — what the pane's
+  /// dropdown offers beside the people on the email.
+  final Map<String, List<ChatConversation>> unreadChats;
 
   /// The system last picked from the menu, by id; may name one no longer
   /// offered (an account switch), see [chosen].
@@ -40,7 +45,7 @@ class ChatUnreadState extends Equatable {
   bool get hasChoice => sources.length > 1;
 
   @override
-  List<Object?> get props => [sources, unread, chosenId];
+  List<Object?> get props => [sources, unread, chosenId, unreadChats];
 }
 
 /// The chat systems behind the Chat button and how many of each's chats
@@ -89,22 +94,38 @@ class ChatUnreadCubit extends Cubit<ChatUnreadState> {
         await _repository.sources(_accountManager.activeAccount?.id);
     if (gen != _generation || isClosed) return;
     // The menu appears with its systems at once; the counts follow.
-    emit(ChatUnreadState(sources: sources, chosenId: state.chosenId, unread: {
-      for (final s in sources) s.id: ?state.unread[s.id],
-    }));
-    final counts = await Future.wait(sources.map((s) =>
-        s.needsReconnect ? Future.value(0) : _repository.unreadCount(s.id)));
+    emit(ChatUnreadState(
+      sources: sources,
+      chosenId: state.chosenId,
+      unread: {for (final s in sources) s.id: ?state.unread[s.id]},
+      unreadChats: {
+        for (final s in sources) s.id: ?state.unreadChats[s.id],
+      },
+    ));
+    final chats = await Future.wait(sources.map((s) => s.needsReconnect
+        ? Future.value(const <ChatConversation>[])
+        : _repository.unreadConversations(s.id)));
     if (gen != _generation || isClosed) return;
-    emit(ChatUnreadState(sources: sources, chosenId: state.chosenId, unread: {
-      for (var i = 0; i < sources.length; i++) sources[i].id: counts[i],
-    }));
+    emit(ChatUnreadState(
+      sources: sources,
+      chosenId: state.chosenId,
+      unread: {
+        for (var i = 0; i < sources.length; i++) sources[i].id: chats[i].length,
+      },
+      unreadChats: {
+        for (var i = 0; i < sources.length; i++) sources[i].id: chats[i],
+      },
+    ));
   }
 
   /// Points the Chat pane at [sourceId] (from the button's menu).
   void choose(String sourceId) {
     _switched = sourceId != state.chosen?.id;
     emit(ChatUnreadState(
-        sources: state.sources, unread: state.unread, chosenId: sourceId));
+        sources: state.sources,
+        unread: state.unread,
+        unreadChats: state.unreadChats,
+        chosenId: sourceId));
   }
 
   bool _switched = false;

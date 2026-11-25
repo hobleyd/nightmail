@@ -52,6 +52,15 @@ abstract interface class ChatRemoteDatasource {
     String? cursor,
   });
 
+  /// What changed in [conversation] since [since] — a previous
+  /// [ChatMessageDelta.watermark] — or null where it cannot be asked that
+  /// way (a Teams channel, a NightMail Server, a threaded Google space, more
+  /// than a few pages of changes): the caller reads [messages] instead.
+  Future<ChatMessageDelta?> messagesSince(
+    ChatConversation conversation,
+    DateTime since,
+  );
+
   /// [post]'s replies, oldest first.
   Future<List<ChatMessage>> replies(
     ChatConversation conversation,

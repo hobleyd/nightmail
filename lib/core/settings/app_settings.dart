@@ -23,6 +23,26 @@ class AppSettings {
   static const EmailBodyType defaultComposeFormat = EmailBodyType.html;
   static const String _composeFormatFile = 'compose_format';
 
+  static const String _chatSortByNameFile = 'chat_sort_by_name';
+
+  /// The chat window's list A–Z rather than newest first.
+  Future<bool> loadChatSortByName() async {
+    try {
+      final file = await _file(_chatSortByNameFile);
+      if (await file.exists()) {
+        return (await file.readAsString()).trim() == 'true';
+      }
+    } catch (_) {}
+    return false;
+  }
+
+  Future<void> saveChatSortByName(bool value) async {
+    try {
+      final file = await _file(_chatSortByNameFile);
+      await file.writeAsString('$value');
+    } catch (_) {}
+  }
+
   Future<File> _file(String name) async {
     final dir = await appDataDirectory();
     return File('${dir.path}/$name');

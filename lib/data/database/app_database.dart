@@ -424,7 +424,35 @@ class CommitmentScans extends Table {
   Set<Column> get primaryKey => {accountId, emailId};
 }
 
-@DriftDatabase(tables: [CachedEmails, CachedEmailDetails, KnownSenders, SenderAliases, CachedContacts, ContactSyncStates, DeltaSyncTokens, CachedFolders, LocalDrafts, CatalogCache, AiConfig, CapabilityRouting, ScheduledReminders, ScheduledTaskReminders, PendingOperations, CachedCalendarEvents, PendingCalendarOperations, MigrationJobs, MigrationMessageLedger, Commitments, CommitmentScans])
+/// The chat list one chat system last showed — an email account's own chat
+/// or a Slack workspace (`slack:{team}`) — so a chat window paints at once
+/// and the server's answer only refreshes it. One encrypted JSON blob per
+/// system: the list is always read and written whole.
+@DataClassName('CachedChatListRow')
+class CachedChatLists extends Table {
+  TextColumn get accountId => text()();
+  IntColumn get updatedAtMs => integer()();
+  TextColumn get encryptedData => text()();
+
+  @override
+  Set<Column> get primaryKey => {accountId};
+}
+
+/// The newest messages of one conversation, newest first, as one encrypted
+/// JSON blob — `ChatLocalDatasource.maxMessages` of them at most. Keyed by
+/// the conversation's `ChatConversation.key`.
+@DataClassName('CachedChatMessagesRow')
+class CachedChatMessages extends Table {
+  TextColumn get accountId => text()();
+  TextColumn get conversationKey => text()();
+  IntColumn get updatedAtMs => integer()();
+  TextColumn get encryptedData => text()();
+
+  @override
+  Set<Column> get primaryKey => {accountId, conversationKey};
+}
+
+@DriftDatabase(tables: [CachedEmails, CachedEmailDetails, KnownSenders, SenderAliases, CachedContacts, ContactSyncStates, DeltaSyncTokens, CachedFolders, LocalDrafts, CatalogCache, AiConfig, CapabilityRouting, ScheduledReminders, ScheduledTaskReminders, PendingOperations, CachedCalendarEvents, PendingCalendarOperations, MigrationJobs, MigrationMessageLedger, Commitments, CommitmentScans, CachedChatLists, CachedChatMessages])
 class AppDatabase extends _$AppDatabase
     implements
         DeltaTokenDatasource,
@@ -443,7 +471,7 @@ class AppDatabase extends _$AppDatabase
   AppDatabase.forTesting(super.executor);
 
   @override
-  int get schemaVersion => 21;
+  int get schemaVersion => 22;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -593,6 +621,10 @@ class AppDatabase extends _$AppDatabase
             // Additive: Inbox-only migration jobs. Same guard again — a
             // pre-v17 database created the table with this column already.
             await _addColumnIfMissing(m, migrationJobs, migrationJobs.scope);
+          }
+          if (from < 22) {
+            await m.createTable(cachedChatLists);
+            await m.createTable(cachedChatMessages);
           }
         },
       );

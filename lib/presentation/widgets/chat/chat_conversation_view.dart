@@ -370,10 +370,27 @@ class _MessageTile extends StatelessWidget {
                       color: c.badgeBg,
                       borderRadius: BorderRadius.circular(10),
                     ),
-                    child: Text(
-                      r.count > 1 ? '${r.emoji} ${r.count}' : r.emoji,
-                      style: const TextStyle(fontSize: 12),
-                    ),
+                    child: r.imageUrl == null
+                        ? Text(
+                            r.count > 1 ? '${r.emoji} ${r.count}' : r.emoji,
+                            style: const TextStyle(fontSize: 12),
+                          )
+                        : Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              ChatEmojiImage(
+                                src: r.imageUrl!,
+                                load: context
+                                    .read<ChatConversationCubit>()
+                                    .image,
+                                alt: r.emoji,
+                                size: 15,
+                              ),
+                              if (r.count > 1)
+                                Text(' ${r.count}',
+                                    style: const TextStyle(fontSize: 12)),
+                            ],
+                          ),
                   ),
               ],
             ),

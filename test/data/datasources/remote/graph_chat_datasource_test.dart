@@ -10,7 +10,8 @@ import 'package:nightmail/domain/entities/chat.dart';
 /// The chat datasource talks to Microsoft and to a NightMail Server with one
 /// set of requests, so what it asks for is pinned to what both accept
 /// (nightware ADR 0009): no `$filter`, newest-first ordering only, `$top` at
-/// most 50, members bound by address on the account's own Graph root.
+/// most 50, members bound by address on the account's own Graph root. The
+/// one exception is Microsoft-only: a chat's changes since a time.
 void main() {
   const root = 'https://mail.example.com/graph/v1.0';
   late List<RequestOptions> requests;
@@ -47,6 +48,61 @@ void main() {
     requests = [];
     routes = {};
     GraphChatDatasource.forgetIdentities();
+  });
+
+  group('changes since', () {
+    const chat =
+        ChatConversation(id: '19:c', kind: ChatKind.oneOnOne, title: 'Ann');
+    Map<String, dynamic> message(String id, String modified) => {
+          'id': id,
+          'messageType': 'message',
+          'createdDateTime': '2026-11-25T09:00:00Z',
+          'lastModifiedDateTime': modified,
+          'from': {
+            'user': {'id': 'u-ann', 'displayName': 'Ann'},
+          },
+          'body': {'contentType': 'text', 'content': 'hi'},
+        };
+
+    test('Microsoft filters on lastModifiedDateTime, ordered by it',
+        () async {
+      routes['/chats/19:c/messages'] = (o) {
+        expect(o.queryParameters[r'$orderby'], 'lastModifiedDateTime desc');
+        expect(
+            o.queryParameters[r'$filter'],
+            startsWith('lastModifiedDateTime gt 2026-11-25T09:00:00.000Z and '
+                'lastModifiedDateTime lt '));
+        return {
+          'value': [
+            message('1', '2026-11-25T09:05:00Z'),
+            message('2', '2026-11-25T09:07:00Z'),
+          ],
+        };
+      };
+      final d = await datasource(server: false)
+          .messagesSince(chat, DateTime.utc(2026, 11, 25, 9));
+      expect(d!.messages.map((m) => m.id), ['1', '2']);
+      expect(d.watermark, DateTime.utc(2026, 11, 25, 9, 7));
+      expect(d.complete, isTrue, reason: 'edits and reactions move it too');
+    });
+
+    test('a NightMail Server is never sent a filter', () async {
+      expect(
+          await datasource().messagesSince(chat, DateTime.utc(2026)), isNull);
+      expect(requests, isEmpty);
+    });
+
+    test('too many pages of changes is not a delta', () async {
+      routes['/chats/19:c/messages'] = (_) => {
+            'value': [message('1', '2026-11-25T09:05:00Z')],
+            '@odata.nextLink': '$root/chats/19:c/messages?\$skiptoken=x',
+          };
+      expect(
+          await datasource(server: false)
+              .messagesSince(chat, DateTime.utc(2026)),
+          isNull);
+      expect(requests, hasLength(4));
+    });
   });
 
   group('unread', () {
@@ -104,6 +160,17 @@ void main() {
           requests.where((r) => r.uri.path.endsWith('/me/chats')).single;
       expect(listing.uri.queryParameters[r'$expand'], 'lastMessagePreview');
       expect(listing.uri.queryParameters[r'$top'], '50');
+    });
+
+    test('a one-on-one listed without members is named by its sender',
+        () async {
+      routes['/me'] = (_) => {'id': 'u-me'};
+      routes['/me/chats'] = (_) => {
+            'value': [chat(), {...chat(sender: 'u-me'), 'id': '19:d'}],
+          };
+      final chats = await datasource().listRecentChats();
+      expect(chats.map((c) => c.title), ['X', 'Chat'],
+          reason: 'never the user\'s own name');
     });
 
     test('two accounts on one root never share an id', () async {

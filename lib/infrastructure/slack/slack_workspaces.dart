@@ -28,6 +28,7 @@ class SlackWorkspace {
     this.refreshToken,
     this.expiresAt,
     this.needsReconnect = false,
+    this.scopes,
   });
 
   final String teamId;
@@ -45,6 +46,15 @@ class SlackWorkspace {
   /// Slack refused the token (revoked, expired refresh token, app removed):
   /// the workspace stays listed, asking to be connected again.
   final bool needsReconnect;
+
+  /// The user scopes Slack granted, as `oauth.v2.access` reported them; null
+  /// for a workspace connected before they were recorded.
+  final Set<String>? scopes;
+
+  /// Granted everything this version asks for — false means connecting
+  /// again adds something (custom emoji: `emoji:read`). Unknown is false.
+  bool get hasAllScopes =>
+      scopes != null && SlackWorkspaces.userScopes.every(scopes!.contains);
 
   /// The chat id the repository and the UI know this workspace by.
   String get chatId => '$chatIdPrefix$teamId';
@@ -70,6 +80,7 @@ class SlackWorkspace {
         refreshToken: refreshToken ?? this.refreshToken,
         expiresAt: expiresAt ?? this.expiresAt,
         needsReconnect: needsReconnect ?? this.needsReconnect,
+        scopes: scopes,
       );
 
   Map<String, dynamic> toJson() => {
@@ -81,6 +92,7 @@ class SlackWorkspace {
         'refreshToken': ?refreshToken,
         'expiresAt': ?expiresAt?.toUtc().toIso8601String(),
         'needsReconnect': needsReconnect,
+        'scopes': ?scopes?.toList(),
       };
 
   static SlackWorkspace? fromJson(Object? json) {
@@ -96,6 +108,7 @@ class SlackWorkspace {
       refreshToken: json['refreshToken'] as String?,
       expiresAt: DateTime.tryParse(json['expiresAt'] as String? ?? ''),
       needsReconnect: json['needsReconnect'] == true,
+      scopes: (json['scopes'] as List?)?.whereType<String>().toSet(),
     );
   }
 }
@@ -147,7 +160,8 @@ class SlackWorkspaces {
   /// `chat.postMessage` (`chat:write`), `conversations.open` and
   /// `conversations.mark` on direct messages (`im:write`, `mpim:write` —
   /// channels are never marked, so no `channels:write`), `url_private` images
-  /// (`files:read`) and `search.messages` (`search:read`).
+  /// (`files:read`), `search.messages` (`search:read`) and the workspace's own
+  /// emoji, `emoji.list` (`emoji:read`).
   static const userScopes = [
     'channels:read',
     'groups:read',
@@ -164,6 +178,7 @@ class SlackWorkspaces {
     'mpim:write',
     'files:read',
     'search:read',
+    'emoji:read',
   ];
 
   final _changes = StreamController<void>.broadcast();
@@ -359,6 +374,11 @@ class SlackWorkspaces {
       accessToken: token.accessToken,
       refreshToken: token.refreshToken,
       expiresAt: token.expiresAt,
+      scopes: (user['scope'] as String?)
+          ?.split(',')
+          .map((s) => s.trim())
+          .where((s) => s.isNotEmpty)
+          .toSet(),
     );
     await _put(workspace);
     return workspace;

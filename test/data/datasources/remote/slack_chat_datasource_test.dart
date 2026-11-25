@@ -103,6 +103,7 @@ void main() {
               'reply_count': 3,
               'reactions': [
                 {'name': '+1', 'count': 2},
+                {'name': 'thumbsup::skin-tone-2', 'count': 1},
               ],
             },
             {'ts': '1700000000.000100', 'subtype': 'channel_join', 'text': 'x'},
@@ -120,7 +121,10 @@ void main() {
     expect(m.senderName, 'Ann');
     expect(m.senderUserId, 'UANN');
     expect(m.replyCount, 3);
-    expect(m.reactions.single, const ChatReaction(emoji: '👍', count: 2));
+    expect(m.reactions, const [
+      ChatReaction(emoji: '👍', count: 2),
+      ChatReaction(emoji: '👍🏻', count: 1),
+    ]);
     expect(m.bodyHtml, contains('<b>@Me</b>'));
     expect(m.bodyHtml,
         contains('<a href="https://x.test/a?b=1&amp;c=2">the doc</a>'));
@@ -147,12 +151,120 @@ void main() {
           reason: 'only http(s) and mailto become links');
     });
 
+    test('every standard shortcode is an emoji, skin tones joined', () {
+      expect(html(':smile: :tada::tada: :pinched_fingers:'), '😄 🎉🎉 🤌');
+      expect(html(':wave::skin-tone-3:'), '👋🏼');
+      expect(html(':woman-raising-hand::skin-tone-3:'),
+          '\u{1F64B}\u{1F3FC}\u{200D}\u{2640}\u{FE0F}',
+          reason: 'in a joined emoji the tone follows the person');
+      expect(html(':partyparrot:'), ':partyparrot:',
+          reason: 'a workspace\'s own emoji is not a character');
+    });
+
+    test('shortcodes are left alone in code, words and times', () {
+      expect(html('`:x:` and ```:x:```'),
+          '<code>:x:</code> and <pre>:x:</pre>');
+      expect(html('a:b:c at 10:30:00'), 'a:b:c at 10:30:00');
+      expect(html('<https://x.test/a:b:c|:b: link>'),
+          '<a href="https://x.test/a:b:c">:b: link</a>',
+          reason: 'a link is not reformatted, its target least of all');
+    });
+
     test('Slack\'s own escapes survive as text', () {
       expect(html('a &lt;b&gt; &amp; c'), 'a &lt;b&gt; &amp; c');
     });
 
     test('sent text is escaped as Slack expects', () {
       expect(SlackChatDatasource.escapeText('a<b>&c'), 'a&lt;b&gt;&amp;c');
+    });
+  });
+
+  group('custom emoji', () {
+    const general = ChatConversation(
+        id: 'C1', kind: ChatKind.space, title: '#general', threaded: true);
+
+    void history(Map<String, dynamic> message) {
+      routes['conversations.history'] =
+          (_) => {'ok': true, 'messages': [message]};
+      routes['users.info'] = (_) => user('UANN', 'Ann');
+    }
+
+    test('a workspace\'s own emoji is its picture, aliases followed',
+        () async {
+      routes['emoji.list'] = (_) => {
+            'ok': true,
+            'emoji': {
+              'party_parrot': 'https://emoji.slack-edge.com/T1/party_parrot/a_b.gif',
+              'pp': 'alias:party_parrot',
+              'yes': 'alias:white_check_mark',
+            },
+          };
+      history({
+        'ts': '1.1',
+        'user': 'UANN',
+        'text': ':party_parrot: :pp: :yes: _done_',
+        'reactions': [
+          {'name': 'pp', 'count': 3},
+        ],
+      });
+      final m = (await datasource().messages(general)).messages.single;
+      const img = '<img data-emoji="1" '
+          'src="https://emoji.slack-edge.com/T1/party_parrot/a_b.gif"';
+      expect(m.bodyHtml, startsWith('$img alt=":party_parrot:"> '
+          '$img alt=":pp:"> ✅ <i>done</i>'),
+          reason: 'the underscores in its URL are not italics');
+      expect(m.reactions.single.imageUrl,
+          'https://emoji.slack-edge.com/T1/party_parrot/a_b.gif');
+      expect(m.reactions.single.count, 3);
+    });
+
+    test('a token without emoji:read keeps working, without them', () async {
+      routes['emoji.list'] = (_) => {'ok': false, 'error': 'missing_scope'};
+      history({'ts': '1.1', 'user': 'UANN', 'text': ':party_parrot:'});
+      final m = (await datasource().messages(general)).messages.single;
+      expect(m.bodyHtml, ':party_parrot:');
+      expect((await workspaces.byTeam('T1'))!.needsReconnect, isFalse,
+          reason: 'custom emoji are an extra, not a reason to reconnect');
+    });
+
+    test('the list is read once, not per page', () async {
+      routes['emoji.list'] = (_) => {'ok': true, 'emoji': {}};
+      history({'ts': '1.1', 'user': 'UANN', 'text': 'hi'});
+      await datasource().messages(general);
+      await datasource().messages(general);
+      expect(
+          requests.where((r) => r.uri.pathSegments.last == 'emoji.list'),
+          hasLength(1));
+    });
+  });
+
+  group('changes since', () {
+    const dm = ChatConversation(id: 'D1', kind: ChatKind.oneOnOne, title: 'Ann');
+
+    test('asks from the watermark and returns the newest ts as the next',
+        () async {
+      routes['conversations.history'] = (o) {
+        expect(o.queryParameters['oldest'], '1700000000.000100');
+        return {
+          'ok': true,
+          'messages': [
+            {'ts': '1700000000.000300', 'user': 'UANN', 'text': 'new :wave:'},
+          ],
+          'has_more': false,
+        };
+      };
+      routes['users.info'] = (_) => user('UANN', 'Ann');
+      final d = await datasource().messagesSince(
+          dm, DateTime.fromMicrosecondsSinceEpoch(1700000000000100));
+      expect(d!.messages.single.bodyHtml, 'new 👋');
+      expect(d.watermark, DateTime.fromMicrosecondsSinceEpoch(1700000000000300));
+      expect(d.complete, isFalse, reason: 'edits and reactions do not show');
+    });
+
+    test('more than a page since is not a delta', () async {
+      routes['conversations.history'] =
+          (_) => {'ok': true, 'messages': [], 'has_more': true};
+      expect(await datasource().messagesSince(dm, DateTime(2026)), isNull);
     });
   });
 

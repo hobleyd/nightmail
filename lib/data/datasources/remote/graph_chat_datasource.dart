@@ -259,6 +259,50 @@ class GraphChatDatasource implements ChatRemoteDatasource {
     return ChatMessagePage(messages: messages, nextLink: _nextLink(data));
   }
 
+  /// How many pages of changes one delta reads before giving up on it: past
+  /// this much churn a fresh first page is cheaper and just as right.
+  static const _deltaPages = 4;
+
+  /// A chat's changes by `lastModifiedDateTime`, which a new message, an
+  /// edit, a deletion and a reaction all move. Graph filters on it only
+  /// ordered by it, and only as a range — hence the `lt` a day ahead.
+  /// Channels have no such filter, and a NightMail Server answers any
+  /// `$filter` with 400 (nightware's phase-23 known gaps): null, a full page.
+  @override
+  Future<ChatMessageDelta?> messagesSince(
+      ChatConversation conversation, DateTime since) async {
+    if (conversation.isChannel || isNightmailServer) return null;
+    String stamp(DateTime t) => t.toUtc().toIso8601String();
+    final until = DateTime.now().add(const Duration(days: 1));
+    final raw = <Map<String, dynamic>>[];
+    String? next = '/chats/${conversation.id}/messages';
+    Map<String, dynamic>? query = {
+      r'$top': 50,
+      r'$orderby': 'lastModifiedDateTime desc',
+      r'$filter': 'lastModifiedDateTime gt ${stamp(since)} and '
+          'lastModifiedDateTime lt ${stamp(until)}',
+    };
+    for (var page = 0; next != null; page++) {
+      if (page == _deltaPages) return null;
+      final data = await _get(next, query: query);
+      query = null;
+      raw.addAll(_values(data));
+      next = _nextLink(data);
+    }
+    DateTime? watermark;
+    for (final m in raw) {
+      final t = DateTime.tryParse(m['lastModifiedDateTime'] as String? ?? '');
+      if (t != null && (watermark == null || t.isAfter(watermark))) {
+        watermark = t;
+      }
+    }
+    return ChatMessageDelta(
+      messages: raw.map(_parseMessage).toList(),
+      watermark: watermark,
+      complete: true,
+    );
+  }
+
   @override
   Future<List<ChatMessage>> replies(
     ChatConversation channel,
@@ -464,7 +508,7 @@ class GraphChatDatasource implements ChatRemoteDatasource {
                 .join(', ')
             : (topic?.isNotEmpty ?? false)
                 ? topic!
-                : 'Chat';
+                : _previewSender(raw, ownId) ?? 'Chat';
     final preview = raw['lastMessagePreview'];
     final previewAt = preview is Map<String, dynamic>
         ? _date(preview['createdDateTime'])
@@ -481,6 +525,19 @@ class GraphChatDatasource implements ChatRemoteDatasource {
       members: others,
       unread: ownId != null && isUnread(raw, ownId),
     );
+  }
+
+  /// The one-on-one listing without members (the unread poll's) is named by
+  /// whoever wrote its newest message, when that is not the user — in an
+  /// unread one-on-one, always the other person.
+  static String? _previewSender(Map<String, dynamic> raw, String? ownId) {
+    if (raw['chatType'] != 'oneOnOne') return null;
+    final preview = raw['lastMessagePreview'];
+    final from = preview is Map ? preview['from'] : null;
+    final user = from is Map ? from['user'] : null;
+    if (user is! Map || user['id'] == null || user['id'] == ownId) return null;
+    final name = (user['displayName'] as String?)?.trim();
+    return name == null || name.isEmpty ? null : name;
   }
 
   /// Someone other than [ownId] wrote the newest message, after the user's

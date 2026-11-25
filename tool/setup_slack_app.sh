@@ -24,6 +24,14 @@
 #   tool/setup_slack_app.sh
 #     With no token, opens Slack's "Create an app from a manifest" page with
 #     the manifest filled in instead.
+#   SLACK_CONFIG_TOKEN=xoxe.xoxp-… tool/setup_slack_app.sh --update A0123…
+#     Brings an app made earlier up to this manifest (apps.manifest.update) —
+#     a scope NightMail added since (emoji:read, for custom emoji). The app
+#     id is on the app's Basic Information page. Then reconnect the
+#     workspace in NightMail (Settings > General > Slack > Reconnect): a
+#     token only gains a scope by signing in again.
+#   tool/setup_slack_app.sh --update A0123…
+#     With no token, opens that app's manifest page to paste it in by hand.
 #
 # Then install the app to the workspace (OAuth & Permissions > Install). A
 # workspace that requires app approval sends that to its admins first.
@@ -35,6 +43,36 @@ command -v python3 >/dev/null 2>&1 || {
   echo "python3 is required" >&2
   exit 2
 }
+
+if [ "${1:-}" = "--update" ]; then
+  APP_ID="${2:?usage: tool/setup_slack_app.sh --update <app id>}"
+  if [ -z "${SLACK_CONFIG_TOKEN:-}" ]; then
+    echo "Opening the app's manifest page. Replace the manifest with"
+    echo "${MANIFEST} (or add the missing user scopes), save, then reinstall"
+    echo "the app if Slack asks and reconnect the workspace in NightMail."
+    URL="https://app.slack.com/app-settings/${APP_ID}/app-manifest"
+    open "$URL" 2>/dev/null || xdg-open "$URL" 2>/dev/null || echo "$URL"
+    exit 0
+  fi
+  RESPONSE="$(curl -sS https://slack.com/api/apps.manifest.update \
+    -H "Authorization: Bearer ${SLACK_CONFIG_TOKEN}" \
+    --data-urlencode "app_id=${APP_ID}" \
+    --data-urlencode "manifest@${MANIFEST}")"
+  python3 - "$RESPONSE" <<'PY'
+import json, sys
+r = json.loads(sys.argv[1])
+if not r.get("ok"):
+    print("Slack refused the update:", r.get("error"), file=sys.stderr)
+    for e in r.get("errors", []):
+        print("  ", e.get("pointer", ""), e.get("message", ""), file=sys.stderr)
+    sys.exit(1)
+print("Updated the Slack app.")
+if r.get("permissions_updated"):
+    print("Its scopes changed: reinstall it if Slack asks, then in NightMail")
+    print("Settings > General > Slack > Reconnect.")
+PY
+  exit 0
+fi
 
 if [ -n "${SLACK_CONFIG_TOKEN:-}" ]; then
   RESPONSE="$(curl -sS https://slack.com/api/apps.manifest.create \

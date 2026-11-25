@@ -124,18 +124,95 @@ scopes — and the next refresh would drop them again. `requestChatAccess` in a
 sub-window goes over `ChatConsentChannel` and waits for the main window's
 answer (`home_page.dart` registers the listener).
 
-## No push; polling
+## Cache on disk
+
+Every list and conversation paints from disk first, then the server's answer
+replaces it (`ChatLocalDatasource`, schema v22 `cached_chat_lists` /
+`cached_chat_messages`). Keyed by chat id (an account id or `slack:{team}`),
+one **encrypted** JSON blob per list and per conversation — the same
+`CacheEncryptionService` as mail, so no message text is readable in the
+file; a blob that will not decrypt is a miss. A conversation keeps its newest
+`maxMessages` (100). Pagination cursors are never stored (Graph's skiptokens
+expire): "load older" always continues from the fresh page.
+
+- **Opening** (`ChatConversationCubit._load`): the cache paints, then the
+  newest page is joined onto it — only where they meet (`joinCached`). A
+  page that ends after the newest cached message (more arrived than a page
+  holds) or that is the whole history stands alone; anything else would
+  show a gap as if nothing were missing, or keep a deleted message. Offline,
+  the cache stands with the error above it. The cache holds *rendered*
+  bodies, so "load older" lets the server's copy of a message the cache
+  supplied replace it (edits, reactions, a custom emoji the cached rendering
+  predates) rather than deduplicating in the cache's favour.
+- **The list** (`ChatListCubit.load`) paints `cachedConversations` while
+  access and the listing are asked. Listings with no activity (channels,
+  every Slack conversation) take it from the cache on disk, so the order
+  survives a restart; the Slack activity fill still re-reads up to 40 per
+  load, cache-known ones included — their activity may be days old. Writes
+  of the list wait out a 2 s burst (`_saveList`) rather than encrypting it
+  once per filled conversation.
+- **The pane's one-on-one** (`findOneOnOne` on Graph and Google, which scan
+  the list): a hit in the in-memory list, or the cached one after a restart,
+  opens at once — a one-on-one's id never changes — and the listing
+  refreshes behind it. Only a miss waits for the server.
+- **Removal:** `AccountCubit.removeAccount` and Slack disconnect call
+  `ChatRepository.forgetAccount`.
+
+## No push; polling, with deltas where the provider has them
 
 Graph change notifications need a webhook and Nightware leaves chat
-notifications out (ADR 0009 D1). The open conversation is re-read every 10 s
-(`ChatConversationCubit.pollInterval`) and merged over what is shown; the
-window's list every 60 s. Channel listings carry no activity, so each
+notifications out (ADR 0009 D1). The open conversation is polled every 10 s
+(`ChatConversationCubit.pollInterval`) — for what changed since a
+**watermark**, the newest *server* timestamp seen (never the device clock,
+whose skew would silently drop messages):
+
+| Provider | `messagesSince` | Edits/reactions? |
+|---|---|---|
+| Microsoft 365 chats | `$orderby=lastModifiedDateTime desc` + `$filter=… gt X and … lt X+1d` (Graph filters only ordered by the same property, only as a range) | yes — `complete` |
+| Teams channels, NightMail Server | none (nightware answers any `$filter` with 400) | — |
+| Slack | `conversations.history?oldest=` | no |
+| Google Chat (unthreaded) | `filter=createTime > "…"` | no |
+
+A delta is merged by id — except a message older than anything shown:
+Graph's delta reports a reaction to one weeks back, and inserting it would
+sit an orphan under the history with a gap above it; "load older" reaches it
+in its place. More than a page of changes (Slack `has_more`,
+Google `nextPageToken`, Graph past four pages) is not trusted: null, and the
+newest page is read instead. Where deltas only bring new messages, every
+`fullPageEvery` (6th) poll reads the full page anyway, for edits, deletions,
+reactions and reply counts. A server that refuses a delta with 400/405/501
+is asked for pages from then on (`ChatRepository._noDelta`). Slack's limit
+counts calls, not bytes, so its delta saves parsing, not quota — the speed
+users feel is the cache. The window's list is re-read every 60 s; no
+provider has a delta for listing chats. Channel listings carry no activity, so each
 channel's newest post is read once per window load, four at a time, and the
 list re-sorts as they land. Every async result is checked against a
 generation counter — a reply for a conversation or account the user has moved
 off is dropped.
 
-## Unread dot
+## Unread dot, bold rows, and unread chats in the pane
+
+Everything unread comes from one place, `ChatRepository.unreadConversations`
+(the recent listing below, minus chats marked read here, titled and given
+members from the full list — in memory or the cache on disk — since the
+recent listing has none). Where neither knows the chat, an unread
+one-on-one is named by its newest message's sender — in an unread
+one-on-one always the other person (Graph: `lastMessagePreview.from`;
+Google: the newest message the unread check already reads, remembered in
+`_titles`). `unreadCount` is its length.
+
+- **The chat window** bolds a row (and gives it a dot) only when the poll
+  names it: `ChatListCubit` lays the poll's keys over every listing
+  (`_withUnread`), because Slack's and Google's full listings carry no read
+  state and Graph's ignores marks made a moment ago. Opening a row un-bolds
+  it at once (`select`). The sort — most recent first or by name — is a menu
+  beside search (`ChatListState.sortByName`), remembered in
+  `AppSettings.chat_sort_by_name`.
+- **The pane's dropdown** offers, under the email's people, the chosen
+  system's unread chats (`ChatUnreadState.unreadChats`), less any
+  one-on-one with someone already listed. Picking one opens it in place;
+  once read it stays in the dropdown until something else is picked, and a
+  new email (or another system) goes back to the email's people.
 
 The Chat button carries the Tasks button's red dot while any of the active
 account's recent chats is unread (`ChatUnreadCubit`, main window only).
@@ -361,9 +438,35 @@ than falling into an account lookup that answers null.
   `last_read`, checked against the messages after it.
 - **Bodies** are mrkdwn (`mrkdwnToHtml`): Slack sends `&`, `<`, `>` escaped,
   so the only raw `<…>` are its controls — `<@U…>` (named from `_users`),
-  `<#C…|name>`, `<!here>`, `<url|label>` (http(s)/mailto only). Common
-  `:shortcodes:` become emoji; others stay as text. Outgoing text escapes
-  `&<>` and is otherwise mrkdwn as typed.
+  `<#C…|name>`, `<!here>`, `<url|label>` (http(s)/mailto only).
+  `:shortcodes:` become emoji from the full standard table
+  (`lib/core/text/emoji_shortcodes.dart`, generated from iamcal/emoji-data —
+  Slack's own names — by `tool/generate_emoji_shortcodes.py`; never edit by
+  hand), skin tones joined (`:wave::skin-tone-3:`, a reaction's
+  `thumbsup::skin-tone-2`). Not inside code, and not glued to a word or
+  digit (`a:b:c`, `10:30:00`), which is what keeps one-letter names like
+  `:a:`/`:b:` from eating text. Shortcodes are replaced *before* mrkdwn,
+  while code still has its backticks; link targets never pass through it.
+  Outgoing text escapes `&<>` and is otherwise mrkdwn as typed.
+- **Custom emoji** (the workspace's own): `emoji.list` (`emoji:read`, Tier
+  2), once an hour per workspace per isolate, aliases followed — to another
+  picture, or to a standard emoji's characters (`resolveCustomEmoji`). In a
+  body one becomes `<img data-emoji src alt=":name:">`, which
+  `ChatMessageBody` draws as a `ChatEmojiImage` at 1.35× the text, not as a
+  tappable picture; a reaction carries it as `ChatReaction.imageUrl`. The
+  `<img>` waits behind a private-use placeholder while `_format` runs, or
+  `_italics_` would eat the underscores in its URL. `emoji.slack-edge.com`
+  is public https, so the images go without the token.
+- **A scope added later** (`emoji:read`): a token without it answers
+  `emoji.list` with `missing_scope`, which — for that method only — is
+  *not* a reconnect (`_call`): chat keeps working, names stay `:name:`.
+  Each workspace records the scopes it was granted (`authed_user.scope`,
+  `SlackWorkspace.scopes`); one missing any of `userScopes` shows
+  "Reconnect" in Settings (`ChatSource.missingScopes`). The Slack *app*
+  must have the scope first, or Slack's sign-in page refuses the request:
+  `tool/setup_slack_app.sh --update <app id>` brings an app made earlier up
+  to the manifest. Adding a scope again means all three: manifest,
+  `userScopes`, and this.
 - **Images:** files on `files.slack.com` are fetched with the token (their
   `thumb_720`); anything else, including avatars, over https without it.
 - **Search:** `search.messages` (Tier 2, user tokens), so

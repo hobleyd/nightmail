@@ -22,6 +22,7 @@ class ChatSource extends Equatable {
     required this.kind,
     required this.label,
     this.needsReconnect = false,
+    this.missingScopes = false,
   });
 
   final String id;
@@ -33,13 +34,17 @@ class ChatSource extends Equatable {
   /// A Slack workspace whose token Slack no longer accepts.
   final bool needsReconnect;
 
+  /// A Slack workspace connected before this version asked for something
+  /// more (custom emoji): it works, and connecting again adds the rest.
+  final bool missingScopes;
+
   bool get isSlack => kind == ChatSourceKind.slack;
 
   /// Whether a chat id names a Slack workspace rather than an email account.
   static bool isSlackId(String? id) => id?.startsWith('slack:') ?? false;
 
   @override
-  List<Object?> get props => [id, kind, label, needsReconnect];
+  List<Object?> get props => [id, kind, label, needsReconnect, missingScopes];
 }
 
 /// One person in a conversation.
@@ -151,13 +156,17 @@ class ChatConversation extends Equatable {
 
 /// One emoji reaction and how many gave it.
 class ChatReaction extends Equatable {
-  const ChatReaction({required this.emoji, required this.count});
+  const ChatReaction({required this.emoji, required this.count, this.imageUrl});
 
+  /// The character(s), or — for a workspace's own emoji — its `:name:`.
   final String emoji;
   final int count;
 
+  /// A workspace's own emoji (Slack): the picture to show instead of [emoji].
+  final String? imageUrl;
+
   @override
-  List<Object?> get props => [emoji, count];
+  List<Object?> get props => [emoji, count, imageUrl];
 }
 
 /// A message in a chat, or a post or reply in a channel.
@@ -279,4 +288,31 @@ class ChatSearchHit extends Equatable {
 
   @override
   List<Object?> get props => [message, chatId, teamId, channelId];
+}
+
+/// What changed in a conversation since a point in time
+/// ([ChatRemoteDatasource.messagesSince]): new messages, and — where the
+/// provider can tell — edited, deleted and reacted-to ones.
+class ChatMessageDelta extends Equatable {
+  const ChatMessageDelta({
+    required this.messages,
+    this.watermark,
+    this.complete = false,
+  });
+
+  /// Top-level messages, any order; each replaces the one with its id.
+  final List<ChatMessage> messages;
+
+  /// The newest server timestamp among [messages] — what the next delta asks
+  /// from, so the device's clock never decides what is missed. Null when
+  /// nothing changed, which leaves the previous one standing.
+  final DateTime? watermark;
+
+  /// Whether this delta also reports edits, deletions and reactions to older
+  /// messages (Graph's `lastModifiedDateTime`). Slack's and Google's only
+  /// bring new messages, so a full page is still read now and then.
+  final bool complete;
+
+  @override
+  List<Object?> get props => [messages, watermark, complete];
 }

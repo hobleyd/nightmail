@@ -179,4 +179,13 @@ class _Repo extends Fake implements ChatRepository {
 
   @override
   Future<Uint8List?> image(String accountId, String src) async => null;
+
+  @override
+  Future<List<ChatMessage>> cachedMessages(
+          String accountId, ChatConversation conversation) async =>
+      const [];
+
+  @override
+  Future<void> cacheMessages(String accountId, ChatConversation conversation,
+      List<ChatMessage> messages) async {}
 }

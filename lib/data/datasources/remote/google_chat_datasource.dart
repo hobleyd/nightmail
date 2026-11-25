@@ -124,7 +124,8 @@ class GoogleChatDatasource implements ChatRemoteDatasource {
           return;
         }
         try {
-          final value = await _isUnread(name, active, own);
+          final value = await _isUnread(name, active, own,
+              direct: s['spaceType'] == 'DIRECT_MESSAGE');
           _readStates[key] = (active: active, unread: value);
           unread[name] = value;
         } on ServerException {
@@ -139,7 +140,10 @@ class GoogleChatDatasource implements ChatRemoteDatasource {
     ];
   }
 
-  Future<bool> _isUnread(String space, String active, String own) async {
+  /// A direct message has no name of its own; when its newest message is
+  /// the other person's, that names it ([direct]).
+  Future<bool> _isUnread(String space, String active, String own,
+      {bool direct = false}) async {
     final state = await _get('/users/me/$space/spaceReadState');
     final read = _date(state['lastReadTime']);
     final last = _date(active);
@@ -150,6 +154,15 @@ class GoogleChatDatasource implements ChatRemoteDatasource {
     }))['messages']);
     final sender = newest.firstOrNull?['sender'];
     final from = sender is Map ? sender['name'] as String? : null;
+    final senderName =
+        sender is Map ? (sender['displayName'] as String?)?.trim() : null;
+    if (direct &&
+        from != null &&
+        from != own &&
+        senderName != null &&
+        senderName.isNotEmpty) {
+      _titles.putIfAbsent(space, () => senderName);
+    }
     return from != null && from != own;
   }
 
@@ -257,6 +270,31 @@ class GoogleChatDatasource implements ChatRemoteDatasource {
     }
     messages.sort((a, b) => b.createdAt.compareTo(a.createdAt));
     return ChatMessagePage(messages: messages, nextLink: next);
+  }
+
+  /// Messages created since [since] (`filter=createTime > …`). Edits and
+  /// reactions do not show, so the repository still reads a full page now
+  /// and then. A threaded space lists replies as messages of their own,
+  /// which belong under posts this cannot see: null, a full page.
+  @override
+  Future<ChatMessageDelta?> messagesSince(
+      ChatConversation conversation, DateTime since) async {
+    if (conversation.hasThreads) return null;
+    final data = await _get('/${conversation.id}/messages', query: {
+      'pageSize': 50,
+      'orderBy': 'createTime DESC',
+      'filter': 'createTime > "${since.toUtc().toIso8601String()}"',
+    });
+    // A full page may have more behind it: not a delta to trust.
+    final token = data['nextPageToken'] as String?;
+    if (token != null && token.isNotEmpty) return null;
+    final messages = _list(data['messages']).map(_parseMessage).toList();
+    return ChatMessageDelta(
+      messages: messages,
+      watermark: messages
+          .map((m) => m.createdAt)
+          .fold<DateTime?>(null, (a, b) => a == null || b.isAfter(a) ? b : a),
+    );
   }
 
   @override

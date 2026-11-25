@@ -66,6 +66,11 @@ abstract interface class ChatRepository {
     bool refresh = false,
   });
 
+  /// The list [conversations] last answered, from the encrypted cache on
+  /// disk — what a window paints while the server is asked. Empty when
+  /// nothing is cached.
+  Future<List<ChatConversation>> cachedConversations(String accountId);
+
   /// [conversation] with [ChatConversation.lastActivity] read from its newest
   /// post; channels list without it.
   Future<Either<Failure, ChatConversation>> channelActivity(
@@ -77,6 +82,10 @@ abstract interface class ChatRepository {
   /// the user last read them — the dot on the Chat button. Zero for an
   /// account without chat access (never asks for consent) and on any error.
   Future<int> unreadCount(String accountId);
+
+  /// The chats [unreadCount] counts, titled as the conversation list titles
+  /// them, newest first.
+  Future<List<ChatConversation>> unreadConversations(String accountId);
 
   /// Records [conversation] as read on the server. Best effort: a refusal
   /// leaves the dot until the chat is read elsewhere.
@@ -111,6 +120,32 @@ abstract interface class ChatRepository {
     ChatConversation conversation, {
     String? nextLink,
   });
+
+  /// What changed in [conversation] since [since] (a previous
+  /// [ChatMessageDelta.watermark]); Right(null) when the provider cannot say,
+  /// and [messages] has to be read instead.
+  Future<Either<Failure, ChatMessageDelta?>> messagesSince(
+    String accountId,
+    ChatConversation conversation,
+    DateTime since,
+  );
+
+  /// The newest messages last shown for [conversation], newest first, from
+  /// the encrypted cache on disk. Empty when nothing is cached.
+  Future<List<ChatMessage>> cachedMessages(
+    String accountId,
+    ChatConversation conversation,
+  );
+
+  /// Keeps [messages] (newest first) as what [conversation] last showed.
+  Future<void> cacheMessages(
+    String accountId,
+    ChatConversation conversation,
+    List<ChatMessage> messages,
+  );
+
+  /// Drops everything cached for a removed account.
+  Future<void> forgetAccount(String accountId);
 
   /// A post's replies, oldest first (conversations with threads only).
   Future<Either<Failure, List<ChatMessage>>> replies(

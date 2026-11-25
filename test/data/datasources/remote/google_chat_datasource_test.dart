@@ -51,6 +51,45 @@ void main() {
     GoogleChatDatasource.forgetIdentities();
   });
 
+  group('changes since', () {
+    test('a DM asks for what was created after the watermark', () async {
+      routes['spaces/D/messages'] = (o) {
+        expect(o.queryParameters['filter'],
+            'createTime > "2026-11-25T09:00:00.000Z"');
+        return {
+          'messages': [
+            {
+              'name': 'spaces/D/messages/m2',
+              'createTime': '2026-11-25T09:02:00Z',
+              'sender': {'name': 'users/1', 'displayName': 'Ann'},
+              'text': 'hi',
+            },
+          ],
+        };
+      };
+      final d = await datasource().messagesSince(
+          const ChatConversation(
+              id: 'spaces/D', kind: ChatKind.oneOnOne, title: 'Ann'),
+          DateTime.utc(2026, 11, 25, 9));
+      expect(d!.messages.single.id, 'spaces/D/messages/m2');
+      expect(d.watermark!.isAtSameMomentAs(DateTime.utc(2026, 11, 25, 9, 2)),
+          isTrue);
+    });
+
+    test('a threaded space reads full pages', () async {
+      expect(
+          await datasource().messagesSince(
+              const ChatConversation(
+                  id: 'spaces/S',
+                  kind: ChatKind.space,
+                  title: 'S',
+                  threaded: true),
+              DateTime.utc(2026)),
+          isNull);
+      expect(requests, isEmpty);
+    });
+  });
+
   group('unread', () {
     Map<String, dynamic> space(String id, String active) => {
           'name': 'spaces/$id',
@@ -91,6 +130,29 @@ void main() {
           requests.where((r) => r.uri.path.endsWith('/spaces/read/messages')),
           isEmpty,
           reason: 'read up to its last activity: no message lookup');
+    });
+
+    test('an unread direct message is named by who wrote it', () async {
+      serve(newestSender: 'users/ann');
+      routes['/spaces'] = (_) => {
+            'spaces': [
+              {
+                'name': 'spaces/fresh',
+                'spaceType': 'DIRECT_MESSAGE',
+                'lastActiveTime': '2026-11-25T10:00:00Z',
+              },
+            ],
+          };
+      routes['/spaces/fresh/messages'] = (_) => {
+            'messages': [
+              {
+                'name': 'spaces/fresh/messages/m',
+                'sender': {'name': 'users/ann', 'displayName': 'Ann Lee'},
+              },
+            ],
+          };
+      final chats = await datasource().listRecentChats();
+      expect(chats.single.title, 'Ann Lee');
     });
 
     test('the user\'s own last message is not unread', () async {

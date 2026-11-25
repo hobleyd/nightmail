@@ -14,6 +14,7 @@ import '../../domain/repositories/contact_cache_repository.dart';
 import '../../infrastructure/accounts/account.dart';
 import '../../infrastructure/accounts/account_manager.dart';
 import '../../infrastructure/slack/slack_workspaces.dart';
+import '../datasources/local/chat_local_datasource.dart';
 import '../datasources/remote/chat_remote_datasource.dart';
 import '../datasources/remote/slack_chat_datasource.dart';
 
@@ -22,12 +23,14 @@ class ChatRepositoryImpl implements ChatRepository {
     required AccountManager accountManager,
     required ContactCacheRepository contacts,
     required this._slack,
+    required this._local,
   })  : _accounts = accountManager,
         _contacts = contacts;
 
   final AccountManager _accounts;
   final ContactCacheRepository _contacts;
   final SlackWorkspaces _slack;
+  final ChatLocalDatasource _local;
 
   /// The datasource behind a chat id: a Slack workspace for `slack:{team}`,
   /// otherwise the email account's own chat (null where it has none).
@@ -66,6 +69,7 @@ class ChatRepositoryImpl implements ChatRepository {
         kind: ChatSourceKind.slack,
         label: 'Slack · ${w.teamName}',
         needsReconnect: w.needsReconnect,
+        missingScopes: !w.hasAllScopes,
       ));
     }
     return out;
@@ -97,7 +101,7 @@ class ChatRepositoryImpl implements ChatRepository {
   Future<void> disconnectSlack(String sourceId) async {
     final team = SlackWorkspace.teamIdOf(sourceId);
     if (team == null) return;
-    _conversations.remove(sourceId);
+    await forgetAccount(sourceId);
     await _slack.remove(team);
   }
 
@@ -198,17 +202,79 @@ class ChatRepositoryImpl implements ChatRepository {
           }
         }
         // Channels list without activity, and Slack lists nothing with it:
-        // whatever has been learned of either is kept across refreshes.
+        // whatever has been learned of either is kept across refreshes —
+        // this session's first, then what the cache on disk last knew.
+        final known = await _cachedActivity(accountId);
         final merged = [
           for (final c in [...chats, ...channels])
             c.lastActivity == null
-                ? _channelActivity['$accountId|${c.key}'] ?? c
+                ? _channelActivity['$accountId|${c.key}'] ??
+                    _withActivityOf(c, known[c.key])
                 : c,
         ]..sort(_byActivity);
         _conversations[accountId] = merged;
         _listedAt[accountId] = DateTime.now();
+        _saveList(accountId);
         return merged;
       });
+
+  /// Activity the cache on disk holds for [accountId]'s conversations, by
+  /// key — read once per session, for conversations a listing gives none.
+  final _diskActivity = <String, Map<String, ChatConversation>>{};
+
+  Future<Map<String, ChatConversation>> _cachedActivity(
+      String accountId) async {
+    final known = _diskActivity[accountId];
+    if (known != null) return known;
+    final cached = await _readCachedList(accountId);
+    return _diskActivity[accountId] = {
+      for (final c in cached)
+        if (c.lastActivity != null) c.key: c,
+    };
+  }
+
+  /// [c] as listed, with the activity and preview [known] last had.
+  static ChatConversation _withActivityOf(
+          ChatConversation c, ChatConversation? known) =>
+      known == null
+          ? c
+          : c.copyWith(
+              lastActivity: known.lastActivity,
+              lastMessagePreview: known.lastMessagePreview,
+            );
+
+  Future<List<ChatConversation>> _readCachedList(String accountId) async {
+    try {
+      return await _local.conversations(accountId);
+    } catch (e) {
+      debugPrint('[Chat] cached list unreadable: $e');
+      return const [];
+    }
+  }
+
+  @override
+  Future<List<ChatConversation>> cachedConversations(String accountId) async =>
+      _conversations[accountId] ?? await _readCachedList(accountId);
+
+  /// Pending writes of each account's list. Activity arrives a few
+  /// conversations at a time, so a write waits for the burst to settle
+  /// rather than encrypting the whole list for each.
+  final _listSaves = <String, Timer>{};
+  static const _listSaveDelay = Duration(seconds: 2);
+
+  void _saveList(String accountId) {
+    _listSaves.remove(accountId)?.cancel();
+    _listSaves[accountId] = Timer(_listSaveDelay, () async {
+      _listSaves.remove(accountId);
+      final list = _conversations[accountId];
+      if (list == null) return;
+      try {
+        await _local.saveConversations(accountId, list);
+      } catch (e) {
+        debugPrint('[Chat] could not cache the list: $e');
+      }
+    });
+  }
 
   static int _byActivity(ChatConversation a, ChatConversation b) {
     final at = a.lastActivity, bt = b.lastActivity;
@@ -231,18 +297,25 @@ class ChatRepositoryImpl implements ChatRepository {
           _conversations[accountId] = [
             for (final c in list) c.key == updated.key ? updated : c,
           ]..sort(_byActivity);
+          _saveList(accountId);
         }
         return updated;
       });
 
   @override
-  Future<int> unreadCount(String accountId) async {
+  Future<int> unreadCount(String accountId) async =>
+      (await unreadConversations(accountId)).length;
+
+  @override
+  Future<List<ChatConversation>> unreadConversations(String accountId) async {
     final access = await this.access(accountId);
-    if (access != ChatAccess.chatsOnly && access != ChatAccess.full) return 0;
+    if (access != ChatAccess.chatsOnly && access != ChatAccess.full) {
+      return const [];
+    }
     final recent = await _guard(accountId, (ds) => ds.listRecentChats());
-    return recent.match((f) {
-      debugPrint('[Chat] unread count failed: ${f.message}');
-      return 0;
+    final unread = recent.match((f) {
+      debugPrint('[Chat] unread check failed: ${f.message}');
+      return const <ChatConversation>[];
     }, (chats) => chats.where((c) {
       if (!c.unread) return false;
       // Microsoft's read state can trail a mark by a moment; a chat marked
@@ -250,7 +323,33 @@ class ChatRepositoryImpl implements ChatRepository {
       final marked = _markedAt['$accountId|${c.key}'];
       final at = c.lastActivity;
       return marked == null || (at != null && at.isAfter(marked));
-    }).length);
+    }).toList());
+    if (unread.isEmpty) return unread;
+    // The recent listing has no members, so a one-on-one is untitled there:
+    // the full list — this session's or the cached one — names it.
+    final known = {
+      for (final c in _conversations[accountId] ??
+          await _readCachedList(accountId))
+        c.key: c,
+    };
+    return [
+      for (final c in unread)
+        if (known[c.key] case final k?)
+          ChatConversation(
+            id: k.id,
+            kind: k.kind,
+            title: k.title,
+            teamId: k.teamId,
+            teamName: k.teamName,
+            lastActivity: c.lastActivity ?? k.lastActivity,
+            lastMessagePreview: c.lastMessagePreview ?? k.lastMessagePreview,
+            members: k.members,
+            threaded: k.threaded,
+            unread: true,
+          )
+        else
+          c,
+    ];
   }
 
   /// When [markRead] last ran per `account|conversation`.
@@ -311,26 +410,40 @@ class ChatRepositoryImpl implements ChatRepository {
     final listedAt = _listedAt[accountId];
     final stale = listedAt == null ||
         DateTime.now().difference(listedAt) > _listFresh;
+    // A one-on-one's id never changes, so one the list already holds — this
+    // session's, or the cache on disk after a restart — opens at once and
+    // the listing refreshes behind it. Only a miss waits for the server: the
+    // chat may be new.
+    final known = _conversations[accountId] ??
+        await _readCachedList(accountId);
+    final hit = _matchOneOnOne(known, email, name);
+    if (hit != null) {
+      if (stale) unawaited(conversations(accountId, refresh: true));
+      return Right(hit);
+    }
     final listed = await conversations(accountId, refresh: stale);
-    return listed.map((all) {
-      final wanted = email.trim().toLowerCase();
-      final oneOnOnes = all.where((c) => c.kind == ChatKind.oneOnOne);
-      for (final c in oneOnOnes) {
-        if (c.members.any((m) => m.email == wanted)) return c;
-      }
-      // Teams lists a federated user without an address; fall back to their
-      // name, but never guess between two people who share it.
-      final wantedName = name.trim().toLowerCase();
-      if (wantedName.isEmpty) return null;
-      final byName = [
-        for (final c in oneOnOnes)
-          if (c.members.any((m) =>
-              (m.email == null || m.email!.isEmpty) &&
-              m.displayName.trim().toLowerCase() == wantedName))
-            c,
-      ];
-      return byName.length == 1 ? byName.single : null;
-    });
+    return listed.map((all) => _matchOneOnOne(all, email, name));
+  }
+
+  static ChatConversation? _matchOneOnOne(
+      List<ChatConversation> all, String email, String name) {
+    final wanted = email.trim().toLowerCase();
+    final oneOnOnes = all.where((c) => c.kind == ChatKind.oneOnOne);
+    for (final c in oneOnOnes) {
+      if (c.members.any((m) => m.email == wanted)) return c;
+    }
+    // Teams lists a federated user without an address; fall back to their
+    // name, but never guess between two people who share it.
+    final wantedName = name.trim().toLowerCase();
+    if (wantedName.isEmpty) return null;
+    final byName = [
+      for (final c in oneOnOnes)
+        if (c.members.any((m) =>
+            (m.email == null || m.email!.isEmpty) &&
+            m.displayName.trim().toLowerCase() == wantedName))
+          c,
+    ];
+    return byName.length == 1 ? byName.single : null;
   }
 
   @override
@@ -341,6 +454,75 @@ class ChatRepositoryImpl implements ChatRepository {
   }) =>
       _guard(accountId,
           (ds) => ds.messages(conversation, cursor: nextLink));
+
+  /// Accounts whose server refused a delta: asked for full pages from then
+  /// on, rather than refused again every poll.
+  final _noDelta = <String>{};
+
+  @override
+  Future<Either<Failure, ChatMessageDelta?>> messagesSince(
+    String accountId,
+    ChatConversation conversation,
+    DateTime since,
+  ) {
+    if (_noDelta.contains(accountId)) return Future.value(const Right(null));
+    return _guard(accountId, (ds) async {
+      try {
+        return await ds.messagesSince(conversation, since);
+      } on SlackReconnectException {
+        rethrow;
+      } on ServerException catch (e) {
+        final refused = e.statusCode == 400 ||
+            e.statusCode == 405 ||
+            e.statusCode == 501;
+        if (!refused) rethrow;
+        debugPrint('[Chat] no deltas for $accountId: $e');
+        _noDelta.add(accountId);
+        return null;
+      }
+    });
+  }
+
+  @override
+  Future<List<ChatMessage>> cachedMessages(
+    String accountId,
+    ChatConversation conversation,
+  ) async {
+    try {
+      return await _local.messages(accountId, conversation.key);
+    } catch (e) {
+      debugPrint('[Chat] cached messages unreadable: $e');
+      return const [];
+    }
+  }
+
+  @override
+  Future<void> cacheMessages(
+    String accountId,
+    ChatConversation conversation,
+    List<ChatMessage> messages,
+  ) async {
+    try {
+      await _local.saveMessages(accountId, conversation.key, messages);
+    } catch (e) {
+      debugPrint('[Chat] could not cache messages: $e');
+    }
+  }
+
+  @override
+  Future<void> forgetAccount(String accountId) async {
+    _listSaves.remove(accountId)?.cancel();
+    _conversations.remove(accountId);
+    _listedAt.remove(accountId);
+    _diskActivity.remove(accountId);
+    _noDelta.remove(accountId);
+    _channelActivity.removeWhere((k, _) => k.startsWith('$accountId|'));
+    try {
+      await _local.clear(accountId);
+    } catch (e) {
+      debugPrint('[Chat] could not clear the cache: $e');
+    }
+  }
 
   @override
   Future<Either<Failure, List<ChatMessage>>> replies(
@@ -418,6 +600,7 @@ class ChatRepositoryImpl implements ChatRepository {
       for (final x in list)
         if (x.key != c.key) x,
     ];
+    _saveList(accountId);
   }
 
   @override

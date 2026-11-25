@@ -143,15 +143,17 @@ class _ChatWindowPageState extends State<_ChatWindowPage> {
     if (entries.isEmpty) return;
     if (_accountId != null && entries.any((e) => e.id == _accountId)) return;
     final active = s is AccountsLoaded ? s.activeAccount : null;
+    // Runs after a frame, so the picker only shows the choice by being
+    // rebuilt with it.
     if (entries.any((e) => e.id == active?.id)) {
-      _switchTo(active!.id);
+      setState(() => _switchTo(active!.id));
       return;
     }
     // The active account has no chat: Slack, as the button would — once the
     // workspaces are known, or another account would win the race.
     final slack = _slack;
     if (slack == null) return;
-    _switchTo(slack.firstOrNull?.id ?? entries.first.id);
+    setState(() => _switchTo(slack.firstOrNull?.id ?? entries.first.id));
   }
 
   void _switchTo(String accountId) {
@@ -268,6 +270,50 @@ class _ConversationListState extends State<_ConversationList> {
     super.dispose();
   }
 
+  Widget _searchField(BuildContext context) {
+    final c = context.colors;
+    return TextField(
+      controller: _search,
+      style: TextStyle(fontSize: 13, color: c.textPrimary),
+      textInputAction: TextInputAction.search,
+      onSubmitted: (q) => context.read<ChatListCubit>().search(q),
+      onChanged: (q) {
+        if (q.isEmpty) context.read<ChatListCubit>().clearSearch();
+        setState(() {});
+      },
+      decoration: InputDecoration(
+        isDense: true,
+        hintText: 'Search messages',
+        hintStyle: TextStyle(fontSize: 13, color: c.textMuted),
+        prefixIcon: Icon(Icons.search, size: 16, color: c.textMuted),
+        prefixIconConstraints:
+            const BoxConstraints(minWidth: 32, minHeight: 32),
+        suffixIcon: _search.text.isEmpty
+            ? null
+            : IconButton(
+                icon: Icon(Icons.close, size: 14, color: c.textMuted),
+                tooltip: 'Clear search',
+                onPressed: () {
+                  _search.clear();
+                  context.read<ChatListCubit>().clearSearch();
+                  setState(() {});
+                },
+              ),
+        filled: true,
+        fillColor: c.surfacePanel,
+        contentPadding: const EdgeInsets.symmetric(vertical: 8),
+        border: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(8),
+          borderSide: BorderSide(color: c.separator),
+        ),
+        enabledBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(8),
+          borderSide: BorderSide(color: c.separator),
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final c = context.colors;
@@ -302,46 +348,30 @@ class _ConversationListState extends State<_ConversationList> {
               ),
             ),
           Padding(
-            padding: const EdgeInsets.fromLTRB(10, 10, 10, 6),
-            child: TextField(
-              controller: _search,
-              style: TextStyle(fontSize: 13, color: c.textPrimary),
-              textInputAction: TextInputAction.search,
-              onSubmitted: (q) => context.read<ChatListCubit>().search(q),
-              onChanged: (q) {
-                if (q.isEmpty) context.read<ChatListCubit>().clearSearch();
-                setState(() {});
-              },
-              decoration: InputDecoration(
-                isDense: true,
-                hintText: 'Search messages',
-                hintStyle: TextStyle(fontSize: 13, color: c.textMuted),
-                prefixIcon: Icon(Icons.search, size: 16, color: c.textMuted),
-                prefixIconConstraints:
-                    const BoxConstraints(minWidth: 32, minHeight: 32),
-                suffixIcon: _search.text.isEmpty
-                    ? null
-                    : IconButton(
-                        icon: Icon(Icons.close, size: 14, color: c.textMuted),
-                        tooltip: 'Clear search',
-                        onPressed: () {
-                          _search.clear();
-                          context.read<ChatListCubit>().clearSearch();
-                          setState(() {});
-                        },
-                      ),
-                filled: true,
-                fillColor: c.surfacePanel,
-                contentPadding: const EdgeInsets.symmetric(vertical: 8),
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(8),
-                  borderSide: BorderSide(color: c.separator),
+            padding: const EdgeInsets.fromLTRB(10, 10, 4, 6),
+            child: Row(
+              children: [
+                Expanded(child: _searchField(context)),
+                BlocSelector<ChatListCubit, ChatListState, bool>(
+                  selector: (s) => s.sortByName,
+                  builder: (context, byName) => PopupMenuButton<bool>(
+                    tooltip: byName ? 'Sorted by name' : 'Sorted by most recent',
+                    icon: Icon(
+                        byName
+                            ? Icons.sort_by_alpha_rounded
+                            : Icons.schedule_rounded,
+                        size: 17,
+                        color: c.textMuted),
+                    initialValue: byName,
+                    onSelected: context.read<ChatListCubit>().setSortByName,
+                    itemBuilder: (_) => const [
+                      PopupMenuItem(
+                          value: false, child: Text('Most recent first')),
+                      PopupMenuItem(value: true, child: Text('Name')),
+                    ],
+                  ),
                 ),
-                enabledBorder: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(8),
-                  borderSide: BorderSide(color: c.separator),
-                ),
-              ),
+              ],
             ),
           ),
           Expanded(
@@ -546,6 +576,7 @@ class _ConversationRow extends StatelessWidget {
       ChatKind.channel => Icons.tag,
       ChatKind.space => Icons.workspaces_outline,
     };
+    final unread = conversation.unread && !selected;
     return Material(
       color: selected ? c.selectionBg : Colors.transparent,
       child: InkWell(
@@ -568,14 +599,32 @@ class _ConversationRow extends StatelessWidget {
                             overflow: TextOverflow.ellipsis,
                             style: TextStyle(
                               fontSize: 13,
-                              fontWeight: FontWeight.w600,
+                              // Bold is "unread", as in the mail list.
+                              fontWeight: unread
+                                  ? FontWeight.w700
+                                  : FontWeight.w400,
                               color: c.textPrimary,
                             ),
                           ),
                         ),
+                        if (unread) ...[
+                          Container(
+                            width: 7,
+                            height: 7,
+                            decoration: const BoxDecoration(
+                              color: AppColors.accent,
+                              shape: BoxShape.circle,
+                            ),
+                          ),
+                          const SizedBox(width: 6),
+                        ],
                         Text(_when(conversation.lastActivity),
-                            style:
-                                TextStyle(fontSize: 11, color: c.textMuted)),
+                            style: TextStyle(
+                                fontSize: 11,
+                                color: unread ? c.textPrimary : c.textMuted,
+                                fontWeight: unread
+                                    ? FontWeight.w600
+                                    : FontWeight.w400)),
                       ],
                     ),
                     if ((conversation.lastMessagePreview ?? '').isNotEmpty)

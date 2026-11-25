@@ -193,14 +193,33 @@ void main() {
 
   // The tripwire: bumping the version without adding an `if (from < n)` branch
   // ships a schema the upgrade path never builds.
-  test('schema version is 21', () {
+  test('schema version is 22', () {
     final db = AppDatabase.forTesting(NativeDatabase.memory());
     addTearDown(db.close);
     // v18 adds the commitments ledger tables (see
     // commitment_local_datasource_impl_test.dart for their round-trip).
     // v19 adds the scheduled-block columns to commitments; v20 the model's
-    // effort estimate. v21 adds the scope column to migration_jobs.
-    expect(db.schemaVersion, 21);
+    // effort estimate. v21 adds the scope column to migration_jobs; v22 the
+    // chat cache tables.
+    expect(db.schemaVersion, 22);
+  });
+
+  // v22 adds the encrypted chat cache: the list per chat system, and each
+  // conversation's newest messages.
+  test('a v21 database gains the chat cache tables', () async {
+    final v21File = File('${dir.path}/v21.sqlite');
+    final v21 = NativeDatabase(v21File);
+    await v21.ensureOpen(_NoMigration());
+    await v21.runCustom(_v17MigrationJobs, const []);
+    await v21.runCustom(
+        'ALTER TABLE migration_jobs ADD COLUMN scope TEXT NULL', const []);
+    await v21.runCustom('PRAGMA user_version = 21', const []);
+    await v21.close();
+
+    final db = AppDatabase.forTesting(NativeDatabase(v21File));
+    addTearDown(db.close);
+    expect(await db.select(db.cachedChatLists).get(), isEmpty);
+    expect(await db.select(db.cachedChatMessages).get(), isEmpty);
   });
 
   // v21 adds `scope` to migration_jobs for Inbox-only jobs. Guarded by `from`

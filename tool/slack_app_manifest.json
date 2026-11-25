@@ -25,7 +25,8 @@
         "im:write",
         "mpim:write",
         "files:read",
-        "search:read"
+        "search:read",
+        "emoji:read"
       ]
     },
     "pkce_enabled": true

@@ -7,6 +7,7 @@ import 'package:nightmail/infrastructure/accounts/account_manager.dart';
 import 'package:nightmail/infrastructure/slack/slack_workspaces.dart';
 
 import '../../fakes/memory_secure_storage.dart';
+import '../../fakes/memory_chat_local_datasource.dart';
 
 /// The dot on the Chat button: counted from the cheap recent listing, never
 /// for an account that has not consented (the poll must not prompt), and
@@ -19,7 +20,8 @@ void main() {
     final ds = _Chats([chat('a', unread: true), chat('b'), chat('c', unread: true)]);
     final repo = ChatRepositoryImpl(
         accountManager: _Accounts(ds, chats: true), contacts: _NoContacts(),
-        slack: SlackWorkspaces(storage: MemorySecureStorage()));
+        slack: SlackWorkspaces(storage: MemorySecureStorage()),
+        local: MemoryChatLocalDatasource());
     expect(await repo.unreadCount('acct'), 2);
   });
 
@@ -27,7 +29,8 @@ void main() {
     final ds = _Chats([chat('a', unread: true)]);
     final repo = ChatRepositoryImpl(
         accountManager: _Accounts(ds, chats: false), contacts: _NoContacts(),
-        slack: SlackWorkspaces(storage: MemorySecureStorage()));
+        slack: SlackWorkspaces(storage: MemorySecureStorage()),
+        local: MemoryChatLocalDatasource());
     expect(await repo.unreadCount('acct'), 0);
     expect(ds.listed, 0);
   });
@@ -42,7 +45,8 @@ void main() {
     final ds = _Chats([at(before)]);
     final repo = ChatRepositoryImpl(
         accountManager: _Accounts(ds, chats: true), contacts: _NoContacts(),
-        slack: SlackWorkspaces(storage: MemorySecureStorage()));
+        slack: SlackWorkspaces(storage: MemorySecureStorage()),
+        local: MemoryChatLocalDatasource());
     await repo.markRead('acct', at(before));
     expect(await repo.unreadCount('acct'), 0, reason: 'server lagging');
 
@@ -54,7 +58,8 @@ void main() {
     final ds = _Chats(const []);
     final repo = ChatRepositoryImpl(
         accountManager: _Accounts(ds, chats: true), contacts: _NoContacts(),
-        slack: SlackWorkspaces(storage: MemorySecureStorage()));
+        slack: SlackWorkspaces(storage: MemorySecureStorage()),
+        local: MemoryChatLocalDatasource());
     final reads = repo.reads.first;
     await repo.markRead('acct', chat('a', unread: true));
     expect(ds.marked, ['a']);

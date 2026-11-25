@@ -192,6 +192,8 @@ Settings → Accounts.
 - Paste a picture into a chat message (Cmd/Ctrl+V) to send it on Teams, Google Chat and Slack
 - Rename group chats and channels on Teams, NightMail Server and Slack
 - Reply in a thread from Slack direct messages and group DMs, as in channels
+- Type `@` in a chat message to tag someone in the conversation on Teams, NightMail Server, Google Chat and Slack
+- Find any chat or channel by name from the field under the Chat pane's unread list
 
 ### Contacts
 - Typeahead in the compose window drawing from three sources:

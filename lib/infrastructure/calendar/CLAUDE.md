@@ -15,6 +15,21 @@ An `invite.ics` on a message Exchange never processed into a meeting is a file,
 not an invitation: a REQUEST there is reclassified as a published event
 (`unprocessedRequest`) so it gets the one banner that needs no `eventMessage`.
 
+## A Series Cut Short Arrives as an Update
+
+Google's "cancel the rest of this series" moves the series' end date back and
+mails every guest "Updated invitation …" as `METHOD:REQUEST`, so it gets the
+invitation banner. The ICS cannot say the series is over. Incident, 25 Nov
+2026: a stand-up split twice by "this and following" edits was mailed with the
+first segment's `UNTIL` (1 Nov) while it really ran to 23 Nov. The banner
+therefore asks the *calendar* (`core/utils/ended_meeting_series.dart`): a
+daily-to-fortnightly series with an occurrence of its UID in the last 21 days
+and none in the next two periods says "This series has ended" instead of
+offering Accept/Decline. Nothing on either side settles nothing, since a
+forwarded or hidden invitation is just as absent. The two listings are kept
+short because `events.list` pages are sorted ascending and capped at 250, so a
+long one that got truncated would lose exactly the upcoming occurrences.
+
 ## Forwarding Somebody Else's Meeting
 
 Offered on the invite banner and in the read-only event form. The provider is

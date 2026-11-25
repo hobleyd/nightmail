@@ -35,6 +35,7 @@ import '../../core/settings/app_settings.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/error/failures.dart';
 import '../../core/utils/cloud_document_format.dart';
+import '../../core/utils/ended_meeting_series.dart';
 import '../../core/utils/latest_reply.dart';
 import '../../core/utils/markdown_file.dart';
 import '../../core/utils/meeting_conflicts.dart';
@@ -1585,10 +1586,16 @@ class _MeetingInviteBannerState extends State<_MeetingInviteBanner> {
   DateTime? _proposedStart;
   DateTime? _proposedEnd;
 
+  /// The last occurrence of a series the calendar shows has already ended —
+  /// see `ended_meeting_series.dart`. Set, the banner says so in place of
+  /// Accept/Decline: there is nothing left to answer.
+  DateTime? _seriesEndedAt;
+
   @override
   void initState() {
     super.initState();
     _checkConflicts();
+    _checkSeriesEnded();
     final invite = widget.email.meetingInvite;
     _proposedStart = invite?.meetingStart;
     _proposedEnd = invite?.meetingEnd ??
@@ -1599,6 +1606,48 @@ class _MeetingInviteBannerState extends State<_MeetingInviteBanner> {
   void dispose() {
     _noteController.dispose();
     super.dispose();
+  }
+
+  /// Two short listings rather than one long one: an ascending page that hit
+  /// its cap would drop the upcoming occurrences, and their absence is what
+  /// reads as "ended". The upcoming one goes first, since for a live series it
+  /// settles the question alone.
+  Future<void> _checkSeriesEnded() async {
+    final invite = widget.email.meetingInvite;
+    final uid = invite?.uid;
+    final seriesStart = invite?.meetingStart;
+    final lookahead = endedSeriesLookahead(invite?.recurrence);
+    if (uid == null || seriesStart == null || lookahead == null) return;
+    final now = DateTime.now();
+    if (seriesStart.isAfter(now)) return;
+
+    final getEvents = sl<GetCalendarEvents>();
+    final upcoming = await getEvents(GetCalendarEventsParams(
+      startDateTime: now,
+      endDateTime: now.add(lookahead),
+    ));
+    if (!mounted) return;
+    final upcomingEvents = upcoming.getOrElse((_) => const []);
+    if (upcoming.isLeft() ||
+        upcomingEvents.any((e) => isSameMeetingUid(e.iCalUid, uid))) {
+      return;
+    }
+
+    final recent = await getEvents(GetCalendarEventsParams(
+      startDateTime: now.subtract(endedSeriesLookback),
+      endDateTime: now,
+    ));
+    if (!mounted) return;
+    final last = recent.fold(
+      (_) => null,
+      (events) => lastOccurrenceOfEndedSeries(
+        inviteUid: uid,
+        upcoming: upcomingEvents,
+        recent: events,
+        now: now,
+      ),
+    );
+    if (last != null) setState(() => _seriesEndedAt = last);
   }
 
   Future<void> _checkConflicts() async {
@@ -1864,6 +1913,7 @@ class _MeetingInviteBannerState extends State<_MeetingInviteBanner> {
     final repeats = invite == null ? null : describeInviteRecurrence(invite);
     final hasDetails =
         timeStr.isNotEmpty || location != null || repeats != null;
+    final endedAt = _seriesEndedAt;
 
     // A Wrap rather than a Row: the buttons keep their intrinsic width, so in a
     // narrow reading pane a Row would starve the details column instead of
@@ -1972,9 +2022,25 @@ class _MeetingInviteBannerState extends State<_MeetingInviteBanner> {
           crossAxisAlignment: WrapCrossAlignment.center,
           spacing: 12,
           runSpacing: 8,
-          children: [details, buttons],
+          children: [details, if (endedAt == null) buttons],
         ),
-        if (_conflicts.isNotEmpty) ...[
+        if (endedAt != null) ...[
+          const SizedBox(height: 6),
+          Row(
+            children: [
+              Icon(Icons.event_busy_rounded, size: 12, color: c.textDimmed),
+              const SizedBox(width: 4),
+              Expanded(
+                child: Text(
+                  'This series has ended — the last meeting was '
+                  '${DateFormat('EEE d MMM').format(endedAt.toLocal())}. '
+                  'There is nothing to answer.',
+                  style: TextStyle(color: c.textTertiary, fontSize: 11),
+                ),
+              ),
+            ],
+          ),
+        ] else if (_conflicts.isNotEmpty) ...[
           const SizedBox(height: 6),
           Row(
             children: [
@@ -1992,7 +2058,7 @@ class _MeetingInviteBannerState extends State<_MeetingInviteBanner> {
             ],
           ),
         ],
-        _buildNoteRow(c),
+        if (endedAt == null) _buildNoteRow(c),
       ],
     );
   }

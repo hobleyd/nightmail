@@ -386,6 +386,28 @@ void main() {
     expect(page.nextLink, 'older');
   });
 
+  test('a GIF from Chat\'s GIF search shows as a picture', () async {
+    routes['/spaces/g/messages'] = (_) => {
+          'messages': [
+            {
+              'name': 'spaces/g/messages/1',
+              'createTime': '2026-11-26T00:00:00Z',
+              'sender': {'name': 'users/1', 'displayName': 'Ann'},
+              'attachedGifs': [
+                {'uri': 'https://media.tenor.com/a/b.gif?x=1&y=2'},
+                {'uri': 'http://insecure.test/c.gif'},
+              ],
+            },
+          ],
+        };
+    final page = await datasource().messages(const ChatConversation(
+        id: 'spaces/g', kind: ChatKind.group, title: 'G'));
+    final m = page.messages.single;
+    expect(m.bodyHtml,
+        '<p><img src="https://media.tenor.com/a/b.gif?x=1&amp;y=2" alt="GIF"></p>');
+    expect(m.editableText, isNull);
+  });
+
   test('a reply goes to the post\'s thread', () async {
     routes['/spaces/s/messages'] = (o) {
       return {

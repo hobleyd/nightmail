@@ -557,7 +557,9 @@ only `http(s)`/`mailto` links are tappable.
 
 ### Images
 
-An emoji `<img>` keeps its `alt`. Any other `<img>` becomes a `ChatImage`
+An emoji `<img>` keeps its `alt` — Teams' `itemtype` says so, or an alt of
+at most three characters with no letter or digit (a GIF's alt can be "GIF" or
+"lol", and was drawn as that text). Any other `<img>` becomes a `ChatImage`
 (a `WidgetSpan`, tap to open full size) whose bytes come through
 `ChatRepository.image` → the datasource's `image(src)`; the renderer never
 fetches anything itself, and without a loader an image reads "[image]".
@@ -577,7 +579,8 @@ fetches anything itself, and without a loader an image reads "[image]".
   nextLink cursor) and `image` downloads it from `media/{resourceName}
   ?alt=media` with the token. A Drive attachment stays a named attachment.
   The URL is built whole (`baseUrl/media/…`): a resource name is base64 and
-  can hold `//`, which Dio folds to `/` in a relative path.
+  can hold `//`, which Dio folds to `/` in a relative path. A GIF from Chat's
+  own GIF search is `attachedGifs[].uri`, public https, fetched without it.
 - `fetchImageBytes` (`chat_images.dart`) asks with `Accept: image/*` (not
   the API client's JSON) and returns null for anything that is neither an
   `image/*` answer nor bytes that start like a picture (`looksLikeImage`:
@@ -791,7 +794,12 @@ than falling into an account lookup that answers null.
   to the manifest. Adding a scope again means all three: manifest,
   `userScopes`, and this.
 - **Images:** files on `files.slack.com` are fetched with the token (their
-  `thumb_720`); anything else, including avatars, over https without it.
+  `thumb_720`; a GIF's `thumb_480_gif`, since its `thumb_720` is a still
+  frame); anything else, including avatars, over https without it. A
+  `/giphy` post is an `image` block (`image_url` on giphy's CDN, sized by
+  `image_width`/`image_height`) plus a context block whose logo icon is left
+  out; a pasted GIF link unfurls as an attachment's `image_url`. Both used
+  to be dropped, leaving only the fallback text.
 - **Search:** `search.messages` (Tier 2, user tokens), so
   `searchesOnServer` is true — no recent-history scan.
 - A 429 waits out a `Retry-After` of up to 20 s once, then fails readably.

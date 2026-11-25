@@ -554,7 +554,8 @@ class GoogleChatDatasource implements ChatRemoteDatasource {
           (sender is Map ? sender['displayName'] as String? : null) ?? '',
       senderUserId: sender is Map ? sender['name'] as String? : null,
       bodyHtml: chatTextToHtml(raw['text'] as String? ?? '') +
-          _imagesHtml(raw['attachment']),
+          _imagesHtml(raw['attachment']) +
+          _gifsHtml(raw['attachedGifs']),
       editedAt: _date(raw['lastUpdateTime']),
       isDeleted: raw['deleteTime'] != null,
       threadId: thread is Map ? thread['name'] as String? : null,
@@ -605,6 +606,19 @@ class GoogleChatDatasource implements ChatRemoteDatasource {
           .replaceAll('<', '&lt;');
       out.write('<p><img src="$mediaScheme:${Uri.encodeComponent(ref)}" '
           'alt="$alt"></p>');
+    }
+    return out.toString();
+  }
+
+  /// GIFs picked in Chat's own GIF search: `attachedGifs`, each a public
+  /// URL on Google's image host, fetched with no token.
+  static String _gifsHtml(Object? gifs) {
+    final out = StringBuffer();
+    for (final g in _list(gifs)) {
+      final uri = g['uri'];
+      if (uri is! String || !uri.startsWith('https://')) continue;
+      final src = uri.replaceAll('&', '&amp;').replaceAll('"', '&quot;');
+      out.write('<p><img src="$src" alt="GIF"></p>');
     }
     return out.toString();
   }
@@ -680,6 +694,7 @@ class GoogleChatDatasource implements ChatRemoteDatasource {
     if (text.trim().isEmpty ||
         _list(raw['annotations']).isNotEmpty ||
         _list(raw['cardsV2']).isNotEmpty ||
+        _list(raw['attachedGifs']).isNotEmpty ||
         _list(raw['cards']).isNotEmpty ||
         RegExp(r'<[^<>\s]+>').hasMatch(text)) {
       return null;

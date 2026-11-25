@@ -282,6 +282,113 @@ void main() {
     });
   });
 
+  group('GIFs', () {
+    test('a /giphy post shows its image block, sized; the logo is left out',
+        () {
+      // The shape of a /giphy message, as Slack's API returns it.
+      final html = SlackChatDatasource.messageHtml({
+        'text': '',
+        'blocks': [
+          {
+            'type': 'image',
+            'image_url':
+                'https://media2.giphy.com/media/K5/giphy.gif?cid=6&rid=giphy.gif',
+            'alt_text': 'red eyes',
+            'image_width': 480,
+            'image_height': 270,
+            'title': {'type': 'plain_text', 'text': 'red eyes'},
+          },
+          {
+            'type': 'context',
+            'elements': [
+              {
+                'type': 'image',
+                'image_url':
+                    'https://a.slack-edge.com/img/plugins/giphy/service_32.png',
+                'alt_text': 'giphy logo',
+              },
+              {
+                'type': 'mrkdwn',
+                'text': 'Posted using /giphy',
+              },
+            ],
+          },
+        ],
+      });
+      expect(
+          html,
+          contains('<img src="https://media2.giphy.com/media/K5/giphy.gif'
+              '?cid=6&amp;rid=giphy.gif" alt="red eyes" width="480" '
+              'height="270">'));
+      expect(html, contains('Posted using /giphy'));
+      expect(html, isNot(contains('service_32')));
+    });
+
+    test('an unfurled GIF link shows the picture it unfurled to', () {
+      final html = SlackChatDatasource.messageHtml({
+        'text': '<https://giphy.com/gifs/x>',
+        'attachments': [
+          {
+            'fallback': 'GIPHY: party',
+            'image_url': 'https://media.giphy.com/media/x/giphy.gif',
+            'image_width': 200,
+            'image_height': 100,
+          },
+        ],
+      });
+      expect(
+          html,
+          contains('<img src="https://media.giphy.com/media/x/giphy.gif" '
+              'alt="GIPHY: party" width="200" height="100">'));
+    });
+
+    test('a picture that is not https is not shown', () {
+      final html = SlackChatDatasource.messageHtml({
+        'text': '',
+        'blocks': [
+          {'type': 'image', 'image_url': 'http://x.test/a.gif', 'alt_text': 'a'},
+        ],
+      });
+      expect(html, isNot(contains('<img')));
+    });
+
+    test('an uploaded GIF shows a rendition that moves', () async {
+      routes['conversations.history'] = (_) => {
+            'ok': true,
+            'messages': [
+              {
+                'ts': '1700000000.000300',
+                'user': 'UANN',
+                'text': '',
+                'files': [
+                  {
+                    'name': 'dance.gif',
+                    'mimetype': 'image/gif',
+                    'thumb_720': 'https://files.slack.com/still.png',
+                    'thumb_480_gif': 'https://files.slack.com/moving.gif',
+                    'url_private': 'https://files.slack.com/dance.gif',
+                  },
+                  {
+                    'name': 'chart.png',
+                    'mimetype': 'image/png',
+                    'thumb_720': 'https://files.slack.com/chart_720.png',
+                    'url_private': 'https://files.slack.com/chart.png',
+                  },
+                ],
+              },
+            ],
+          };
+      routes['users.info'] = (_) => user('UANN', 'Ann');
+      final page = await datasource().messages(const ChatConversation(
+          id: 'C1', kind: ChatKind.space, title: '#general', threaded: true));
+      final body = page.messages.single.bodyHtml;
+      expect(body, contains('src="https://files.slack.com/moving.gif"'));
+      expect(body, isNot(contains('still.png')));
+      expect(body, contains('src="https://files.slack.com/chart_720.png"'));
+      expect(page.messages.single.attachmentNames, isEmpty);
+    });
+  });
+
   group('mrkdwn', () {
     String html(String s) => SlackChatDatasource.mrkdwnToHtml(s);
 

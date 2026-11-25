@@ -82,6 +82,22 @@ void main() {
     expect(find.byType(Image), findsOneWidget);
   });
 
+  testWidgets('a GIF with a short alt is still a picture, not an emoji',
+      (tester) async {
+    await tester.pumpWidget(MaterialApp(
+      home: Scaffold(
+        body: ChatMessageBody(
+          html: '<img src="https://media.giphy.com/x.gif" alt="GIF">'
+              '<img src="https://media.giphy.com/y.gif" alt="lol">',
+          style: const TextStyle(),
+          loadImage: (_) async => _png,
+        ),
+      ),
+    ));
+    await tester.pumpAndSettle();
+    expect(find.byType(ChatImage), findsNWidgets(2));
+  });
+
   testWidgets('an image the loader cannot fetch reads [image]',
       (tester) async {
     await tester.pumpWidget(MaterialApp(

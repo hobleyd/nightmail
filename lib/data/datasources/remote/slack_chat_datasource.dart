@@ -1029,15 +1029,27 @@ class SlackChatDatasource implements ChatRemoteDatasource {
 
   static bool _isImage(Map<String, dynamic> f) =>
       (f['mimetype'] as String? ?? '').startsWith('image/') &&
-      (f['thumb_720'] ?? f['thumb_480'] ?? f['url_private']) is String;
+      _imageSrc(f) != null;
+
+  /// Which rendition of an uploaded picture to show. A GIF's `thumb_720` is
+  /// a still of its first frame; `thumb_480_gif`/`thumb_360_gif` move, and
+  /// the original does too.
+  static String? _imageSrc(Map<String, dynamic> f) {
+    final keys = f['mimetype'] == 'image/gif'
+        ? const ['thumb_480_gif', 'thumb_360_gif', 'url_private']
+        : const ['thumb_720', 'thumb_480', 'url_private'];
+    for (final k in keys) {
+      if (f[k] case final String url when url.isNotEmpty) return url;
+    }
+    return null;
+  }
 
   /// Uploaded pictures after the text, from Slack's own thumbnails (still
   /// `files.slack.com`, so [image] fetches them with the token).
   static String _imagesHtml(List<Map<String, dynamic>> files) {
     final out = StringBuffer();
     for (final f in files.where(_isImage)) {
-      final src = (f['thumb_720'] ?? f['thumb_480'] ?? f['url_private'])
-          as String;
+      final src = _imageSrc(f)!;
       final alt = _escape(f['name'] as String? ?? 'image');
       out.write('<br><img src="${_escape(src)}" alt="$alt">');
     }
@@ -1227,6 +1239,9 @@ class SlackChatDatasource implements ChatRemoteDatasource {
             if (f['value'] case final String v when v.isNotEmpty) md(v),
           ].join(': '),
       if (str('footer') case final f?) '<i>${md(f)}</i>',
+      // An unfurled picture or GIF (a pasted Giphy link, the older /giphy).
+      ?_imgHtml(str('image_url'), str('fallback'), a['image_width'],
+          a['image_height']),
       // Nothing above, but a summary of itself: better than nothing.
       if (title == null &&
           str('text') == null &&
@@ -1236,8 +1251,9 @@ class SlackChatDatasource implements ChatRemoteDatasource {
     ].map((s) => '<div>$s</div>').join();
   }
 
-  /// Block Kit as the renderer's HTML: one `<div>` per block. Images,
-  /// dividers, inputs and buttons without a link have nothing to say here.
+  /// Block Kit as the renderer's HTML: one `<div>` per block. Dividers,
+  /// inputs, buttons without a link and a context block's icons have
+  /// nothing to say here; an `image` block (a /giphy GIF) is its picture.
   static String _blocksHtml(
     List<Map<String, dynamic>> blocks,
     String Function(String) md,
@@ -1279,11 +1295,30 @@ class SlackChatDatasource implements ChatRemoteDatasource {
           ].join(' · '),
         'rich_text' => _richTextHtml(_list(b['elements']), userName, customEmoji),
         'markdown' => b['text'] is String ? md(b['text'] as String) : '',
+        'image' => _imgHtml(
+              b['image_url'] as String? ??
+                  (b['slack_file'] as Map?)?['url'] as String?,
+              b['alt_text'] as String?,
+              b['image_width'],
+              b['image_height'],
+            ) ??
+            '',
         _ => '',
       };
       if (html.isNotEmpty) out.add('<div>$html</div>');
     }
     return out.join();
+  }
+
+  /// An `<img>` for a picture Slack names by URL — https only (anything
+  /// else would go out unencrypted, and [image] refuses it anyway) — sized
+  /// when Slack says how big it is, so the placeholder holds its shape.
+  static String? _imgHtml(String? src, String? alt, Object? w, Object? h) {
+    if (src == null || !src.startsWith('https://')) return null;
+    final size = w is num && h is num && w > 0 && h > 0
+        ? ' width="${w.toInt()}" height="${h.toInt()}"'
+        : '';
+    return '<img src="${_escape(src)}" alt="${_escape(alt ?? 'image')}"$size>';
   }
 
   /// A `rich_text` block's sections, lists, quotes and code. Its text, unlike

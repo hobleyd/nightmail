@@ -219,8 +219,12 @@ class _ChatHtml {
           }
         case 'img':
           final alt = attrs['alt'] ?? '';
+          // An emoji's alt is the character itself; a GIF's can be as
+          // short ("GIF", "lol") but is words, so it stays a picture.
           final isEmoji = (attrs['itemtype'] ?? '').contains('Emoji') ||
-              (alt.isNotEmpty && alt.runes.length <= 3);
+              (alt.isNotEmpty &&
+                  alt.runes.length <= 3 &&
+                  !alt.contains(RegExp(r'[A-Za-z0-9]')));
           final src = attrs['src'] ?? '';
           final load = loadImage;
           if (isEmoji) {

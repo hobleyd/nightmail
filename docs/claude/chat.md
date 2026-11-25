@@ -405,8 +405,10 @@ anything else in the conversation's (`ChatConversationState.editingInThread`).
   the listing says (Graph `user.user.id`, Slack `users`; Google's summaries
   name no one). The cubit skips a reaction the user already gave, and
   `react` reports whether the server added one: Graph keeps a repeat as one
-  (204 either way), Google answers 409, Slack `already_reacted` — the last
-  two come back false and nothing is counted. The count goes up only after
+  (204 either way; nightware's Talk accepts it too), Slack answers
+  `already_reacted`, and Google is *assumed* to answer 409 — undocumented,
+  unverified; a 200 would show one too many until the next page read. The
+  last two come back false and nothing is counted. The count goes up only after
   the server has it, and not if a poll brought it in meanwhile.
 - **Slack's `reactions:write` was added later.** A workspace connected
   before lacks it: `react` checks `SlackWorkspace.scopes` first and says

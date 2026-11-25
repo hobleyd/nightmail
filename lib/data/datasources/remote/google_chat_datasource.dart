@@ -375,9 +375,11 @@ class GoogleChatDatasource implements ChatRemoteDatasource {
   @override
   bool canReact(ChatConversation conversation) => true;
 
-  /// A repeat answers 409 (`ALREADY_EXISTS`): the reaction is there, it is
-  /// just not a new one — the summaries Google lists name no one, so this is
-  /// the only way to tell.
+  /// A repeat is taken to answer 409 (`ALREADY_EXISTS`): the reaction is
+  /// there, just not a new one — the summaries Google lists name no one, so
+  /// the server is the only one who can tell. Google does not document the
+  /// repeat; should it answer 200 instead, the count shows one high until
+  /// the next read of the page.
   @override
   Future<bool> react(
     ChatConversation conversation,

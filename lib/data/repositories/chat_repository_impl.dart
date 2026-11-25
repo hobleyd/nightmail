@@ -204,9 +204,31 @@ class ChatRepositoryImpl implements ChatRepository {
         // Channels list without activity, and Slack lists nothing with it:
         // whatever has been learned of either is kept across refreshes —
         // this session's first, then what the cache on disk last knew.
-        final known = await _cachedActivity(accountId);
-        final merged = [
+        final cachedList = await _cachedList(accountId);
+        final known = {
+          for (final c in cachedList.values)
+            if (c.lastActivity != null) c.key: c,
+        };
+        // A one-on-one the provider has not named yet (Slack names 40 people
+        // a listing; a new window starts knowing none) keeps the name it
+        // already had, or every row past the 40th reads "Direct message".
+        final before = {
+          for (final c in _conversations[accountId] ?? const []) c.key: c,
+        };
+        final named = [
           for (final c in [...chats, ...channels])
+            if (!c.untitled)
+              c
+            else if (before[c.key] ?? cachedList[c.key] case final k?)
+              c.copyWith(
+                title: k.title,
+                members: k.members.isEmpty ? null : k.members,
+              )
+            else
+              c,
+        ];
+        final merged = [
+          for (final c in named)
             if (c.lastActivity != null)
               c
             else if (_channelActivity['$accountId|${c.key}']
@@ -221,19 +243,15 @@ class ChatRepositoryImpl implements ChatRepository {
         return merged;
       });
 
-  /// Activity the cache on disk holds for [accountId]'s conversations, by
-  /// key — read once per session, for conversations a listing gives none.
-  final _diskActivity = <String, Map<String, ChatConversation>>{};
+  /// The list the cache on disk held for [accountId], by key — read once
+  /// per session, for the activity and names a listing lacks.
+  final _diskList = <String, Map<String, ChatConversation>>{};
 
-  Future<Map<String, ChatConversation>> _cachedActivity(
-      String accountId) async {
-    final known = _diskActivity[accountId];
+  Future<Map<String, ChatConversation>> _cachedList(String accountId) async {
+    final known = _diskList[accountId];
     if (known != null) return known;
     final cached = await _readCachedList(accountId);
-    return _diskActivity[accountId] = {
-      for (final c in cached)
-        if (c.lastActivity != null) c.key: c,
-    };
+    return _diskList[accountId] = {for (final c in cached) c.key: c};
   }
 
   /// [c] as listed, with the activity and preview [known] last had.
@@ -548,7 +566,7 @@ class ChatRepositoryImpl implements ChatRepository {
     _listSaves.remove(accountId)?.cancel();
     _conversations.remove(accountId);
     _listedAt.remove(accountId);
-    _diskActivity.remove(accountId);
+    _diskList.remove(accountId);
     _noDelta.remove(accountId);
     _channelActivity.removeWhere((k, _) => k.startsWith('$accountId|'));
     try {

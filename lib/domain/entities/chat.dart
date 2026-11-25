@@ -83,6 +83,7 @@ class ChatConversation extends Equatable {
     this.threaded = false,
     this.unread = false,
     this.noMessages = false,
+    this.untitled = false,
   });
 
   /// The chat id, or the channel id for a [ChatKind.channel] (which only
@@ -120,6 +121,12 @@ class ChatConversation extends Equatable {
   /// when it was made. False when not known.
   final bool noMessages;
 
+  /// [title] is the provider's stand-in ("Direct message") because it has
+  /// not looked the other person up yet. A list that already named the
+  /// conversation keeps that name rather than this — Slack names at most 40
+  /// people per listing, and a fresh window knows none. Not cached.
+  final bool untitled;
+
   bool get isChannel => kind == ChatKind.channel;
 
   /// Whether messages here are posts with replies (Teams channels, threaded
@@ -131,6 +138,7 @@ class ChatConversation extends Equatable {
 
   ChatConversation copyWith({
     String? title,
+    List<ChatMember>? members,
     DateTime? lastActivity,
     String? lastMessagePreview,
     bool? unread,
@@ -144,7 +152,7 @@ class ChatConversation extends Equatable {
         teamName: teamName,
         lastActivity: lastActivity ?? this.lastActivity,
         lastMessagePreview: lastMessagePreview ?? this.lastMessagePreview,
-        members: members,
+        members: members ?? this.members,
         threaded: threaded,
         unread: unread ?? this.unread,
         // Activity or a preview means something was written.
@@ -152,6 +160,8 @@ class ChatConversation extends Equatable {
             (this.noMessages &&
                 lastActivity == null &&
                 lastMessagePreview == null),
+        // A new title is a name.
+        untitled: title == null && untitled,
       );
 
   @override
@@ -167,6 +177,7 @@ class ChatConversation extends Equatable {
         threaded,
         unread,
         noMessages,
+        untitled,
       ];
 }
 

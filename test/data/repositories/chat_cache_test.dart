@@ -158,6 +158,46 @@ void main() {
     expect(found?.id, 'dm2');
   });
 
+  test('a one-on-one the provider has not named yet keeps the cached name',
+      () async {
+    local.lists['acct'] = const [
+      ChatConversation(
+        id: 'dm',
+        kind: ChatKind.oneOnOne,
+        title: 'Ann',
+        members: [ChatMember(displayName: 'Ann', email: 'ann@x.test')],
+      ),
+    ];
+    ds.chats = const [
+      ChatConversation(
+        id: 'dm',
+        kind: ChatKind.oneOnOne,
+        title: 'Direct message',
+        untitled: true,
+        members: [ChatMember(displayName: 'U1', userId: 'U1')],
+      ),
+      ChatConversation(
+          id: 'new',
+          kind: ChatKind.oneOnOne,
+          title: 'Direct message',
+          untitled: true),
+    ];
+    var list = (await repo.conversations('acct', refresh: true))
+        .getOrElse((f) => fail(f.message));
+    expect(list.map((c) => (c.id, c.title)),
+        unorderedEquals([('dm', 'Ann'), ('new', 'Direct message')]));
+    expect(list.firstWhere((c) => c.id == 'dm').members.single.email,
+        'ann@x.test');
+
+    // Once the provider names the person, its name wins.
+    ds.chats = const [
+      ChatConversation(id: 'dm', kind: ChatKind.oneOnOne, title: 'Ann Lee'),
+    ];
+    list = (await repo.conversations('acct', refresh: true))
+        .getOrElse((f) => fail(f.message));
+    expect(list.single.title, 'Ann Lee');
+  });
+
   test('unread chats are titled as the full list titles them', () async {
     local.lists['acct'] = const [
       ChatConversation(

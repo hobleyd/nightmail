@@ -711,7 +711,12 @@ than falling into an account lookup that answers null.
   conversation could poll), and the repository keeps what it learned across
   refreshes. Teams channels are filled as before.
 - **People:** a message names its sender by id; `users.info` (Tier 4) fills
-  `_users` (session cache, 40 per call at most). The pane offers the
+  `_users` (session cache, 40 per call at most). Each window is its own
+  isolate and starts knowing nobody, so a listing names only 40 DMs: the
+  rest come back `untitled` ("Direct message"), and
+  `ChatRepositoryImpl.conversations` keeps the name this session's list or
+  the cache on disk already had (Google's unnamed DMs too); the provider's
+  name wins once it has one. The pane offers the
   people on an email that `users.lookupByEmail` finds in the workspace
   (`directoryMembers`, 12 per email, misses remembered) — the mail
   account's domains mean nothing to Slack. `findOneOnOne` looks the DM up in

@@ -884,12 +884,12 @@ class SlackChatDatasource implements ChatRemoteDatasource {
     final latest = _ts(_latest['$teamId|$id']);
     if (c['is_im'] == true) {
       final user = c['user'] as String?;
+      final name = user == null ? null : _users['$teamId|$user']?.name;
       return ChatConversation(
         id: id,
         kind: ChatKind.oneOnOne,
-        title: user == null
-            ? 'Direct message'
-            : _users['$teamId|$user']?.name ?? 'Direct message',
+        title: name ?? 'Direct message',
+        untitled: name == null,
         members: [if (user != null) _member(user)],
         lastActivity: latest,
       );

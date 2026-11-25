@@ -814,6 +814,26 @@ than falling into an account lookup that answers null.
   People's, bots' (`bot_message`), file-share and broadcast messages
   count; joins, leaves and topic changes do not (`_unreadSubtypes`).
   Muted channels are bolded too: mute state is not in the Web API.
+- **A reply in a thread lights its channel** (before 1.64.1+297 it never
+  did — `conversations.history` leaves replies out, so nothing passed
+  `last_read`). The poll reads the newest 15 posts (`_postsChecked`, same
+  one request); a post whose `latest_reply` is past the channel's
+  `last_read` is a candidate, and up to 2 per poll (`_threadsChecked`)
+  are read with `conversations.replies` (`oldest` = the channel's
+  `last_read`). Unread when a reply from someone else, of a counted
+  subtype, is past the channel's `last_read` *and* the thread's own
+  `last_read` — Slack keeps them apart, and a thread read in its side
+  panel moves only its own (given to threads the user follows). Skipped
+  with no call when `reply_users` is only the user. The reply is the
+  conversation's activity (`_replyLatest`, kept apart from `_latest`,
+  which other reads overwrite with the newest post), so a reply after a
+  mark here passes `ChatRepositoryImpl._markedAt`. `markRead` marks the
+  channel at the newest reply when that is newer than the newest post,
+  falling back to the post if Slack refuses it — or the reply would light
+  it again next poll. Limits: a reply to a post older than the newest 15
+  goes unseen; a thread the user never followed, read only in Slack,
+  stays lit until the channel is opened here; a DM Slack counts read
+  (`unread_count_display` 0) is not checked for replies.
 - **A poll's answer is remembered** (`_wasUnread`, per isolate): a
   conversation not asked about this poll keeps its last answer, or an
   unread channel blinked out whenever the rotation passed it by — the

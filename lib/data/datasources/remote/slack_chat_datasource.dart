@@ -54,6 +54,12 @@ class SlackChatDatasource implements ChatRemoteDatasource {
   /// has read it — what the unread poll orders its checks by.
   static final _latest = <String, String>{};
 
+  /// The newest thread reply's `ts` per `team|conversation`, from the
+  /// `latest_reply` of the posts the unread poll reads. Kept apart from
+  /// [_latest], which several reads overwrite with the newest *post*: a
+  /// reply is activity too, and [markRead] marks past it.
+  static final _replyLatest = <String, String>{};
+
   /// Conversations the last check of each found unread, per `team|id`. A
   /// poll only asks about some of them, so one not asked about this time
   /// keeps the answer it had — or an unread channel would blink out of the
@@ -74,6 +80,17 @@ class SlackChatDatasource implements ChatRemoteDatasource {
   /// the main window and the chat window each poll once a minute.
   static const _unreadChecked = 15;
   static const _channelsChecked = 8;
+
+  /// How many of a conversation's newest posts the unread poll reads — one
+  /// request whatever the count. Their `latest_reply` is how a reply in a
+  /// thread is seen at all (`conversations.history` leaves replies out),
+  /// so a reply to an older post than these goes unseen.
+  static const _postsChecked = 15;
+
+  /// At most this many `conversations.replies` per conversation per poll,
+  /// for threads whose newest reply is past the channel's `last_read`.
+  /// Rate limits are per method, so these do not spend `conversations.info`'s.
+  static const _threadsChecked = 2;
 
   /// Message subtypes that make a conversation unread, as Slack's sidebar
   /// counts them: people's and bots' messages, not joins, leaves or topic
@@ -104,6 +121,7 @@ class SlackChatDatasource implements ChatRemoteDatasource {
     _users.clear();
     _byEmail.clear();
     _latest.clear();
+    _replyLatest.clear();
     _wasUnread.clear();
     _ims.clear();
     _imsListedAt.clear();
@@ -263,19 +281,93 @@ class SlackChatDatasource implements ChatRemoteDatasource {
     // `assistant_app_thread` parent, read in Slack's side panel, which
     // need not move the DM's own marker — its count can stay above 0.
     if (count is num && (count <= 0 || lastRead == null)) {
-      return (unread: count > 0, latest: _ts(_latest['$teamId|$id']));
+      return (unread: count > 0, latest: _activity('$teamId|$id'));
     }
-    final history = await _call(
-        'conversations.history', {'channel': id, 'limit': '5'});
+    final history = await _call('conversations.history',
+        {'channel': id, 'limit': '$_postsChecked'});
     final newer = _list(history['messages']);
     final top = newer.firstOrNull?['ts'] as String?;
     if (top != null) _latest['$teamId|$id'] = top;
-    final unread = lastRead != null &&
-        newer.any((m) =>
-            m['user'] != own &&
-            _unreadSubtypes.contains(m['subtype']) &&
-            (m['ts'] as String).compareTo(lastRead) > 0);
-    return (unread: unread, latest: _ts(_latest['$teamId|$id']));
+    bool counts(Map<String, dynamic> m, String after) =>
+        m['user'] != own &&
+        _unreadSubtypes.contains(m['subtype']) &&
+        m['ts'] is String &&
+        (m['ts'] as String).compareTo(after) > 0;
+    var unread = lastRead != null && newer.any((m) => counts(m, lastRead));
+
+    // Replies: `conversations.history` leaves them out, so a parent's
+    // `latest_reply` is the only sign of one.
+    String? newestReply;
+    final threads = <Map<String, dynamic>>[];
+    for (final m in newer) {
+      final r = m['latest_reply'];
+      if (r is! String) continue;
+      if (newestReply == null || r.compareTo(newestReply) > 0) newestReply = r;
+      if (lastRead != null && r.compareTo(lastRead) > 0) threads.add(m);
+    }
+    final key = '$teamId|$id';
+    if (newestReply != null) {
+      _replyLatest[key] = newestReply;
+    } else {
+      _replyLatest.remove(key);
+    }
+    if (!unread && lastRead != null) {
+      threads.sort((a, b) =>
+          (b['latest_reply'] as String).compareTo(a['latest_reply'] as String));
+      for (final parent in threads.take(_threadsChecked)) {
+        if (await _threadUnread(id, parent, lastRead, own, counts)) {
+          unread = true;
+          break;
+        }
+      }
+    }
+    return (unread: unread, latest: _activity(key));
+  }
+
+  /// Whether [parent]'s thread has a reply from someone else past both
+  /// the channel's [lastRead] and the thread's own `last_read` — which
+  /// Slack keeps apart (a thread read in Slack's side panel moves only its
+  /// own) and gives a thread the user follows. A thread the user has never
+  /// followed has none, so the channel's marker decides: opening the
+  /// channel here clears it ([markRead] marks past its newest reply).
+  Future<bool> _threadUnread(
+    String channel,
+    Map<String, dynamic> parent,
+    String lastRead,
+    String own,
+    bool Function(Map<String, dynamic>, String) counts,
+  ) async {
+    final ts = parent['ts'] as String?;
+    if (ts == null) return false;
+    // Someone's only reply being the user's own is no news.
+    final users = parent['reply_users'];
+    if (users is List && users.isNotEmpty && users.every((u) => u == own)) {
+      return false;
+    }
+    final data = await _call('conversations.replies',
+        {'channel': channel, 'ts': ts, 'oldest': lastRead, 'limit': '50'});
+    final replies = _list(data['messages']);
+    final head = replies.where((m) => m['ts'] == ts).firstOrNull;
+    final threadRead =
+        (parent['last_read'] ?? head?['last_read']) as String?;
+    final after = threadRead != null && threadRead.compareTo(lastRead) > 0
+        ? threadRead
+        : lastRead;
+    final unread = replies.any((m) => m['ts'] != ts && counts(m, after));
+    if (unread) {
+      debugPrint('[Slack] $teamId: $channel unread by a reply in thread $ts '
+          '(${threadRead == null ? 'channel' : 'thread'} last_read)');
+    }
+    return unread;
+  }
+
+  /// The newest post or thread reply seen in a conversation.
+  DateTime? _activity(String key) {
+    final post = _latest[key], reply = _replyLatest[key];
+    if (reply == null || (post != null && post.compareTo(reply) >= 0)) {
+      return _ts(post);
+    }
+    return _ts(reply);
   }
 
   /// A channel only with `channels:write` and `groups:write`, which
@@ -299,8 +391,21 @@ class SlackChatDatasource implements ChatRemoteDatasource {
             {'channel': chat.id, 'limit': '1'}))['messages'])
         .firstOrNull?['ts'] as String?;
     if (newest == null) return;
-    await _call('conversations.mark', {'channel': chat.id, 'ts': newest},
-        post: true);
+    // Past the newest thread reply too, or a reply that lit the channel
+    // ([_threadUnread]) would light it again on the next poll.
+    final reply = _replyLatest['$teamId|${chat.id}'];
+    final mark =
+        reply != null && reply.compareTo(newest) > 0 ? reply : newest;
+    try {
+      await _call('conversations.mark', {'channel': chat.id, 'ts': mark},
+          post: true);
+    } on ServerException catch (e) {
+      if (mark == newest || e is SlackReconnectException) rethrow;
+      debugPrint('[Slack] $teamId: marking at a reply failed ($e) — '
+          'marking at the newest post');
+      await _call('conversations.mark', {'channel': chat.id, 'ts': newest},
+          post: true);
+    }
   }
 
   @override

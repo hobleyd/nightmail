@@ -675,6 +675,122 @@ void main() {
         reason: 'a read channel\'s activity is learned too');
   });
 
+  group('a reply in a thread', () {
+    // Every channel's newest post (a parent) is older than last_read; only
+    // its thread moved.
+    late Map<String, Map<String, dynamic>> parents;
+    late Map<String, List<Map<String, dynamic>>> replies;
+    late List<String> repliesAsked;
+
+    setUp(() {
+      repliesAsked = [];
+      routes['users.conversations'] = (_) => {
+            'ok': true,
+            'channels': [
+              for (final id in parents.keys)
+                {'id': id, 'is_channel': true, 'name': id.toLowerCase()},
+            ],
+          };
+      routes['conversations.info'] = (o) => {
+            'ok': true,
+            'channel': {
+              'id': o.queryParameters['channel'],
+              'is_channel': true,
+              'last_read': '1700000100.000000',
+            },
+          };
+      routes['conversations.history'] = (o) => {
+            'ok': true,
+            'messages': [parents[o.queryParameters['channel']]],
+          };
+      routes['conversations.replies'] = (o) {
+        final id = o.queryParameters['channel'] as String;
+        repliesAsked.add(id);
+        expect(o.queryParameters['oldest'], '1700000100.000000');
+        return {
+          'ok': true,
+          'messages': [parents[id], ...?replies[id]],
+        };
+      };
+    });
+
+    Map<String, dynamic> parent(String latestReply,
+            {List<String> users = const ['UANN'], String? lastRead}) =>
+        {
+          'ts': '1700000050.000000',
+          'thread_ts': '1700000050.000000',
+          'user': 'UBOB',
+          'reply_count': 3,
+          'latest_reply': latestReply,
+          'reply_users': users,
+          'last_read': ?lastRead,
+        };
+
+    Map<String, dynamic> reply(String ts, String user, {String? subtype}) => {
+          'ts': ts,
+          'thread_ts': '1700000050.000000',
+          'user': user,
+          'subtype': ?subtype,
+        };
+
+    test('by someone else lights the channel; the user\'s own, a thread read '
+        'in Slack, or one before last_read do not', () async {
+      parents = {
+        'CNEW': parent('1700000200.000000'),
+        'COWN': parent('1700000200.000000', users: ['UME']),
+        'CMINE': parent('1700000300.000000', users: ['UANN', 'UME']),
+        'CREAD': parent('1700000200.000000', lastRead: '1700000200.000000'),
+        'COLD': parent('1700000090.000000'),
+        'CJOIN': parent('1700000200.000000'),
+      };
+      replies = {
+        'CNEW': [reply('1700000200.000000', 'UANN')],
+        'CMINE': [
+          reply('1700000090.000000', 'UANN'),
+          reply('1700000300.000000', 'UME'),
+        ],
+        'CREAD': [reply('1700000200.000000', 'UANN')],
+        'CJOIN': [
+          reply('1700000200.000000', 'UANN', subtype: 'channel_join'),
+        ],
+      };
+      final recent = await datasource().listRecentChats();
+      expect({for (final c in recent) c.id: c.unread}, {
+        'CNEW': true,
+        'COWN': false,
+        'CMINE': false,
+        'CREAD': false,
+        'COLD': false,
+        'CJOIN': false,
+      });
+      expect(repliesAsked, isNot(contains('COWN')),
+          reason: 'only the user replied: no call');
+      expect(repliesAsked, isNot(contains('COLD')),
+          reason: 'nothing past last_read: no call');
+      expect(recent.firstWhere((c) => c.id == 'CNEW').lastActivity,
+          DateTime.fromMicrosecondsSinceEpoch(1700000200000000),
+          reason: 'the reply is the activity, past any mark made here');
+    });
+
+    test('marking the channel read marks past its newest reply', () async {
+      await connected(scopes: const {'channels:write', 'groups:write'});
+      parents = {'CNEW': parent('1700000200.000000')};
+      replies = {
+        'CNEW': [reply('1700000200.000000', 'UANN')],
+      };
+      final ds = datasource();
+      final chat = (await ds.listRecentChats()).single;
+      expect(chat.unread, isTrue);
+      final marked = <String>[];
+      routes['conversations.mark'] = (o) {
+        marked.add((o.data as Map)['ts'] as String);
+        return {'ok': true};
+      };
+      await ds.markRead(chat);
+      expect(marked, ['1700000200.000000']);
+    });
+  });
+
   test('every channel is reached in turn, however many', () async {
     routes['users.conversations'] = (_) => {
           'ok': true,

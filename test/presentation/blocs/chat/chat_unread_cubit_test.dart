@@ -121,6 +121,21 @@ void main() {
     await c.close();
   });
 
+  test('a chat read in this window drops out at once, before the server '
+      'answers', () async {
+    final repo = _Repo(const [teams, slack], const {'slack:T1': 2},
+        ChatKind.space);
+    final c = ChatUnreadCubit(accountManager: _Accounts(), repository: repo);
+    c.start();
+    await c.refresh();
+    repo.readEvents
+        .add((accountId: 'slack:T1', key: 'slack:T1-0', here: true));
+    await pumpEventQueue();
+    expect(c.state.unreadChats['slack:T1']!.map((x) => x.key), ['slack:T1-1']);
+    expect(c.state.unreadIn('slack:T1'), 1);
+    await c.close();
+  });
+
   test('a choice no longer offered falls back to the first', () async {
     final c = await cubit(const [teams, slack]);
     c.choose('slack:T9');

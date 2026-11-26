@@ -316,8 +316,13 @@ account's recent chats is unread (`ChatUnreadCubit`, main window only).
   user's own post, or one marked earlier, as its newest, and nothing was
   sent — it stayed lit while the thread was read.
   Microsoft wants `user {id, tenantId}` (tenant from `/organization`);
-  Nightware takes the id alone. `ChatRepository.reads` clears the dot at
-  once in the same isolate — the repository also counts a chat it marked as
+  Nightware takes the id alone. The mark is local first: `markRead` counts
+  the chat read and announces it on `readKeys` before it asks the server, so
+  the pane's unread list and the dot drop it at once (`ChatUnreadCubit`
+  drops every `readKeys` key); `reads`, which re-polls every system, fires
+  after the server answers. Until 2.0.0 everything waited for that answer,
+  and a channel read in the pane sat in the unread list for the round trip
+  — visible when the user moved straight on to the next one. The repository also counts a chat it marked as
   read until something newer arrives, since Microsoft's read state can trail
   the mark. A chat read in the chat window (its own isolate) clears at once
   too, and one read in the pane un-bolds in the window: `ChatReadRelay`

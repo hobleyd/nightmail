@@ -56,7 +56,8 @@ class ChatUnreadState extends Equatable {
 ///
 /// This polls: one page of recent chats per system every [pollInterval]
 /// ([ChatRepository.unreadCount]). A chat read in this window clears at once
-/// ([ChatRepository.reads]), and so does one read in the chat window — its
+/// ([ChatRepository.readKeys], before the server answers; [ChatRepository.reads]
+/// re-polls once it has), and so does one read in the chat window — its
 /// own isolate — passed here by `ChatReadRelay`; one read in Teams or Slack
 /// itself clears on the next poll. A NightMail Server account
 /// also refreshes when its change stream says `chat` (nightware ADR 0007 D5):
@@ -76,7 +77,7 @@ class ChatUnreadCubit extends Cubit<ChatUnreadState> {
 
   Timer? _timer;
   StreamSubscription<String>? _reads;
-  StreamSubscription<void>? _readElsewhere;
+  StreamSubscription<void>? _readKeys;
   StreamSubscription<void>? _sourcesChanged;
   StreamSubscription<ChangeSignal>? _changes;
 
@@ -89,11 +90,12 @@ class ChatUnreadCubit extends Cubit<ChatUnreadState> {
     _reads ??= _repository.reads.listen((id) {
       if (state.sources.any((s) => s.id == id)) unawaited(refresh());
     });
-    // One read in the chat window is dropped here as it is, not re-polled:
-    // a refresh asks every system, and clicking down a row of Slack
-    // channels would spend that many polls of Slack's quota.
-    _readElsewhere ??= _repository.readKeys
-        .where((r) => !r.here)
+    // A read is dropped here as it is announced — before the server has the
+    // mark when it is this window's (`reads` re-polls after), and without a
+    // re-poll when it is the chat window's: a refresh asks every system, and
+    // clicking down a row of Slack channels would spend that many polls of
+    // Slack's quota.
+    _readKeys ??= _repository.readKeys
         .listen((r) => _dropRead(r.accountId, r.key));
     _sourcesChanged ??=
         _repository.sourcesChanged.listen((_) => unawaited(refresh()));
@@ -167,7 +169,7 @@ class ChatUnreadCubit extends Cubit<ChatUnreadState> {
   Future<void> close() {
     _timer?.cancel();
     _reads?.cancel();
-    _readElsewhere?.cancel();
+    _readKeys?.cancel();
     _sourcesChanged?.cancel();
     _changes?.cancel();
     return super.close();

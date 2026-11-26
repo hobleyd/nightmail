@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:nightmail/data/datasources/remote/chat_remote_datasource.dart';
 import 'package:nightmail/data/repositories/chat_repository_impl.dart';
@@ -68,6 +70,29 @@ void main() {
     expect(await keys, (accountId: 'acct', key: 'a', here: true));
   });
 
+  test('a mark is announced before the server answers', () async {
+    final ds = _Chats([chat('a', unread: true)])..answer = Completer<void>();
+    final repo = ChatRepositoryImpl(
+        accountManager: _Accounts(ds, chats: true), contacts: _NoContacts(),
+        slack: SlackWorkspaces(storage: MemorySecureStorage()),
+        local: MemoryChatLocalDatasource());
+    var polls = 0;
+    repo.reads.listen((_) => polls++);
+    final keys = <String>[];
+    repo.readKeys.listen((r) => keys.add(r.key));
+    final marking = repo.markRead('acct', chat('a', unread: true));
+    await pumpEventQueue();
+    expect(ds.marked, ['a'], reason: 'asked, not yet answered');
+    expect(keys, ['a'], reason: 'the unread list drops it now');
+    expect(polls, 0, reason: 'nothing re-polls before the server has it');
+    expect(await repo.unreadCount('acct'), 0);
+
+    ds.answer!.complete();
+    await marking;
+    await pumpEventQueue();
+    expect(polls, 1);
+  });
+
   test('a chat read in the other window stays read here, unasked', () async {
     final before = DateTime.now().subtract(const Duration(minutes: 1));
     final later = DateTime.now().add(const Duration(minutes: 1));
@@ -121,8 +146,14 @@ class _Chats extends Fake implements ChatRemoteDatasource {
     return recent;
   }
 
+  /// Holds the server's answer to [markRead] until completed.
+  Completer<void>? answer;
+
   @override
-  Future<void> markRead(ChatConversation chat) async => marked.add(chat.id);
+  Future<void> markRead(ChatConversation chat) async {
+    marked.add(chat.id);
+    await answer?.future;
+  }
 }
 
 class _NoContacts extends Fake implements ContactCacheRepository {}

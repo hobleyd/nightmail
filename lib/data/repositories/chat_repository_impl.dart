@@ -423,15 +423,20 @@ class ChatRepositoryImpl implements ChatRepository {
     ChatConversation conversation,
   ) async {
     if (conversation.isChannel) return;
+    // Counted read here before the server is asked: the unread list, the
+    // window's bold rows and the other window drop it at once, not when
+    // Slack or Graph answers — a row stayed in the pane's unread list for
+    // that round trip.
     _markedAt['$accountId|${conversation.key}'] = DateTime.now();
+    _countRead(accountId, conversation.key);
+    _readKeys.add((accountId: accountId, key: conversation.key, here: true));
     final done = await _guard(accountId, (ds) => ds.markRead(conversation));
     done.match(
       (f) => debugPrint('[Chat] mark read failed: ${f.message}'),
       (_) {},
     );
-    _countRead(accountId, conversation.key);
+    // Re-polls every system, so only once the server has the mark.
     _reads.add(accountId);
-    _readKeys.add((accountId: accountId, key: conversation.key, here: true));
   }
 
   @override

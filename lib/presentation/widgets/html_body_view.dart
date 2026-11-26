@@ -362,10 +362,17 @@ class _HtmlBodyViewState extends State<HtmlBodyView> {
   static bool get _isDesktop =>
       Platform.isLinux || Platform.isMacOS || Platform.isWindows;
 
+  /// html_view backs the desktop builds and the web build, where it is an
+  /// iframe. webview_flutter has no web implementation, so constructing its
+  /// controller there throws and the reading pane drew Flutter's grey error
+  /// box instead of the message. Only the desktop builds have the file cache,
+  /// so the web build still delivers the body inline with `data:` images.
+  static bool get _usesHtmlView => kIsWeb || _isDesktop;
+
   @override
   void initState() {
     super.initState();
-    if (_isDesktop) {
+    if (_usesHtmlView) {
       _initHtmlView();
     } else {
       _initFlutter();
@@ -493,7 +500,7 @@ class _HtmlBodyViewState extends State<HtmlBodyView> {
   /// surfaced rather than swallowed: an unawaited `loadHtml` that rejects
   /// leaves the overlay blank with nothing to explain it.
   void _dispatch(_Prepared prepared) {
-    if (_isDesktop) {
+    if (_usesHtmlView) {
       final ctrl = _htmlController;
       // Not initialised yet — _initHtmlView loads _pending when it finishes.
       if (ctrl == null) return;
@@ -673,6 +680,18 @@ table { max-width: 100% !important; }
           '<html><head>$_utf8Meta$injected</head><body>$resolved</body></html>';
     }
 
+    // The web build's iframe reports no link clicks (html_view's web
+    // controller has no bridge into a `srcdoc` body), so a link would load in
+    // the reading pane itself. Send every link to a new tab instead. No
+    // `href`, so `base-uri 'none'` has nothing to refuse.
+    if (kIsWeb) {
+      final headEnd = resolved.indexOf('</head>');
+      if (headEnd != -1) {
+        resolved = '${resolved.substring(0, headEnd)}<base target="_blank">'
+            '${resolved.substring(headEnd)}';
+      }
+    }
+
     // Last, so it covers both branches — and, in the fragment branch, so it
     // lands ahead of the `<html>` the fragment was wrapped in rather than
     // inside the head that was built for it.
@@ -688,7 +707,7 @@ table { max-width: 100% !important; }
     if (error != null) return _LoadErrorPanel(message: error);
 
     final Widget webviewWidget;
-    if (_isDesktop) {
+    if (_usesHtmlView) {
       final ctrl = _htmlController;
       webviewWidget = ctrl != null
           ? HtmlViewWidget(controller: ctrl)

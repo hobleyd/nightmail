@@ -3,7 +3,6 @@ import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 
 import '../../../core/platform/touch_metrics.dart';
@@ -20,18 +19,18 @@ import '../../blocs/chat/chat_conversation_cubit.dart';
 import '../../blocs/chat/chat_unread_cubit.dart';
 import '../../blocs/email_detail/email_detail_bloc.dart';
 import '../../blocs/email_detail/email_detail_state.dart';
-import 'chat_conversation_row.dart';
 import 'chat_conversation_view.dart';
-import 'chat_pane_picker.dart';
+import 'chat_pane_search.dart';
 import 'chat_rename_dialog.dart';
 import 'chat_source_picker.dart';
 import 'chat_window_target.dart';
+import '../marquee_text.dart';
 import '../../../core/platform/platform.dart';
 
 /// The Chat pane beside the reading pane: a one-on-one with the selected
-/// email's sender, or — from the dropdown — with anyone else on it who is in
-/// the account's organisation or already has a one-on-one with the account.
-/// Other outsiders are left out: whether Teams or Google Chat would let a chat
+/// email's sender, or — found in the pane's search — with anyone else on it
+/// who is in the account's organisation or already has a one-on-one with
+/// the account. Other outsiders are left out: whether Teams or Google Chat would let a chat
 /// be started with them can't be known without trying
 /// ([ChatRepository.reachable]).
 ///
@@ -45,10 +44,11 @@ import '../../../core/platform/platform.dart';
 ///
 /// Laid out top to bottom: the system (a dropdown when there is more than
 /// one, [ChatSourcePicker]); its unread chats and channels, newest first, in
-/// the top 30% ([ChatUnreadState.unreadChats]) — one clicked stays open across
-/// emails; then a bar with the email's people and a field that finds anyone
-/// in the address book or any chat or channel ([ChatPanePicker]) — picked
-/// there, it lasts until another email is selected; and the conversation.
+/// the top 30% ([ChatUnreadState.unreadChats]), with a field at its foot that
+/// finds anyone on the email or in the address book, or any chat or channel
+/// ([ChatPaneList]) — a chat clicked stays open across emails, a person not
+/// on the email until another email is selected; then the conversation's
+/// name ([MarqueeText]) and Rename; and the conversation.
 class ChatPanel extends StatelessWidget {
   const ChatPanel({
     super.key,
@@ -89,12 +89,13 @@ class _ChatPanelBodyState extends State<_ChatPanelBody> {
   ChatAccess? _access;
   String? _consentError;
 
-  /// The address chosen in the dropdown, kept across emails while it is on
-  /// them.
+  /// The person on the email picked in the search, kept across emails while
+  /// they are on them.
   String? _chosen;
 
-  /// A chat, or a person not on the email, picked from the dropdown, and
-  /// the email it was picked on: a new email goes back to its people.
+  /// A chat picked from the list or search, or a person not on the email
+  /// found in the search, and the email it was picked on: a new email lets
+  /// the person go (a chat is [_held]).
   ChatConversation? _chat;
   ChatPerson? _picked;
   String? _chatEmailId;
@@ -221,7 +222,7 @@ class _ChatPanelBodyState extends State<_ChatPanelBody> {
         sourceId: sourceId, conversation: state.conversation)));
   }
 
-  /// Renames the open conversation; the picker's label follows.
+  /// Renames the open conversation; the bar's name follows.
   Future<void> _rename() async {
     final cubit = context.read<ChatConversationCubit>();
     final conversation = cubit.state.conversation;
@@ -470,12 +471,26 @@ class _ChatPanelBodyState extends State<_ChatPanelBody> {
                       children: [
                         SizedBox(
                           height: top,
-                          child: _UnreadList(
+                          child: ChatPaneList(
                             key: ValueKey(chatId),
                             chatId: chatId,
+                            account: account,
+                            people: candidates,
                             chats: unreadChats,
                             selected: chat,
-                            onTap: (u) => setState(() {
+                            onPerson: (p) => setState(() {
+                              _chat = null;
+                              _held = false;
+                              if (candidates.any((c) => c.email == p.email)) {
+                                _chosen = p.email;
+                                _picked = null;
+                              } else {
+                                _picked = p;
+                                _chatEmailId = email?.id;
+                                _chatSourceId = chatId;
+                              }
+                            }),
+                            onChat: (u) => setState(() {
                               _chat = u;
                               _picked = null;
                               _held = true;
@@ -490,15 +505,7 @@ class _ChatPanelBodyState extends State<_ChatPanelBody> {
                                   box.maxHeight),
                           onEnd: _saveSplit,
                         ),
-                        _conversationBar(
-                          c: c,
-                          chatId: chatId,
-                          account: account,
-                          email: email,
-                          candidates: candidates,
-                          person: person,
-                          chat: chat,
-                        ),
+                        _conversationBar(c: c, person: person, chat: chat),
                         Divider(height: 1, color: c.separator),
                         Expanded(child: body),
                       ],
@@ -511,17 +518,14 @@ class _ChatPanelBodyState extends State<_ChatPanelBody> {
     );
   }
 
-  /// Above the conversation: who or what it is — the email's people and
-  /// "find anyone" ([ChatPanePicker]) — and Rename.
+  /// Above the conversation: who or what it is, in bold — scrolling to and
+  /// fro when it is too long to fit ([MarqueeText]) — and Rename.
   Widget _conversationBar({
     required AppColors c,
-    required String chatId,
-    required Account account,
-    required Email? email,
-    required List<ChatPerson> candidates,
     required ChatPerson? person,
     required ChatConversation? chat,
   }) {
+    final label = chat?.title ?? person?.label;
     return SizedBox(
       height: touchRowHeight(36),
       child: Padding(
@@ -529,32 +533,15 @@ class _ChatPanelBodyState extends State<_ChatPanelBody> {
         child: Row(
           children: [
             Expanded(
-              child: ChatPanePicker(
-                chatId: chatId,
-                account: account,
-                people: candidates,
-                chats: const [],
-                selectedPerson: chat == null ? person : null,
-                selectedChat: chat,
-                onPerson: (p) => setState(() {
-                  _chat = null;
-                  _held = false;
-                  if (candidates.any((c) => c.email == p.email)) {
-                    _chosen = p.email;
-                    _picked = null;
-                  } else {
-                    _picked = p;
-                    _chatEmailId = email?.id;
-                    _chatSourceId = chatId;
-                  }
-                }),
-                onChat: (c) => setState(() {
-                  _chat = c;
-                  _picked = null;
-                  _held = false;
-                  _chatEmailId = email?.id;
-                  _chatSourceId = chatId;
-                }),
+              child: MarqueeText(
+                label ?? 'Chat',
+                style: TextStyle(
+                  color: label == null ? c.textSecondary : c.textPrimary,
+                  fontSize: 14,
+                  fontWeight:
+                      label == null ? FontWeight.w400 : FontWeight.w600,
+                  letterSpacing: -0.2,
+                ),
               ),
             ),
             BlocBuilder<ChatConversationCubit, ChatConversationState>(
@@ -624,225 +611,6 @@ class _SplitHandleState extends State<_SplitHandle> {
           ),
         ),
       ),
-    );
-  }
-}
-
-/// The top of the pane: the chosen system's unread chats and channels,
-/// newest first, with a field at its foot (just above the divider) that
-/// finds any chat or channel by name, team or member ([matchChats]) — the
-/// results take the list's place until the field is cleared. The open one
-/// stays listed, highlighted, once it is read.
-///
-/// Searching lists the system's conversations: the cache on disk at once,
-/// then one [ChatRepository.conversations] per pane and system, on the first
-/// keystroke — never just for being shown.
-class _UnreadList extends StatefulWidget {
-  const _UnreadList({
-    super.key,
-    required this.chatId,
-    required this.chats,
-    required this.selected,
-    required this.onTap,
-  });
-
-  final String chatId;
-  final List<ChatConversation> chats;
-  final ChatConversation? selected;
-  final ValueChanged<ChatConversation> onTap;
-
-  @override
-  State<_UnreadList> createState() => _UnreadListState();
-}
-
-class _UnreadListState extends State<_UnreadList> {
-  final _query = TextEditingController();
-  final _focus = FocusNode();
-  List<ChatConversation> _all = const [];
-  bool _loading = false;
-  bool _loaded = false;
-
-  /// On the selected row, so a pick that lands below (or above) the rows in
-  /// view — an older chat from search — is scrolled to.
-  final _selectedRow = GlobalKey();
-
-  @override
-  void didUpdateWidget(_UnreadList old) {
-    super.didUpdateWidget(old);
-    if (widget.selected != null && widget.selected?.key != old.selected?.key) {
-      WidgetsBinding.instance.addPostFrameCallback((_) => _reveal());
-    }
-  }
-
-  /// Scrolls the selected row just into view; a no-op when it already is.
-  Future<void> _reveal() async {
-    final row = _selectedRow.currentContext;
-    if (row == null || !mounted) return;
-    const d = Duration(milliseconds: 200);
-    await Scrollable.ensureVisible(row,
-        duration: d,
-        alignmentPolicy: ScrollPositionAlignmentPolicy.keepVisibleAtEnd);
-    final again = _selectedRow.currentContext;
-    if (again == null || !mounted) return;
-    await Scrollable.ensureVisible(again,
-        duration: d,
-        alignmentPolicy: ScrollPositionAlignmentPolicy.keepVisibleAtStart);
-  }
-
-  @override
-  void dispose() {
-    _query.dispose();
-    _focus.dispose();
-    super.dispose();
-  }
-
-  Future<void> _load() async {
-    if (_loaded) return;
-    _loaded = true;
-    setState(() => _loading = true);
-    final repo = sl<ChatRepository>();
-    final cached = await repo.cachedConversations(widget.chatId);
-    if (!mounted) return;
-    if (cached.isNotEmpty) setState(() => _all = cached);
-    final listed = await repo.conversations(widget.chatId);
-    if (!mounted) return;
-    listed.match(
-      (f) => debugPrint('[Chat] pane search: list unavailable: $f'),
-      (l) => _all = l,
-    );
-    setState(() => _loading = false);
-  }
-
-  void _onChanged(String text) {
-    if (text.trim().isNotEmpty) unawaited(_load());
-    setState(() {});
-  }
-
-  void _clear() {
-    _query.clear();
-    setState(() {});
-  }
-
-  void _open(ChatConversation chat) {
-    widget.onTap(chat);
-    _clear();
-    _focus.unfocus();
-  }
-
-  /// Matches for [q], newest first within each group, unread ones bold as
-  /// the poll says (full listings carry no read state on Slack or Google).
-  List<ChatConversation> _results(String q) {
-    final unread = {for (final u in widget.chats) if (u.unread) u.key};
-    final byActivity = [..._all]..sort((a, b) {
-        final at = a.lastActivity, bt = b.lastActivity;
-        if (at == null || bt == null) {
-          return at == null ? (bt == null ? 0 : 1) : -1;
-        }
-        return bt.compareTo(at);
-      });
-    return [
-      for (final ch in matchChats(byActivity, q, limit: 50))
-        unread.contains(ch.key) ? ch.copyWith(unread: true) : ch,
-    ];
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final c = context.colors;
-    final q = _query.text.trim().toLowerCase();
-    final searching = q.isNotEmpty;
-    final shown = searching ? _results(q) : widget.chats;
-
-    final Widget list;
-    if (shown.isEmpty) {
-      list = Center(
-        child: Text(
-          !searching
-              ? 'No unread chats'
-              : _loading
-                  ? 'Searching…'
-                  : 'No chats or channels match',
-          style: TextStyle(fontSize: 12.5, color: c.textTertiary),
-        ),
-      );
-    } else {
-      // Every row built (unread, or at most 50 matches), so the selected
-      // one has a context to scroll to wherever it sits.
-      list = SingleChildScrollView(
-        padding: const EdgeInsets.symmetric(vertical: 4),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            for (final ch in shown)
-              ChatConversationRow(
-                key: !searching && ch.key == widget.selected?.key
-                    ? _selectedRow
-                    : ValueKey(ch.key),
-                conversation: ch,
-                selected: ch.key == widget.selected?.key,
-                onTap: () => _open(ch),
-              ),
-          ],
-        ),
-      );
-    }
-
-    return Column(
-      children: [
-        Expanded(child: list),
-        Padding(
-          padding: const EdgeInsets.fromLTRB(10, 4, 10, 6),
-          child: CallbackShortcuts(
-            bindings: {
-              const SingleActivator(LogicalKeyboardKey.escape): () {
-                _clear();
-                _focus.unfocus();
-              },
-            },
-            child: TextField(
-              controller: _query,
-              focusNode: _focus,
-              onChanged: _onChanged,
-              onSubmitted: (_) {
-                if (q.isEmpty) return;
-                final hits = _results(q);
-                if (hits.isNotEmpty) _open(hits.first);
-              },
-              style: TextStyle(fontSize: 13, color: c.textPrimary),
-              decoration: InputDecoration(
-                isDense: true,
-                hintText: 'Find a chat or channel',
-                hintStyle: TextStyle(fontSize: 13, color: c.textMuted),
-                prefixIcon: Icon(Icons.search, size: 16, color: c.textMuted),
-                prefixIconConstraints:
-                    const BoxConstraints(minWidth: 30, minHeight: 28),
-                suffixIcon: searching
-                    ? IconButton(
-                        icon: Icon(Icons.close, size: 14, color: c.textMuted),
-                        tooltip: 'Clear',
-                        onPressed: _clear,
-                      )
-                    : null,
-                suffixIconConstraints:
-                    const BoxConstraints(minWidth: 28, minHeight: 28),
-                contentPadding: const EdgeInsets.symmetric(vertical: 7),
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(6),
-                  borderSide: BorderSide(color: c.separatorStrong),
-                ),
-                enabledBorder: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(6),
-                  borderSide: BorderSide(color: c.separatorStrong),
-                ),
-                focusedBorder: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(6),
-                  borderSide: const BorderSide(color: AppColors.accent),
-                ),
-              ),
-            ),
-          ),
-        ),
-      ],
     );
   }
 }

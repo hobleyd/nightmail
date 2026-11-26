@@ -3,7 +3,7 @@
 The Chat button (third in `ViewShortcutButtons`, right of Tasks) opens a
 pane beside the reading pane (`HomeView.chat`, `ChatPanel`) — a one-on-one
 with the selected email's sender, or anyone else on it the account can chat
-with, from the dropdown. Double-clicking it
+with, found by name in the pane's search. Double-clicking it
 opens the chat window (`'chat'` sub-window, `ChatWindowApp`): every chat and
 channel on the left, grouped (Chats; Teams › channels) and newest first; the
 open one's history on the right, channel threads beside it; search on top.
@@ -55,7 +55,7 @@ the systems; a stale choice falls back to the first.
 
 ## Colleagues, and outsiders you already chat with
 
-The dropdown lists the people on the email the account can chat with
+The pane's search offers the people on the email the account can chat with
 (`ChatRepository.reachable`). First the colleagues (`colleagues`): an
 address on one of the account's own domains (aliases included; never a
 personal domain like `gmail.com`/`outlook.com`, the same rule as compose's
@@ -237,46 +237,59 @@ Google: the newest message the unread check already reads, remembered in
   it in the rest of the pane and holds it there across emails (`_held`)
   until something else is picked or the system changes; it stays listed,
   highlighted, after it is read. Nothing unread: "No unread chats".
-- **A field at the foot of the unread list** ("Find a chat or channel",
-  just above the divider) swaps the list for every chat and channel whose
-  name, team or members match (`matchChats`, shared with `ChatPanePicker`),
-  newest first; picking one (click, or Enter for the first) opens and holds
-  it like an unread pick and clears the field, and the list scrolls to its
-  row (an older chat sorts below the rows in view); Escape clears. The first
-  keystroke lists the system's conversations — the disk cache, then one
-  `conversations()` per pane and system — never merely opening the pane.
+- **A field at the foot of the unread list** ("Find a person, chat or
+  channel", just above the divider; `ChatPaneList`) swaps the list for the
+  people and the chats and channels that match — see "Finding anyone from
+  the pane". A chat or channel picked there (click, or Enter for the first)
+  opens and holds it like an unread pick and clears the field, and the list
+  scrolls to its row (an older chat sorts below the rows in view); Escape
+  clears. The first keystroke lists the system's conversations — the disk
+  cache, then one `conversations()` per pane and system — never merely
+  opening the pane.
 - **Switching away and back keeps the pick.** Meetings, Tasks or email
   dispose the pane; its pick (`_chat`, `_picked`, `_held`, the email and
   system it was made on, the chosen person) is kept in a static
   `_lastOpen` on dispose and restored in `initState`, so it reopens on the
   same chat or channel. The usual rules still apply on return: another
-  system lets it go, and a dropdown pick (not `_held`) lets go if another
-  email was selected meanwhile.
+  system lets it go, and a person picked from outside the email (`_picked`,
+  not `_held`) lets go if another email was selected meanwhile.
 
 ## Finding anyone from the pane
 
-The bar between the unread list and the conversation is a menu
-(`ChatPanePicker`) of the email's people with a field on top: typing
+The unread list's field (`ChatPaneList`) is the pane's only picker: typing
 matches the email's people, the address book and every listed chat and
-channel. It is always there once the system has chat access, even for one
-person or no email at all.
+channel — people first, then chats newest first. It is there once the
+system has chat access, even with no email at all.
 
-- **People** come from the contacts typeahead (`SearchContacts` — local
-  SQL, never the network; see `lib/infrastructure/contacts/CLAUDE.md`), then
-  through `reachable`, the same gate as the email's people: an outsider
-  with no one-on-one is never offered. On Google each outsider is a
-  `findDirectMessage`, so answers are remembered for as long as the menu
-  is open, not asked per keystroke.
-- **Chats and channels** are matched in Dart on title, team and members
-  over `cachedConversations` (disk) and then one `conversations()` per
-  menu — in the main window that is often the first listing this isolate
-  has made, since the unread poll uses `listRecentChats`.
-- A person or chat picked here holds the pane until another email or
-  system is selected (`_picked`, `_chat`) — unlike a pick from the unread
-  list, which outlasts the email. Enter takes the first match.
-- `MenuAnchor` maps every arrow key to focus traversal; the field maps
-  left/right back to cursor movement, or they would jump out of it
-  (`chat_pane_picker_test.dart`). Up/down still move into the list.
+- **People** are the email's (sender, To, Cc — already through
+  `reachable`), then the contacts typeahead (`SearchContacts` — local SQL,
+  never the network; see `lib/infrastructure/contacts/CLAUDE.md`, 200 ms
+  debounce), through the same `reachable` gate: an outsider with no
+  one-on-one is never offered. On Google each outsider is a
+  `findDirectMessage`, so answers are remembered for the list's life (it
+  is keyed by system), not asked per keystroke.
+- **Chats and channels** are matched in Dart (`matchChats`) on title, team
+  and members over `cachedConversations` (disk) and then one
+  `conversations()` — in the main window that is often the first listing
+  this isolate has made, since the unread poll uses `listRecentChats`. A
+  one-on-one with someone already offered as a person is left out.
+- **Enter** takes the first person, else the first chat.
+- **Picks:** someone on the email becomes `_chosen` (kept across emails
+  while they are on them); anyone else is `_picked` and holds the pane until
+  another email or system is selected; a chat is `_held` like an unread
+  pick and outlasts the email.
+- Other people on the email are no longer listed without typing: until
+  2.1.0 the bar above the conversation was a dropdown (`ChatPanePicker`)
+  that listed them, with this search on top. It went once the field above
+  it could do the same.
+
+**The bar above the conversation** is just its name, bold
+(`MarqueeText`): a name too long for the pane scrolls slowly to its end
+and back (25 px/s, resting 1.5 s at each end; one `AnimationController`
+on `repeat(reverse: true)`, never timers), still when it fits, an ellipsis
+under the platform's reduce-motion. A new name starts from its beginning.
+A widget test with a long title must not `pumpAndSettle` — the scroll never
+settles. Rename sits at its right.
 
 The Chat button carries the Tasks button's red dot while any of the active
 account's recent chats is unread (`ChatUnreadCubit`, main window only).

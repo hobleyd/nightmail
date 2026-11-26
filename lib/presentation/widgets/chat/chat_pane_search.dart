@@ -10,10 +10,10 @@ import '../../../domain/usecases/search_contacts.dart';
 import '../../../infrastructure/accounts/account.dart';
 import '../../../injection_container.dart';
 import '../../blocs/chat/chat_conversation_cubit.dart';
+import 'chat_conversation_row.dart';
 
 /// Chats and channels whose name, team or members contain [q] (lower case):
-/// names that start with it first, each group in [list]'s order. The pane's
-/// picker and its unread-list search.
+/// names that start with it first, each group in [list]'s order.
 List<ChatConversation> matchChats(
     Iterable<ChatConversation> list, String q, {int? limit}) {
   bool has(String? text) => text != null && text.toLowerCase().contains(q);
@@ -33,27 +33,32 @@ List<ChatConversation> matchChats(
   return limit == null ? sorted : sorted.take(limit).toList();
 }
 
-/// The Chat pane's header: who or what the pane shows, and a menu to pick
-/// another — the email's people and the system's unread chats, under a field
-/// that finds anyone or any chat or channel by name.
+/// The top of the Chat pane: the chosen system's unread chats and channels,
+/// newest first, with a field at its foot (just above the divider) that
+/// finds anyone or any chat or channel by name. The results take the list's
+/// place until the field is cleared; the open chat stays listed,
+/// highlighted, once it is read.
 ///
-/// People found by the field come from the local contacts typeahead
-/// ([SearchContacts]: indexed SQL, never the network) and are offered only
-/// when [ChatRepository.reachable] says a chat with them can exist — the
-/// same rule as the email's people. Chats and channels are matched in the
-/// listed conversations, painted from the cache on disk while the listing
-/// is asked once per menu.
-class ChatPanePicker extends StatefulWidget {
-  const ChatPanePicker({
+/// - **People:** the email's [people] (already narrowed to those a chat can
+///   exist with), then the local contacts typeahead ([SearchContacts]:
+///   indexed SQL, never the network), offered only when
+///   [ChatRepository.reachable] says a chat with them can exist — asked once
+///   per name for as long as the list lives, since on Google each outsider
+///   is a request.
+/// - **Chats and channels:** [matchChats] over every listed conversation —
+///   the cache on disk at once, then one [ChatRepository.conversations], on
+///   the first keystroke, never just for being shown. A one-on-one with
+///   someone already offered as a person is left out.
+class ChatPaneList extends StatefulWidget {
+  const ChatPaneList({
     super.key,
     required this.chatId,
     required this.account,
     required this.people,
     required this.chats,
-    required this.selectedPerson,
-    required this.selectedChat,
-    required this.onPerson,
+    required this.selected,
     required this.onChat,
+    required this.onPerson,
   });
 
   /// The chat system: an account id or `slack:{team}`.
@@ -65,116 +70,25 @@ class ChatPanePicker extends StatefulWidget {
   /// The email's people the pane can chat with.
   final List<ChatPerson> people;
 
-  /// The system's unread chats.
+  /// The system's unread chats, and a held one.
   final List<ChatConversation> chats;
-
-  final ChatPerson? selectedPerson;
-  final ChatConversation? selectedChat;
-  final ValueChanged<ChatPerson> onPerson;
+  final ChatConversation? selected;
   final ValueChanged<ChatConversation> onChat;
-
-  @override
-  State<ChatPanePicker> createState() => _ChatPanePickerState();
-}
-
-class _ChatPanePickerState extends State<ChatPanePicker> {
-  final _menu = MenuController();
-
-  @override
-  Widget build(BuildContext context) {
-    final c = context.colors;
-    final label = widget.selectedChat?.title ??
-        widget.selectedPerson?.label ??
-        (widget.chats.isNotEmpty ? '${widget.chats.length} unread' : 'Chat');
-    final placeholder =
-        widget.selectedChat == null && widget.selectedPerson == null;
-    return MenuAnchor(
-      controller: _menu,
-      alignmentOffset: const Offset(0, 4),
-      style: MenuStyle(
-        backgroundColor: WidgetStatePropertyAll(c.surfacePanel),
-        padding: const WidgetStatePropertyAll(EdgeInsets.zero),
-      ),
-      menuChildren: [
-        _PickerContent(
-          key: ValueKey(widget.chatId),
-          chatId: widget.chatId,
-          account: widget.account,
-          people: widget.people,
-          chats: widget.chats,
-          selectedPerson: widget.selectedPerson,
-          selectedChat: widget.selectedChat,
-          onPerson: (p) {
-            _menu.close();
-            widget.onPerson(p);
-          },
-          onChat: (ch) {
-            _menu.close();
-            widget.onChat(ch);
-          },
-        ),
-      ],
-      builder: (context, controller, _) => InkWell(
-        borderRadius: BorderRadius.circular(4),
-        onTap: () => controller.isOpen ? controller.close() : controller.open(),
-        child: Row(
-          children: [
-            Flexible(
-              child: Text(
-                label,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(
-                  color: placeholder ? c.textSecondary : c.textPrimary,
-                  fontSize: 14,
-                  fontWeight: placeholder ? FontWeight.w400 : FontWeight.w600,
-                  letterSpacing: -0.2,
-                ),
-              ),
-            ),
-            const SizedBox(width: 2),
-            Icon(Icons.arrow_drop_down, size: 20, color: c.textMuted),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _PickerContent extends StatefulWidget {
-  const _PickerContent({
-    super.key,
-    required this.chatId,
-    required this.account,
-    required this.people,
-    required this.chats,
-    required this.selectedPerson,
-    required this.selectedChat,
-    required this.onPerson,
-    required this.onChat,
-  });
-
-  final String chatId;
-  final Account account;
-  final List<ChatPerson> people;
-  final List<ChatConversation> chats;
-  final ChatPerson? selectedPerson;
-  final ChatConversation? selectedChat;
   final ValueChanged<ChatPerson> onPerson;
-  final ValueChanged<ChatConversation> onChat;
 
   @override
-  State<_PickerContent> createState() => _PickerContentState();
+  State<ChatPaneList> createState() => _ChatPaneListState();
 }
 
-class _PickerContentState extends State<_PickerContent> {
+class _ChatPaneListState extends State<ChatPaneList> {
   static const _debounce = Duration(milliseconds: 200);
-  static const _maxChats = 12;
 
   final _query = TextEditingController();
+  final _focus = FocusNode();
+  List<ChatConversation> _all = const [];
+  bool _loading = false;
+  bool _loaded = false;
   Timer? _timer;
-
-  /// Every chat and channel of the system, once listed.
-  List<ChatConversation> _list = const [];
 
   /// People the address book found for [_foundFor], already filtered to
   /// those a chat can exist with.
@@ -182,53 +96,76 @@ class _PickerContentState extends State<_PickerContent> {
   String _foundFor = '';
   int _searchId = 0;
 
-  /// [ChatRepository.reachable]'s answers while the menu is open: on Google
-  /// each outsider is a request, so a name is asked once per menu, not once
-  /// per keystroke.
+  /// [ChatRepository.reachable]'s answers, per address.
   final _reachable = <String, bool>{};
 
+  /// On the selected row, so a pick that lands below (or above) the rows in
+  /// view — an older chat from search — is scrolled to.
+  final _selectedRow = GlobalKey();
+
   @override
-  void initState() {
-    super.initState();
-    unawaited(_loadList());
+  void didUpdateWidget(ChatPaneList old) {
+    super.didUpdateWidget(old);
+    if (widget.selected != null && widget.selected?.key != old.selected?.key) {
+      WidgetsBinding.instance.addPostFrameCallback((_) => _reveal());
+    }
+  }
+
+  /// Scrolls the selected row just into view; a no-op when it already is.
+  Future<void> _reveal() async {
+    final row = _selectedRow.currentContext;
+    if (row == null || !mounted) return;
+    const d = Duration(milliseconds: 200);
+    await Scrollable.ensureVisible(row,
+        duration: d,
+        alignmentPolicy: ScrollPositionAlignmentPolicy.keepVisibleAtEnd);
+    final again = _selectedRow.currentContext;
+    if (again == null || !mounted) return;
+    await Scrollable.ensureVisible(again,
+        duration: d,
+        alignmentPolicy: ScrollPositionAlignmentPolicy.keepVisibleAtStart);
   }
 
   @override
   void dispose() {
     _timer?.cancel();
     _query.dispose();
+    _focus.dispose();
     super.dispose();
   }
 
-  Future<void> _loadList() async {
+  Future<void> _load() async {
+    if (_loaded) return;
+    _loaded = true;
+    setState(() => _loading = true);
     final repo = sl<ChatRepository>();
     final cached = await repo.cachedConversations(widget.chatId);
     if (!mounted) return;
-    if (cached.isNotEmpty) setState(() => _list = cached);
+    if (cached.isNotEmpty) setState(() => _all = cached);
     final listed = await repo.conversations(widget.chatId);
     if (!mounted) return;
     listed.match(
-      (f) => debugPrint('[Chat] pane picker: list unavailable: $f'),
-      (l) => setState(() => _list = l),
+      (f) => debugPrint('[Chat] pane search: list unavailable: $f'),
+      (l) => _all = l,
     );
+    setState(() => _loading = false);
   }
 
   void _onChanged(String text) {
-    setState(() {});
     _timer?.cancel();
     final q = text.trim();
     if (q.isEmpty) {
       _searchId++;
-      setState(() {
-        _found = const [];
-        _foundFor = '';
-      });
-      return;
+      _found = const [];
+      _foundFor = '';
+    } else {
+      unawaited(_load());
+      _timer = Timer(_debounce, () => _searchPeople(q));
     }
-    _timer = Timer(_debounce, () => _search(q));
+    setState(() {});
   }
 
-  Future<void> _search(String q) async {
+  Future<void> _searchPeople(String q) async {
     final id = ++_searchId;
     final own = widget.account.allAddresses;
     try {
@@ -267,7 +204,7 @@ class _PickerContentState extends State<_PickerContent> {
         _foundFor = q;
       });
     } catch (e) {
-      debugPrint('[Chat] pane picker: people search failed: $e');
+      debugPrint('[Chat] pane search: people search failed: $e');
       if (mounted && id == _searchId) {
         setState(() {
           _found = const [];
@@ -275,6 +212,27 @@ class _PickerContentState extends State<_PickerContent> {
         });
       }
     }
+  }
+
+  void _clear() {
+    _timer?.cancel();
+    _searchId++;
+    _query.clear();
+    _found = const [];
+    _foundFor = '';
+    setState(() {});
+  }
+
+  void _openChat(ChatConversation chat) {
+    widget.onChat(chat);
+    _clear();
+    _focus.unfocus();
+  }
+
+  void _openPerson(ChatPerson person) {
+    widget.onPerson(person);
+    _clear();
+    _focus.unfocus();
   }
 
   static bool _matches(String? text, String q) =>
@@ -296,234 +254,181 @@ class _PickerContentState extends State<_PickerContent> {
     ];
   }
 
-  /// Chats and channels matching [q] ([matchChats]). A one-on-one with
-  /// someone already offered as a person is left out.
-  List<ChatConversation> _chatsFor(String q, Set<String> people) => matchChats(
-        [
-          for (final ch in _list)
-            if (!(ch.kind == ChatKind.oneOnOne &&
-                ch.members.any((m) => people.contains(m.email))))
-              ch,
-        ],
-        q,
-        limit: _maxChats,
-      );
+  /// Chats and channels matching [q], newest first within each group,
+  /// unread ones bold as the poll says (full listings carry no read state
+  /// on Slack or Google). A one-on-one with one of [people] is left out.
+  List<ChatConversation> _chatsFor(String q, Set<String> people) {
+    final unread = {for (final u in widget.chats) if (u.unread) u.key};
+    final byActivity = [
+      for (final ch in _all)
+        if (!(ch.kind == ChatKind.oneOnOne &&
+            ch.members.any((m) => people.contains(m.email))))
+          ch,
+    ]..sort((a, b) {
+        final at = a.lastActivity, bt = b.lastActivity;
+        if (at == null || bt == null) {
+          return at == null ? (bt == null ? 0 : 1) : -1;
+        }
+        return bt.compareTo(at);
+      });
+    return [
+      for (final ch in matchChats(byActivity, q, limit: 50))
+        unread.contains(ch.key) ? ch.copyWith(unread: true) : ch,
+    ];
+  }
 
-  void _submit() {
-    final q = _query.text.trim().toLowerCase();
+  void _submit(String q) {
     if (q.isEmpty) return;
     final people = _peopleFor(q);
-    if (people.isNotEmpty) return widget.onPerson(people.first);
+    if (people.isNotEmpty) return _openPerson(people.first);
     final chats = _chatsFor(q, const {});
-    if (chats.isNotEmpty) widget.onChat(chats.first);
+    if (chats.isNotEmpty) _openChat(chats.first);
   }
 
   @override
   Widget build(BuildContext context) {
     final c = context.colors;
     final q = _query.text.trim().toLowerCase();
-    final List<ChatPerson> people;
-    final List<ChatConversation> chats;
-    if (q.isEmpty) {
-      people = widget.people;
-      chats = widget.chats;
-    } else {
-      people = _peopleFor(q);
-      chats = _chatsFor(q, {for (final p in people) p.email});
-    }
-    final searching = q.isNotEmpty && _foundFor != _query.text.trim();
+    final searching = q.isNotEmpty;
+    final people = searching ? _peopleFor(q) : const <ChatPerson>[];
+    final shown = searching
+        ? _chatsFor(q, {for (final p in people) p.email})
+        : widget.chats;
+    final pending = _loading || _foundFor != _query.text.trim();
 
-    return SizedBox(
-      width: 300,
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(8, 8, 8, 4),
-            // The menu takes the arrow keys for moving between items; left
-            // and right go back to the field, to move its cursor.
-            child: Shortcuts(
-              shortcuts: const {
-                SingleActivator(LogicalKeyboardKey.arrowLeft):
-                    ExtendSelectionByCharacterIntent(
-                        forward: false, collapseSelection: true),
-                SingleActivator(LogicalKeyboardKey.arrowRight):
-                    ExtendSelectionByCharacterIntent(
-                        forward: true, collapseSelection: true),
+    final Widget list;
+    if (shown.isEmpty && people.isEmpty) {
+      list = Center(
+        child: Text(
+          !searching
+              ? 'No unread chats'
+              : pending
+                  ? 'Searching…'
+                  : 'No one or nothing matches',
+          style: TextStyle(fontSize: 12.5, color: c.textTertiary),
+        ),
+      );
+    } else {
+      // Every row built (unread, or at most 50 matches), so the selected
+      // one has a context to scroll to wherever it sits.
+      list = SingleChildScrollView(
+        padding: const EdgeInsets.symmetric(vertical: 4),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            for (final p in people)
+              _PersonRow(
+                  key: ValueKey('person:${p.email}'),
+                  person: p,
+                  onTap: () => _openPerson(p)),
+            for (final ch in shown)
+              ChatConversationRow(
+                key: !searching && ch.key == widget.selected?.key
+                    ? _selectedRow
+                    : ValueKey(ch.key),
+                conversation: ch,
+                selected: ch.key == widget.selected?.key,
+                onTap: () => _openChat(ch),
+              ),
+          ],
+        ),
+      );
+    }
+
+    return Column(
+      children: [
+        Expanded(child: list),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(10, 4, 10, 6),
+          child: CallbackShortcuts(
+            bindings: {
+              const SingleActivator(LogicalKeyboardKey.escape): () {
+                _clear();
+                _focus.unfocus();
               },
-              child: TextField(
-                controller: _query,
-                autofocus: true,
-                onChanged: _onChanged,
-                onSubmitted: (_) => _submit(),
-                style: TextStyle(fontSize: 13, color: c.textPrimary),
-                decoration: InputDecoration(
-                  isDense: true,
-                  hintText: 'Find a person or channel',
-                  hintStyle: TextStyle(fontSize: 13, color: c.textMuted),
-                  prefixIcon:
-                      Icon(Icons.search, size: 16, color: c.textMuted),
-                  prefixIconConstraints:
-                      const BoxConstraints(minWidth: 30, minHeight: 30),
-                  contentPadding: const EdgeInsets.symmetric(vertical: 8),
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(6),
-                    borderSide: BorderSide(color: c.separatorStrong),
-                  ),
-                  enabledBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(6),
-                    borderSide: BorderSide(color: c.separatorStrong),
-                  ),
-                  focusedBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(6),
-                    borderSide: const BorderSide(color: AppColors.accent),
-                  ),
+            },
+            child: TextField(
+              controller: _query,
+              focusNode: _focus,
+              onChanged: _onChanged,
+              onSubmitted: (_) => _submit(q),
+              style: TextStyle(fontSize: 13, color: c.textPrimary),
+              decoration: InputDecoration(
+                isDense: true,
+                hintText: 'Find a person, chat or channel',
+                hintStyle: TextStyle(fontSize: 13, color: c.textMuted),
+                prefixIcon: Icon(Icons.search, size: 16, color: c.textMuted),
+                prefixIconConstraints:
+                    const BoxConstraints(minWidth: 30, minHeight: 28),
+                suffixIcon: searching
+                    ? IconButton(
+                        icon: Icon(Icons.close, size: 14, color: c.textMuted),
+                        tooltip: 'Clear',
+                        onPressed: _clear,
+                      )
+                    : null,
+                suffixIconConstraints:
+                    const BoxConstraints(minWidth: 28, minHeight: 28),
+                contentPadding: const EdgeInsets.symmetric(vertical: 7),
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(6),
+                  borderSide: BorderSide(color: c.separatorStrong),
+                ),
+                enabledBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(6),
+                  borderSide: BorderSide(color: c.separatorStrong),
+                ),
+                focusedBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(6),
+                  borderSide: const BorderSide(color: AppColors.accent),
                 ),
               ),
             ),
           ),
-          ConstrainedBox(
-            constraints: const BoxConstraints(maxHeight: 360),
-            // The menu's own panel scrolls too: this list must not take
-            // the primary controller from it.
-            child: SingleChildScrollView(
-              primary: false,
-              padding: const EdgeInsets.only(bottom: 6),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  if (q.isNotEmpty && people.isNotEmpty)
-                    _Heading('PEOPLE', color: c.textMuted),
-                  for (final p in people)
-                    _Item(
-                      icon: Icons.person_outline,
-                      title: p.label,
-                      subtitle: p.name.isNotEmpty ? p.email : null,
-                      selected: widget.selectedChat == null &&
-                          widget.selectedPerson?.email == p.email,
-                      onTap: () => widget.onPerson(p),
-                    ),
-                  if (chats.isNotEmpty)
-                    _Heading(q.isEmpty ? 'UNREAD' : 'CHATS AND CHANNELS',
-                        color: c.textMuted),
-                  for (final ch in chats)
-                    _Item(
-                      icon: switch (ch.kind) {
-                        ChatKind.oneOnOne => Icons.person_outline,
-                        ChatKind.channel || ChatKind.space => Icons.tag,
-                        _ => Icons.people_outline,
-                      },
-                      title: ch.title,
-                      subtitle: ch.isChannel ? ch.teamName : null,
-                      unread: ch.unread,
-                      selected: widget.selectedChat?.key == ch.key,
-                      onTap: () => widget.onChat(ch),
-                    ),
-                  if (people.isEmpty && chats.isEmpty)
-                    Padding(
-                      padding: const EdgeInsets.fromLTRB(12, 10, 12, 8),
-                      child: Text(
-                        q.isEmpty
-                            ? 'Type a name to find a person or channel.'
-                            : searching
-                                ? 'Searching…'
-                                : 'No one or nothing matches.',
-                        style:
-                            TextStyle(fontSize: 12.5, color: c.textTertiary),
-                      ),
-                    ),
-                ],
-              ),
-            ),
-          ),
-        ],
-      ),
+        ),
+      ],
     );
   }
 }
 
-class _Heading extends StatelessWidget {
-  const _Heading(this.text, {required this.color});
+/// A person found by the pane's search: name, and the address under it.
+class _PersonRow extends StatelessWidget {
+  const _PersonRow({super.key, required this.person, required this.onTap});
 
-  final String text;
-  final Color color;
-
-  @override
-  Widget build(BuildContext context) => Padding(
-        padding: const EdgeInsets.fromLTRB(12, 8, 12, 4),
-        child: Text(
-          text,
-          style: TextStyle(
-            fontSize: 10.5,
-            letterSpacing: 0.6,
-            fontWeight: FontWeight.w700,
-            color: color,
-          ),
-        ),
-      );
-}
-
-class _Item extends StatelessWidget {
-  const _Item({
-    required this.icon,
-    required this.title,
-    required this.onTap,
-    this.subtitle,
-    this.unread = false,
-    this.selected = false,
-  });
-
-  final IconData icon;
-  final String title;
-  final String? subtitle;
-  final bool unread;
-  final bool selected;
+  final ChatPerson person;
   final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
     final c = context.colors;
-    return MenuItemButton(
-      onPressed: onTap,
-      // Hovering a result must not take the typing away from the field.
-      requestFocusOnHover: false,
-      leadingIcon: Icon(icon, size: 15, color: c.textTertiary),
-      trailingIcon: unread
-          ? Container(
-              width: 7,
-              height: 7,
-              decoration: const BoxDecoration(
-                color: AppColors.accent,
-                shape: BoxShape.circle,
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(12, 7, 12, 7),
+          child: Row(
+            children: [
+              Icon(Icons.person_outline, size: 16, color: c.textTertiary),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(person.label,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(fontSize: 13, color: c.textPrimary)),
+                    if (person.name.isNotEmpty)
+                      Text(person.email,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style:
+                              TextStyle(fontSize: 12, color: c.textTertiary)),
+                  ],
+                ),
               ),
-            )
-          : selected
-              ? const Icon(Icons.check, size: 15, color: AppColors.accent)
-              : null,
-      child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 220),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              title,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                fontSize: 13.5,
-                color: c.textPrimary,
-                fontWeight: selected ? FontWeight.w600 : FontWeight.w400,
-              ),
-            ),
-            if (subtitle != null && subtitle!.isNotEmpty)
-              Text(
-                subtitle!,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(fontSize: 11.5, color: c.textTertiary),
-              ),
-          ],
+            ],
+          ),
         ),
       ),
     );

@@ -54,6 +54,12 @@ class ConnectivityServiceImpl implements ConnectivityService {
 
   @override
   Future<bool> get isOnline async {
+    // dart:io sockets don't exist in a browser: Socket.connect throws
+    // UnsupportedError at once, which the fast-failure rule below would read
+    // as a confident "offline" and short-circuit every mail call on the web
+    // build. A browser gives a page no raw-socket probe at all, so the web
+    // build fails open and lets the real request report its own error.
+    if (kIsWeb) return true;
     final stopwatch = Stopwatch()..start();
     try {
       final socket =

@@ -309,7 +309,13 @@ Load-bearing:
 - **Discovery runs when the page opens, not on the click.** The sign-in opens
   a popup (`authenticateWeb`), and a browser blocks a popup opened after an
   awaited round trip has used up the click's user activation.
-  `signInWithNightmailServerEndpoints` awaits nothing before `window.open`.
+  `signInWithNightmailServerEndpoints` awaits nothing before `window.open`,
+  and *Sign in* stays disabled until discovery has answered.
+- **The page never strands a visitor behind a spinner.** It's the only page
+  a visitor can reach. A blocked popup fails at once (`PopupBlockedException`
+  in `web_auth_web.dart`), and *Cancel* abandons a sign-in whose popup was
+  closed. Nothing watches the popup's `closed`, because Microsoft's COOP
+  header makes it read as closed mid-sign-in.
 - **It is an app-level gate.** The static bundle is still publicly fetchable,
   which is fine only while it holds no secrets. Keep the server URL the only
   define in that Dockerfile. A browser that already holds an account opens

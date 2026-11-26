@@ -58,7 +58,8 @@ would re-break.
 - [`lib/infrastructure/auth/CLAUDE.md`](lib/infrastructure/auth/CLAUDE.md) —
   Gmail's Chrome-based loopback sign-in on macOS, the OAuth `state` check both
   providers share, Graph accounts on a NightMail Server (per-account
-  `GraphEndpoints`, `/.well-known/nightware`)
+  `GraphEndpoints`, `/.well-known/nightware`), the web build opening on its
+  server's Keycloak sign-in (`NIGHTWARE_SERVER`) instead of the chooser
 
 ### Mail Data & Rendering
 

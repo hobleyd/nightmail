@@ -5,6 +5,16 @@
 import 'dart:async';
 import 'dart:html' as html;
 
+/// The browser refused to open the sign-in popup.
+class PopupBlockedException implements Exception {
+  const PopupBlockedException();
+
+  @override
+  String toString() =>
+      'The browser blocked the sign-in window. Allow pop-ups for this site, '
+      'then sign in again.';
+}
+
 /// Opens [url] in a popup and awaits the OAuth callback via [BroadcastChannel].
 ///
 /// Microsoft's login pages set `Cross-Origin-Opener-Policy: same-origin-allow-popups`,
@@ -26,11 +36,26 @@ Future<String> authenticateWeb(String url) {
     }
   });
 
-  html.window.open(
-    url,
-    '_blank',
-    'width=520,height=680,scrollbars=yes,resizable=yes',
-  );
+  // A blocked popup gives no window back (`null`, which dart:html's
+  // non-nullable WindowBase only reports by throwing). Fail now rather than
+  // wait out the timeout behind a spinner. A popup's later `closed` is not
+  // watched: Microsoft's COOP header severs the handle, which then reads as
+  // closed while the sign-in is still going on.
+  Object? popup;
+  try {
+    popup = html.window.open(
+      url,
+      '_blank',
+      'width=520,height=680,scrollbars=yes,resizable=yes',
+    );
+  } catch (_) {
+    popup = null;
+  }
+  if (popup == null) {
+    sub.cancel();
+    channel.close();
+    return Future.error(const PopupBlockedException());
+  }
 
   return completer.future.timeout(
     const Duration(minutes: 10),

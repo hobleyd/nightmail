@@ -5,6 +5,7 @@ import '../../core/config/app_config.dart';
 import '../../core/error/exceptions.dart';
 import '../../core/theme/app_colors.dart';
 import '../../domain/entities/graph_endpoints.dart';
+import '../../infrastructure/accounts/account.dart';
 import '../blocs/account/account_cubit.dart';
 import '../widgets/nightmail_server_sign_in.dart';
 import 'account_selection_page.dart';
@@ -38,29 +39,40 @@ class WebSignInPage extends StatefulWidget {
 }
 
 class _WebSignInPageState extends State<WebSignInPage> {
-  /// Discovered when the page opens, not on the click: the sign-in opens a
-  /// popup, and a browser blocks one that opens after an awaited network
-  /// round trip has used up the click's user activation.
-  Future<GraphEndpoints>? _endpoints;
+  /// Discovered when the page opens, not on the click, and the button waits
+  /// for it: the sign-in opens a popup, and a browser blocks one that opens
+  /// after an awaited network round trip has used up the click's user
+  /// activation.
+  GraphEndpoints? _endpoints;
+  bool _discovering = false;
   bool _isLoading = false;
   String? _error;
+
+  /// Bumped by each sign-in and by Cancel, so a sign-in the user gave up on
+  /// (a popup they closed never answers) can't touch the page afterwards.
+  int _attempt = 0;
+
+  bool get _fixedServer => widget.server.isNotEmpty;
 
   @override
   void initState() {
     super.initState();
-    if (widget.server.isNotEmpty) _discover();
+    if (_fixedServer) _discover();
   }
 
-  void _discover() {
-    final endpoints = discoverNightmailServer(widget.server);
-    // Kept as a future for the click, and reported here if it fails.
-    endpoints.then((_) {}, onError: (Object e) {
-      if (mounted) setState(() => _error = _message(e));
-    });
+  Future<void> _discover() async {
     setState(() {
-      _endpoints = endpoints;
+      _discovering = true;
       _error = null;
     });
+    try {
+      final endpoints = await discoverNightmailServer(widget.server);
+      if (mounted) setState(() => _endpoints = endpoints);
+    } catch (e) {
+      if (mounted) setState(() => _error = _message(e));
+    } finally {
+      if (mounted) setState(() => _discovering = false);
+    }
   }
 
   static String _message(Object e) =>
@@ -68,33 +80,82 @@ class _WebSignInPageState extends State<WebSignInPage> {
 
   Future<void> _signIn() async {
     final accountCubit = context.read<AccountCubit>();
-    final String? typed;
-    if (widget.server.isEmpty) {
-      typed = await showNightmailServerDialog(context);
-      if (typed == null || !mounted) return;
+    final Future<MicrosoftAccount> signingIn;
+    if (_fixedServer) {
+      // Synchronous up to the popup: nothing awaited before it opens.
+      signingIn = signInWithNightmailServerEndpoints(_endpoints!);
     } else {
-      typed = null;
+      final typed = await showNightmailServerDialog(context);
+      if (typed == null || !mounted) return;
+      signingIn = signInToNightmailServer(typed);
     }
 
+    final attempt = ++_attempt;
     setState(() {
       _isLoading = true;
       _error = null;
     });
     try {
-      final account = typed != null
-          ? await signInToNightmailServer(typed)
-          : await signInWithNightmailServerEndpoints(await _endpoints!);
-      if (mounted) await accountCubit.addAccount(account);
+      final account = await signingIn;
+      if (mounted && attempt == _attempt) {
+        await accountCubit.addAccount(account);
+      }
     } catch (e) {
-      if (!mounted) return;
-      // A failed discovery stays failed in the cached future; the next
-      // click should ask the server again.
-      if (widget.server.isNotEmpty) _discover();
-      setState(() => _error = _message(e));
+      if (mounted && attempt == _attempt) {
+        setState(() => _error = _message(e));
+      }
     } finally {
-      if (mounted) setState(() => _isLoading = false);
+      if (mounted && attempt == _attempt) {
+        setState(() => _isLoading = false);
+      }
     }
   }
+
+  void _cancel() => setState(() {
+        _attempt++;
+        _isLoading = false;
+      });
+
+  Widget _primary() {
+    if (_isLoading) {
+      return Column(
+        children: [
+          const CircularProgressIndicator(
+            color: AppColors.accent,
+            strokeWidth: 2,
+          ),
+          const SizedBox(height: 12),
+          TextButton(onPressed: _cancel, child: const Text('Cancel')),
+        ],
+      );
+    }
+    if (_fixedServer && _endpoints == null && !_discovering) {
+      return _button('Try again', _discover);
+    }
+    return _button(
+      'Sign in',
+      _fixedServer && _endpoints == null ? null : _signIn,
+    );
+  }
+
+  Widget _button(String label, VoidCallback? onPressed) => SizedBox(
+        height: 52,
+        child: ElevatedButton(
+          onPressed: onPressed,
+          style: ElevatedButton.styleFrom(
+            backgroundColor: const Color(0xFF111827),
+            foregroundColor: Colors.white,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(10),
+            ),
+            elevation: 0,
+          ),
+          child: Text(
+            label,
+            style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w500),
+          ),
+        ),
+      );
 
   @override
   Widget build(BuildContext context) {
@@ -148,35 +209,7 @@ class _WebSignInPageState extends State<WebSignInPage> {
                     style: TextStyle(color: c.textMuted, fontSize: 14),
                   ),
                   const SizedBox(height: 40),
-                  if (_isLoading)
-                    const Center(
-                      child: CircularProgressIndicator(
-                        color: AppColors.accent,
-                        strokeWidth: 2,
-                      ),
-                    )
-                  else
-                    SizedBox(
-                      height: 52,
-                      child: ElevatedButton(
-                        onPressed: _signIn,
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: const Color(0xFF111827),
-                          foregroundColor: Colors.white,
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(10),
-                          ),
-                          elevation: 0,
-                        ),
-                        child: const Text(
-                          'Sign in',
-                          style: TextStyle(
-                            fontSize: 15,
-                            fontWeight: FontWeight.w500,
-                          ),
-                        ),
-                      ),
-                    ),
+                  _primary(),
                   if (_error != null) ...[
                     const SizedBox(height: 16),
                     Text(

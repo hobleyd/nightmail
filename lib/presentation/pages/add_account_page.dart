@@ -272,6 +272,14 @@ class _AddAccountPageState extends State<AddAccountPage> {
                         strokeWidth: 2,
                       ),
                     )
+                  // The web build signs in to NightMail Servers only — see
+                  // noAccountsPage (web_sign_in_page.dart).
+                  else if (kIsWeb)
+                    _ProviderButton(
+                      label: 'NightMail Server',
+                      color: const Color(0xFF111827),
+                      onTap: _signInNightmailServer,
+                    )
                   else ...[
                     _ProviderButton(
                       label: 'Microsoft 365 / Outlook',

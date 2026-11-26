@@ -286,3 +286,31 @@ Load-bearing:
   swallowed (`FileSitesRefused`, naming the field via
   `GraphEndpoints.signInChangeFrom`), as is an unreachable server; see
   `docs/claude/body-links.md` for when the reader is told.
+
+## The Web Build Opens on Its Server's Sign-In, Not the Provider Chooser
+
+A native app runs as whoever is signed in to the device. The web build is a
+public site that anyone can open. So with no accounts, `_AccountGate` asks
+`noAccountsPage(isWeb: kIsWeb)` (`presentation/pages/web_sign_in_page.dart`)
+which page to show, and on web the answer is `WebSignInPage`: one *Sign in*
+button for the server named by `--dart-define=NIGHTWARE_SERVER`. That sign-in
+(Keycloak, through `/.well-known/nightware`) is the account. The web Add
+Account page offers only *NightMail Server* too. Microsoft 365 and Gmail have
+no web client registered for the origin, and a browser can't open IMAP's
+sockets. The production define is set in the ansible repo's
+`roles/docker_apps/files/config/nightmail-web/Dockerfile`.
+
+Load-bearing:
+
+- **With the define set, the page has no address field.** If anyone could
+  type a server, they could sign in through a Keycloak of their own and the
+  gate would let them through. An empty define (a local
+  `flutter run -d web-server`) falls back to the address dialog.
+- **Discovery runs when the page opens, not on the click.** The sign-in opens
+  a popup (`authenticateWeb`), and a browser blocks a popup opened after an
+  awaited round trip has used up the click's user activation.
+  `signInWithNightmailServerEndpoints` awaits nothing before `window.open`.
+- **It is an app-level gate.** The static bundle is still publicly fetchable,
+  which is fine only while it holds no secrets. Keep the server URL the only
+  define in that Dockerfile. A browser that already holds an account opens
+  straight to mail, as any remembered session does.

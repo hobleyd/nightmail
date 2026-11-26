@@ -45,6 +45,14 @@ class AppConfig {
   /// the Settings dialog offers; the id used is stored with the workspace.
   static const slackClientId = String.fromEnvironment('SLACK_CLIENT_ID');
 
+  /// The NightMail Server a web build signs in to before anything else
+  /// (`--dart-define=NIGHTWARE_SERVER=https://nightware.example.com`). The web
+  /// build has no provider chooser: with no accounts it shows only this
+  /// server's sign-in, so nobody reaches the app without an account on it —
+  /// see `presentation/pages/web_sign_in_page.dart`. Empty means the page asks
+  /// for an address instead (a local `flutter run -d web-server`).
+  static const nightwareServer = String.fromEnvironment('NIGHTWARE_SERVER');
+
   // No literal default: GitHub push protection blocks a Google OAuth Client
   // ID/Secret pair committed to source, even a non-confidential "Desktop
   // app"-type one (see Google's native-app OAuth docs). Supply the real

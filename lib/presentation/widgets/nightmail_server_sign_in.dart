@@ -5,6 +5,7 @@ import 'package:uuid/uuid.dart';
 import '../../core/config/app_config.dart';
 import '../../core/error/exceptions.dart';
 import '../../data/datasources/remote/graph_api_datasource_impl.dart';
+import '../../domain/entities/graph_endpoints.dart';
 import '../../domain/usecases/discover_nightware_server.dart';
 import '../../infrastructure/accounts/account.dart';
 import '../../infrastructure/auth/microsoft_auth_service.dart';
@@ -34,13 +35,29 @@ Future<String?> showNightmailServerDialog(BuildContext context) {
 ///
 /// Throws [AuthException] when discovery fails (its message is shown to the
 /// user) and whatever the sign-in itself throws.
-Future<MicrosoftAccount> signInToNightmailServer(String serverUrl) async {
+Future<MicrosoftAccount> signInToNightmailServer(String serverUrl) async =>
+    signInWithNightmailServerEndpoints(
+      await discoverNightmailServer(serverUrl),
+    );
+
+/// The server's endpoints from `<serverUrl>/.well-known/nightware`. Throws
+/// [AuthException] with a message for the user when discovery fails.
+Future<GraphEndpoints> discoverNightmailServer(String serverUrl) async {
   final discovered = await sl<DiscoverNightwareServer>()(serverUrl);
-  final endpoints = discovered.fold(
+  return discovered.fold(
     (failure) => throw AuthException(message: failure.message),
     (endpoints) => endpoints,
   );
+}
 
+/// The sign-in half of [signInToNightmailServer], for endpoints already
+/// discovered. On web nothing is awaited between the call and the sign-in
+/// popup opening, so a caller that discovered in advance opens it inside the
+/// click that asked for it — a browser blocks a popup opened after the click's
+/// user activation has lapsed (see `WebSignInPage`).
+Future<MicrosoftAccount> signInWithNightmailServerEndpoints(
+  GraphEndpoints endpoints,
+) async {
   final id = const Uuid().v4();
   final authService = MicrosoftAuthService(
     clientId: endpoints.clientId!,

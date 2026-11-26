@@ -28,7 +28,7 @@ import 'injection_container.dart';
 import 'presentation/blocs/account/account_cubit.dart';
 import 'presentation/blocs/theme/theme_cubit.dart';
 import 'presentation/blocs/theme/theme_state.dart';
-import 'presentation/pages/account_selection_page.dart';
+import 'presentation/pages/web_sign_in_page.dart';
 import 'presentation/pages/calendar_window.dart';
 import 'presentation/pages/commitments_window.dart';
 import 'presentation/pages/compose_window.dart';
@@ -641,7 +641,7 @@ class _AccountGate extends StatelessWidget {
           duration: const Duration(milliseconds: 300),
           child: switch (state) {
             AccountLoading() => const _SplashScreen(),
-            AccountNoAccounts() => const AccountSelectionPage(),
+            AccountNoAccounts() => noAccountsPage(isWeb: kIsWeb),
             AccountsLoaded() => const HomePage(),
             AccountError(:final message) => _ErrorRetryScreen(message: message),
           },

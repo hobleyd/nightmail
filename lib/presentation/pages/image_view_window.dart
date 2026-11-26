@@ -47,7 +47,10 @@ class ImageViewWindowApp extends StatelessWidget {
               AppThemeMode.dark => ThemeMode.dark,
               AppThemeMode.system => ThemeMode.system,
             },
-            home: _ImageViewPage(src: arguments['src'] as String? ?? ''),
+            home: ImageViewPage(
+              src: arguments['src'] as String? ?? '',
+              onClose: () => windowManager.close(),
+            ),
           );
         },
       ),
@@ -55,10 +58,14 @@ class ImageViewWindowApp extends StatelessWidget {
   }
 }
 
-class _ImageViewPage extends StatelessWidget {
-  const _ImageViewPage({required this.src});
+/// The image, zoomable, under a title bar with a close button: the whole of
+/// [ImageViewWindowApp]'s window on desktop, and a dialog's content on the web,
+/// where there are no windows to open.
+class ImageViewPage extends StatelessWidget {
+  const ImageViewPage({super.key, required this.src, required this.onClose});
 
   final String src;
+  final VoidCallback onClose;
 
   Widget _buildImage(AppColors c) {
     if (src.isEmpty) return _ImageError(colors: c);
@@ -89,6 +96,10 @@ class _ImageViewPage extends StatelessWidget {
     return Image.network(
       src,
       fit: BoxFit.contain,
+      // On the web Flutter fetches the bytes itself, which another site's
+      // image allows only with CORS; fall back to an <img> element, as the
+      // message body itself shows it. Ignored elsewhere.
+      webHtmlElementStrategy: WebHtmlElementStrategy.fallback,
       errorBuilder: errorBuilder,
       loadingBuilder: (context, child, progress) {
         if (progress == null) return child;
@@ -107,7 +118,7 @@ class _ImageViewPage extends StatelessWidget {
       body: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          _TitleBar(onClose: () => windowManager.close()),
+          _TitleBar(onClose: onClose),
           Divider(height: 1, color: c.border),
           Expanded(
             child: Container(

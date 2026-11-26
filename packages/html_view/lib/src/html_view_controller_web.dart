@@ -16,6 +16,13 @@ class HtmlViewController {
   int? _viewId;
   web.HTMLIFrameElement? _iframe;
   StreamSubscription<web.MessageEvent>? _messageSub;
+  StreamSubscription<web.Event>? _loadSub;
+
+  /// Whether the loaded document is a page shown for reading ([loadHtml],
+  /// [loadUrl]) rather than the editor ([loadAsset]). Only a reading page gets
+  /// the link and image listeners, as only the native reading views report
+  /// those events.
+  bool _watchPage = false;
 
   final _onContentChanged = StreamController<String>.broadcast();
   final _onLinkRequest    = StreamController<void>.broadcast();
@@ -30,17 +37,19 @@ class HtmlViewController {
   Stream<String> get onContentChanged => _onContentChanged.stream;
   Stream<void>   get onLinkRequest    => _onLinkRequest.stream;
   Stream<void>   get onPageLoaded     => _onPageLoaded.stream;
+  /// A click on an http/https/mailto link in a reading page, whose own
+  /// navigation is cancelled, as on the native views.
   Stream<String> get onLinkOpened     => _onLinkOpened.stream;
-  /// Never fires on web: the bridge is only injected into the editor document
-  /// (`loadAsset`), and a `srcdoc` message body is out of reach. Declared so
-  /// callers compile against either implementation.
+  /// The hovered link's resolved URL in a reading page, or an empty string
+  /// when the pointer moves off one, as on the native views.
   Stream<String> get onLinkHovered    => _onLinkHovered.stream;
-  /// Never fire on web, like [onLinkHovered]: the bridge forwards only
-  /// onContentChanged and onLinkRequest. Declared so callers compile against
-  /// either implementation.
+  /// The `src` of an image double-clicked in a reading page.
+  Stream<String> get onImageDoubleClicked => _onImageDoubleClicked.stream;
+  /// Never fire on web: the bridge forwards only onContentChanged and
+  /// onLinkRequest, and an iframe takes focus without help. Declared so
+  /// callers compile against either implementation.
   Stream<String> get onAttachRequested    => _onAttachRequested.stream;
   Stream<void>   get onClickFocus         => _onClickFocus.stream;
-  Stream<String> get onImageDoubleClicked => _onImageDoubleClicked.stream;
   Stream<String> get onImagePasted        => _onImagePasted.stream;
 
   bool get isInitialized => _viewId != null;
@@ -62,6 +71,11 @@ class HtmlViewController {
       'html_view_$id',
       (int viewId) => iframe,
     );
+
+    // Every load replaces the document, and the listeners with it.
+    _loadSub = iframe.onLoad.listen((_) {
+      if (_watchPage) _attachPageListeners();
+    });
 
     // Listen for postMessage events from the iframe.
     _messageSub = web.window.onMessage.listen((event) {
@@ -87,18 +101,88 @@ class HtmlViewController {
   }
 
   Future<void> loadHtml(String html) async {
+    _watchPage = true;
     _iframe?.setAttribute('srcdoc', html);
   }
 
   Future<void> loadUrl(String url) async {
+    _watchPage = true;
     _iframe?.src = url;
   }
 
   Future<void> loadAsset(String assetKey) async {
+    _watchPage = false;
     // Flutter web serves assets at assets/<key> relative to app root.
     _iframe?.src = 'assets/$assetKey';
     // Inject bridge after page loads so postMessage works.
     _iframe?.onLoad.first.then((_) => _injectBridge());
+  }
+
+  /// Reports link hovers and clicks and image double-clicks in a reading page.
+  ///
+  /// The listeners are attached from out here rather than injected as script:
+  /// a message body's Content-Security-Policy forbids script, and a `srcdoc`
+  /// document shares this page's origin, so its DOM is in reach anyway. The
+  /// listeners run as this page's code, which that policy doesn't govern.
+  /// A `src` document from another origin is out of reach, and reports
+  /// nothing.
+  void _attachPageListeners() {
+    final web.Document? doc;
+    try {
+      doc = _iframe?.contentDocument;
+    } catch (_) {
+      return;
+    }
+    if (doc == null) return;
+
+    var hovered = '';
+    doc.addEventListener(
+      'mouseover',
+      ((web.Event e) {
+        final href = _linkAt(e.target)?.href ?? '';
+        if (href == hovered) return;
+        hovered = href;
+        _onLinkHovered.add(href);
+      }).toJS,
+    );
+    doc.addEventListener(
+      'click',
+      ((web.Event e) {
+        final href = _linkAt(e.target)?.href;
+        if (href == null) return;
+        final scheme = Uri.tryParse(href)?.scheme.toLowerCase();
+        if (scheme != 'http' && scheme != 'https' && scheme != 'mailto') {
+          return;
+        }
+        e.preventDefault();
+        _onLinkOpened.add(href);
+      }).toJS,
+    );
+    doc.addEventListener(
+      'dblclick',
+      ((web.Event e) {
+        final target = _elementAt(e.target);
+        if (target == null || target.tagName.toUpperCase() != 'IMG') return;
+        final img = target as web.HTMLImageElement;
+        final src = img.currentSrc.isNotEmpty ? img.currentSrc : img.src;
+        if (src.isNotEmpty) _onImageDoubleClicked.add(src);
+      }).toJS,
+    );
+  }
+
+  /// [target] as an element, if it is one. Checked by shape, not `isA`: the
+  /// iframe's nodes belong to its own realm, so they are not instances of
+  /// this page's `Element`.
+  static web.Element? _elementAt(web.EventTarget? target) {
+    if (target == null) return null;
+    final obj = target as JSObject;
+    if (!obj.has('closest') || !obj.has('tagName')) return null;
+    return target as web.Element;
+  }
+
+  static web.HTMLAnchorElement? _linkAt(web.EventTarget? target) {
+    final link = _elementAt(target)?.closest('a[href]');
+    return link == null ? null : link as web.HTMLAnchorElement;
   }
 
   void _injectBridge() {
@@ -161,6 +245,7 @@ class HtmlViewController {
 
   Future<void> dispose() async {
     await _messageSub?.cancel();
+    await _loadSub?.cancel();
     _onContentChanged.close();
     _onLinkRequest.close();
     _onPageLoaded.close();

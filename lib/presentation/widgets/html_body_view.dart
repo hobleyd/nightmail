@@ -14,6 +14,7 @@ import '../../core/utils/linkify.dart';
 import '../../data/services/inline_attachment_cache.dart';
 import '../../domain/entities/inline_attachment.dart';
 import '../../injection_container.dart';
+import '../pages/image_view_window.dart';
 import 'body_link_opener.dart';
 import 'body_status_bar.dart';
 import '../../core/platform/platform.dart';
@@ -467,9 +468,26 @@ class _HtmlBodyViewState extends State<HtmlBodyView> {
     super.dispose();
   }
 
-  /// Pops the double-clicked image out into its own resizable window.
+  /// Pops the double-clicked image out into its own resizable window, or on
+  /// the web, which has no windows to open, into a dialog.
   void _openImageWindow(String src) {
     if (src.isEmpty) return;
+    if (kIsWeb) {
+      unawaited(showDialog<void>(
+        context: context,
+        builder: (dialogContext) => Dialog(
+          clipBehavior: Clip.antiAlias,
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 900, maxHeight: 700),
+            child: ImageViewPage(
+              src: src,
+              onClose: () => Navigator.of(dialogContext).pop(),
+            ),
+          ),
+        ),
+      ));
+      return;
+    }
     unawaited(createSubWindow(
       WindowConfiguration(
         arguments: jsonEncode({'type': 'imageView', 'src': src}),
@@ -680,10 +698,11 @@ table { max-width: 100% !important; }
           '<html><head>$_utf8Meta$injected</head><body>$resolved</body></html>';
     }
 
-    // The web build's iframe reports no link clicks (html_view's web
-    // controller has no bridge into a `srcdoc` body), so a link would load in
-    // the reading pane itself. Send every link to a new tab instead. No
-    // `href`, so `base-uri 'none'` has nothing to refuse.
+    // The web build's iframe reports link clicks to [openBodyLink] like the
+    // native views do, but anything that gets past that (a middle click, a
+    // scheme it doesn't take) would load in the reading pane itself. Send it
+    // to a new tab instead. No `href`, so `base-uri 'none'` has nothing to
+    // refuse.
     if (kIsWeb) {
       final headEnd = resolved.indexOf('</head>');
       if (headEnd != -1) {

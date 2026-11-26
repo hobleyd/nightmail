@@ -281,10 +281,82 @@ void main() {
         expect(result, equals('Draft content'));
         expect(result, isNot(contains('Original')));
       });
+
+      test('a saved draft keeps its body as saved, no signature added', () {
+        final result = ComposeBodyBuilder.buildInitialPlainBody(
+          originalEmail: null,
+          draftEmail: _makeEmail(body: 'Draft content'),
+          mode: ComposeMode.newEmail,
+          signature: 'SIG',
+        );
+
+        expect(result, 'Draft content');
+      });
+
+      test('a prefill gets the signature after its text', () {
+        final result = ComposeBodyBuilder.buildInitialPlainBody(
+          originalEmail: null,
+          draftEmail: _makeEmail(body: 'From a mailto link'),
+          mode: ComposeMode.newEmail,
+          signature: 'SIG',
+          draftIsSaved: false,
+        );
+
+        expect(result, 'From a mailto link\n\nSIG');
+      });
+
+      test('an empty prefill opens like a new message', () {
+        final result = ComposeBodyBuilder.buildInitialPlainBody(
+          originalEmail: null,
+          draftEmail: _makeEmail(body: ''),
+          mode: ComposeMode.newEmail,
+          signature: 'SIG',
+          draftIsSaved: false,
+        );
+
+        expect(result, '\n\nSIG');
+      });
     });
   });
 
   group('ComposeBodyBuilder.buildInitialHtmlBody', () {
+    group('prefilled new message', () {
+      test('a plain prefill is converted and the signature follows it', () {
+        final result = ComposeBodyBuilder.buildInitialHtmlBody(
+          originalEmail: null,
+          draftEmail: _makeEmail(body: 'Hi'),
+          mode: ComposeMode.newEmail,
+          signature: '<p>SIG</p>',
+          draftIsSaved: false,
+        );
+
+        expect(result, '<div>Hi</div><div><br></div><p>SIG</p>');
+      });
+
+      test('an empty prefill opens like a new message', () {
+        final result = ComposeBodyBuilder.buildInitialHtmlBody(
+          originalEmail: null,
+          draftEmail: _makeEmail(body: ''),
+          mode: ComposeMode.newEmail,
+          signature: '<p>SIG</p>',
+          draftIsSaved: false,
+        );
+
+        expect(result, '<div><br></div><p>SIG</p>');
+      });
+
+      test('a saved draft gets no signature', () {
+        final result = ComposeBodyBuilder.buildInitialHtmlBody(
+          originalEmail: null,
+          draftEmail: _makeEmail(body: 'Hi'),
+          mode: ComposeMode.newEmail,
+          signature: '<p>SIG</p>',
+        );
+
+        expect(result, isNot(contains('SIG')));
+      });
+    });
+
     group('forward mode', () {
       test('includes To and Cc divs when both are present', () {
         final email = _makeEmail(

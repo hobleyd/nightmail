@@ -521,7 +521,7 @@ class ComposeFormState extends State<ComposeForm> with WidgetsBindingObserver {
     _bodyType = _determineInitialBodyType();
     // A draft's body comes back as it was saved, signature or not, so only a
     // freshly built one can have had it held back.
-    _signatureHeldBack = widget.draftEmail == null &&
+    _signatureHeldBack = !_isSavedDraft &&
         widget.signatureHtml.isNotEmpty &&
         _initialSignatureHtml().isEmpty;
     _awaitingAutoFocusScroll = isTouchPlatform &&
@@ -611,8 +611,20 @@ class ComposeFormState extends State<ComposeForm> with WidgetsBindingObserver {
     }
   }
 
+  /// Whether [ComposeForm.draftEmail] is a draft reopened from the server
+  /// rather than a prefill for a new message. Only the Drafts folder reopens
+  /// one, and it always passes the draft's id; Email Attendees, a contact
+  /// card, a `mailto:` link and the share sheet pass a [ComposeForm.draftEmail]
+  /// with no id, and those open like any new message — signature included.
+  bool get _isSavedDraft =>
+      widget.draftEmail != null && widget.existingDraftId != null;
+
   EmailBodyType _determineInitialBodyType() {
-    if (widget.draftEmail != null) return widget.draftEmail!.bodyType;
+    final draft = widget.draftEmail;
+    if (draft != null &&
+        (_isSavedDraft || draft.bodyType == EmailBodyType.html)) {
+      return draft.bodyType;
+    }
     if (widget.originalEmail != null) return widget.originalEmail!.bodyType;
     return widget.defaultComposeFormat;
   }
@@ -622,6 +634,7 @@ class ComposeFormState extends State<ComposeForm> with WidgetsBindingObserver {
         draftEmail: widget.draftEmail,
         mode: widget.mode,
         signature: ComposeBodyBuilder.stripHtml(_initialSignatureHtml()),
+        draftIsSaved: _isSavedDraft,
       );
 
   String _buildInitialHtmlBody() => ComposeBodyBuilder.buildInitialHtmlBody(
@@ -629,6 +642,7 @@ class ComposeFormState extends State<ComposeForm> with WidgetsBindingObserver {
         draftEmail: widget.draftEmail,
         mode: widget.mode,
         signature: _initialSignatureHtml(),
+        draftIsSaved: _isSavedDraft,
       );
 
   /// The signature the initial body carries. A reply or reply-all with anyone

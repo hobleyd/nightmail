@@ -10,20 +10,28 @@ const _forwardSeparator = '---------- Forwarded message ---------';
 class ComposeBodyBuilder {
   ComposeBodyBuilder._();
 
+  /// [draftIsSaved] says whether [draftEmail] is a draft reopened from the
+  /// server, whose body already holds whatever signature it was saved with,
+  /// or a prefill for a new message (Email Attendees, a `mailto:` link, the
+  /// share sheet), which gets the signature after its text like any other new
+  /// message.
   static String buildInitialPlainBody({
     required Email? originalEmail,
     required Email? draftEmail,
     required ComposeMode mode,
     String signature = '',
+    bool draftIsSaved = true,
   }) {
-    if (draftEmail != null) {
-      return draftEmail.bodyType == EmailBodyType.html
-          ? stripHtml(draftEmail.body)
-          : draftEmail.body;
-    }
+    final draftText = draftEmail == null
+        ? null
+        : draftEmail.bodyType == EmailBodyType.html
+            ? stripHtml(draftEmail.body)
+            : draftEmail.body;
+    if (draftText != null && draftIsSaved) return draftText;
     // A leading blank line above the signature gives the cursor somewhere to
     // land (offset 0) that isn't inside the signature text itself.
     final sigBlock = signature.isEmpty ? '' : '\n\n$signature';
+    if (draftText != null) return '$draftText$sigBlock';
     final email = originalEmail;
     if (email == null) return sigBlock;
 
@@ -70,17 +78,21 @@ class ComposeBodyBuilder {
     required Email? draftEmail,
     required ComposeMode mode,
     String signature = '',
+    bool draftIsSaved = true,
   }) {
-    if (draftEmail != null) {
-      final draftBody = draftEmail.bodyType == EmailBodyType.html
-          ? draftEmail.body
-          : plainToHtml(draftEmail.body);
-      return resolveCidImages(draftBody, draftEmail.inlineAttachments);
-    }
+    final draftHtml = draftEmail == null
+        ? null
+        : resolveCidImages(
+            draftEmail.bodyType == EmailBodyType.html
+                ? draftEmail.body
+                : plainToHtml(draftEmail.body),
+            draftEmail.inlineAttachments);
+    if (draftHtml != null && draftIsSaved) return draftHtml;
     // A leading blank div above the signature gives the cursor somewhere to
     // land (setContent always places the caret at the very start) that isn't
     // inside the signature itself.
     final sigBlock = signature.isEmpty ? '' : '<div><br></div>$signature';
+    if (draftHtml != null) return '$draftHtml$sigBlock';
     final email = originalEmail;
     if (email == null) return sigBlock;
 

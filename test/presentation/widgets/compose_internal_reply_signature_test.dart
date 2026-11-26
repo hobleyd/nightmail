@@ -127,6 +127,8 @@ void main() {
     WidgetTester tester, {
     required ComposeMode mode,
     Email? originalEmail,
+    Email? draftEmail,
+    String? existingDraftId,
     bool hide = true,
   }) async {
     await tester.pumpWidget(MaterialApp(
@@ -136,6 +138,8 @@ void main() {
           body: ComposeForm(
             mode: mode,
             originalEmail: originalEmail,
+            draftEmail: draftEmail,
+            existingDraftId: existingDraftId,
             onClose: () {},
             fromAddress: 'David <me@htw.com.au>',
             accountId: me.id,
@@ -204,6 +208,37 @@ void main() {
   testWidgets('a new message keeps it', (tester) async {
     await pump(tester, mode: ComposeMode.newEmail);
     expect(signatureText(), findsOneWidget);
+  });
+
+  /// What Email Attendees on a meeting opens with: recipients and subject,
+  /// no body, no draft id.
+  Email prefill({String body = ''}) => Email(
+        id: '',
+        subject: 'Weekly sync',
+        from: const EmailAddress(address: ''),
+        toRecipients: const [EmailAddress(address: 'client@example.com')],
+        ccRecipients: const [],
+        bodyPreview: '',
+        body: body,
+        bodyType: EmailBodyType.text,
+        isRead: false,
+        receivedDateTime: DateTime.utc(2026, 11, 26),
+        importance: EmailImportance.normal,
+      );
+
+  testWidgets('a prefilled new message (Email Attendees) keeps it',
+      (tester) async {
+    await pump(tester, mode: ComposeMode.newEmail, draftEmail: prefill());
+    expect(signatureText(), findsOneWidget);
+  });
+
+  testWidgets('a reopened saved draft does not get a second one',
+      (tester) async {
+    await pump(tester,
+        mode: ComposeMode.newEmail,
+        draftEmail: prefill(body: 'Half written'),
+        existingDraftId: 'draft-9');
+    expect(signatureText(), findsNothing);
   });
 
   Finder signatureButton() => find.widgetWithText(TextButton, 'Signature');

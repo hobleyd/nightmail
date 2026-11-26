@@ -11,6 +11,7 @@ import '../../infrastructure/notifications/meeting_reminder_board.dart';
 import '../../infrastructure/notifications/meeting_reminder_channel.dart';
 import '../blocs/theme/theme_cubit.dart';
 import '../blocs/theme/theme_state.dart';
+import '../widgets/body_link_opener.dart';
 import '../widgets/meeting_reminder_list.dart';
 
 /// The `type` the meeting-reminders window is created with.
@@ -175,6 +176,18 @@ class _MeetingRemindersPageState extends State<_MeetingRemindersPage> {
     _close();
   }
 
+  /// Joins as the calendar's Join pill does, then closes the window: the
+  /// joined meeting is silenced and the rest dismissed, as Dismiss All would.
+  void _join(MeetingReminderRow row) {
+    final url = row.onlineMeetingUrl;
+    if (url != null) unawaited(launchMeetingJoinUrl(url));
+    unawaited(MeetingReminderChannel.silence(row.meetingKey));
+    for (final r in _rows) {
+      if (r.id != row.id) unawaited(MeetingReminderChannel.dismiss(r.id));
+    }
+    _close();
+  }
+
   void _close() {
     if (_closing) return;
     _closing = true;
@@ -193,6 +206,7 @@ class _MeetingRemindersPageState extends State<_MeetingRemindersPage> {
             rows: _rows,
             onDismiss: _dismiss,
             onDismissAll: _dismissAll,
+            onJoin: _join,
           ),
         ),
       ),

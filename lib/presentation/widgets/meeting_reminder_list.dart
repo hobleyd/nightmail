@@ -16,11 +16,16 @@ class MeetingReminderList extends StatelessWidget {
     required this.rows,
     required this.onDismiss,
     required this.onDismissAll,
+    required this.onJoin,
   });
 
   final List<MeetingReminderRow> rows;
   final ValueChanged<MeetingReminderRow> onDismiss;
   final VoidCallback onDismissAll;
+
+  /// A "Starting now" row's Join button ([MeetingReminderRow.canJoin]). The
+  /// caller launches the meeting and closes the dialog.
+  final ValueChanged<MeetingReminderRow> onJoin;
 
   @override
   Widget build(BuildContext context) {
@@ -72,6 +77,7 @@ class MeetingReminderList extends StatelessWidget {
             _MeetingReminderTile(
               row: rows[i],
               onDismiss: () => onDismiss(rows[i]),
+              onJoin: () => onJoin(rows[i]),
             ),
           ],
           const SizedBox(height: 8),
@@ -95,10 +101,15 @@ class MeetingReminderList extends StatelessWidget {
 }
 
 class _MeetingReminderTile extends StatelessWidget {
-  const _MeetingReminderTile({required this.row, required this.onDismiss});
+  const _MeetingReminderTile({
+    required this.row,
+    required this.onDismiss,
+    required this.onJoin,
+  });
 
   final MeetingReminderRow row;
   final VoidCallback onDismiss;
+  final VoidCallback onJoin;
 
   @override
   Widget build(BuildContext context) {
@@ -146,6 +157,20 @@ class _MeetingReminderTile extends StatelessWidget {
               ],
             ),
           ),
+          if (row.canJoin) ...[
+            const SizedBox(width: 8),
+            FilledButton(
+              onPressed: onJoin,
+              style: FilledButton.styleFrom(
+                backgroundColor: AppColors.accent,
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+                minimumSize: Size.zero,
+                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+              ),
+              child: const Text('Join', style: TextStyle(fontSize: 13)),
+            ),
+          ],
           IconButton(
             tooltip: 'Dismiss',
             icon: Icon(Icons.close_rounded, size: 16, color: c.textMuted),

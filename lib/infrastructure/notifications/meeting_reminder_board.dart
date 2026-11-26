@@ -18,6 +18,7 @@ class MeetingReminderRow {
     required this.end,
     required this.minutesUntilStart,
     this.location,
+    this.onlineMeetingUrl,
   });
 
   final String accountId;
@@ -30,6 +31,16 @@ class MeetingReminderRow {
   /// countdown. The row changes only when the next alert comes due.
   final int minutesUntilStart;
   final String? location;
+
+  /// The meeting's join link, when it is an online meeting.
+  final String? onlineMeetingUrl;
+
+  /// Whether the row offers Join: the "Starting now" alert of a meeting with
+  /// a join link. Earlier steps are a heads-up, not the moment to join.
+  bool get canJoin =>
+      minutesUntilStart == 0 &&
+      onlineMeetingUrl != null &&
+      onlineMeetingUrl!.trim().isNotEmpty;
 
   /// Identifies this *alert*, not the meeting: dismissing it hides the row
   /// until the next alert of the countdown, which is a different id. The start
@@ -51,6 +62,7 @@ class MeetingReminderRow {
         'end': end.toUtc().toIso8601String(),
         'minutesUntilStart': minutesUntilStart,
         'location': ?location,
+        'onlineMeetingUrl': ?onlineMeetingUrl,
       };
 
   static MeetingReminderRow? fromJson(Object? raw) {
@@ -66,6 +78,7 @@ class MeetingReminderRow {
       end: end,
       minutesUntilStart: (raw['minutesUntilStart'] as num?)?.toInt() ?? 0,
       location: raw['location'] as String?,
+      onlineMeetingUrl: raw['onlineMeetingUrl'] as String?,
     );
   }
 
@@ -233,8 +246,8 @@ class MeetingReminderBoard {
     // A new alert whose row is dismissed or hidden is not worth fronting for.
     alert = alert && rows.isNotEmpty;
     final changed = !listEquals(
-      [for (final r in rows) '${r.id}|${r.title}|${r.location}'],
-      [for (final r in _rows) '${r.id}|${r.title}|${r.location}'],
+      [for (final r in rows) '${r.id}|${r.title}|${r.location}|${r.onlineMeetingUrl}'],
+      [for (final r in _rows) '${r.id}|${r.title}|${r.location}|${r.onlineMeetingUrl}'],
     );
     _rows = rows;
     if (changed || alert) {
@@ -281,6 +294,7 @@ class MeetingReminderBoard {
           end: e.end,
           minutesUntilStart: due,
           location: e.location,
+          onlineMeetingUrl: e.onlineMeetingUrl,
         ));
       }
     }

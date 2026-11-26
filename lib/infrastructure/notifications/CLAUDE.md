@@ -279,6 +279,12 @@ the setting does not affect them.
   (`dismiss`, keyed `…::offset`): it just closes the dialog, and each meeting
   returns at its next step. Both keys carry the start, so a moved meeting
   returns at once.
+- **"Starting now" offers Join** (`MeetingReminderRow.canJoin`: the 0 step of
+  a meeting with an `onlineMeetingUrl`). It calls the same
+  `launchMeetingJoinUrl` as the calendar's Join pill — from the reminders
+  window itself, url_launcher being a channel plugin, not FFI — then closes
+  the dialog: the joined meeting is silenced, the other rows dismissed as
+  Dismiss All would. Earlier steps have no Join; they are a heads-up.
 - **The main window owns all state.** It pushes rows with
   `WindowController.invokeMethod('setRows')` (or `close` when empty); the
   window registers that handler *before* pulling a snapshot over

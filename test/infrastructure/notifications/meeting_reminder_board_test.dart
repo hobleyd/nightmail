@@ -19,6 +19,7 @@ void main() {
     DateTime? at,
     int? reminderMinutes = 15,
     Duration length = const Duration(minutes: 30),
+    String? joinUrl,
   }) {
     final s = at ?? start;
     return CalendarEventModel(
@@ -28,6 +29,7 @@ void main() {
       end: s.add(length),
       isAllDay: false,
       reminderMinutes: reminderMinutes,
+      onlineMeetingUrl: joinUrl,
     );
   }
 
@@ -241,5 +243,22 @@ void main() {
     expect(back.id, row.id);
     expect(back.title, row.title);
     expect(back.end, row.end);
+  });
+
+  test('only the starting-now step of an online meeting offers Join', () {
+    const url = 'https://teams.microsoft.com/l/meetup-join/x';
+    final online = {'a': [event('1', joinUrl: url)]};
+    MeetingReminderRow at(DateTime now) =>
+        MeetingReminderBoard.rowsAt(online, now).single;
+
+    expect(at(start.subtract(const Duration(minutes: 5))).canJoin, isFalse);
+    final now = at(start);
+    expect(now.canJoin, isTrue);
+    expect(
+        MeetingReminderRow.listFromJson([now.toJson()]).single.onlineMeetingUrl,
+        url);
+    expect(
+        MeetingReminderBoard.rowsAt({'a': [event('1')]}, start).single.canJoin,
+        isFalse);
   });
 }

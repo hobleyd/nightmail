@@ -11,6 +11,7 @@ import '../../infrastructure/notifications/meeting_reminder_board.dart';
 import '../../infrastructure/notifications/meeting_reminder_channel.dart';
 import '../../injection_container.dart';
 import '../pages/meeting_reminders_window.dart';
+import 'body_link_opener.dart';
 import 'meeting_reminder_list.dart';
 import '../../core/platform/platform.dart';
 
@@ -164,6 +165,15 @@ class _MeetingReminderDialogState extends State<_MeetingReminderDialog> {
             onDismissAll: () {
               for (final r in _rows) {
                 widget.board.dismiss(r.id);
+              }
+              _pop();
+            },
+            onJoin: (row) {
+              final url = row.onlineMeetingUrl;
+              if (url != null) unawaited(launchMeetingJoinUrl(url));
+              widget.board.silence(row.meetingKey);
+              for (final r in _rows) {
+                if (r.id != row.id) widget.board.dismiss(r.id);
               }
               _pop();
             },

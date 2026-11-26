@@ -41,6 +41,7 @@ void main() {
                 rows: rows(n),
                 onDismiss: (_) {},
                 onDismissAll: () {},
+                onJoin: (_) {},
               ),
             ),
           ),
@@ -67,5 +68,36 @@ void main() {
     final normal = await pumpList(tester, 2, 1);
     final large = await pumpList(tester, 2, 2);
     expect(large, greaterThan(normal));
+  });
+
+  testWidgets('Join shows only on a starting-now row with a link',
+      (tester) async {
+    MeetingReminderRow row(String id, int minutes, String? url) =>
+        MeetingReminderRow(
+          accountId: 'a',
+          eventId: id,
+          title: 'Meeting $id',
+          start: start,
+          end: start.add(const Duration(minutes: 30)),
+          minutesUntilStart: minutes,
+          onlineMeetingUrl: url,
+        );
+    const url = 'https://meet.google.com/abc-defg-hij';
+    MeetingReminderRow? joined;
+    await tester.pumpWidget(MaterialApp(
+      home: Scaffold(
+        body: SingleChildScrollView(
+          child: MeetingReminderList(
+            rows: [row('soon', 5, url), row('now', 0, url), row('room', 0, null)],
+            onDismiss: (_) {},
+            onDismissAll: () {},
+            onJoin: (r) => joined = r,
+          ),
+        ),
+      ),
+    ));
+    expect(find.text('Join'), findsOneWidget);
+    await tester.tap(find.text('Join'));
+    expect(joined?.eventId, 'now');
   });
 }

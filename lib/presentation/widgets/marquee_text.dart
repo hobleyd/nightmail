@@ -130,24 +130,28 @@ class _ScrollerState extends State<_Scroller>
 
   @override
   Widget build(BuildContext context) {
-    return ClipRect(
-      child: OverflowBox(
-        alignment: AlignmentDirectional.centerStart,
-        minWidth: 0,
-        maxWidth: double.infinity,
-        child: AnimatedBuilder(
-          animation: _offset,
-          builder: (context, child) => Transform.translate(
-            offset: Offset(
-                -widget.overflow *
-                    _offset.value *
-                    (Directionality.of(context) == TextDirection.rtl ? -1 : 1),
-                0),
-            child: child,
+    // It moves for as long as a long name is open: its own layer, so the
+    // pane around it is not repainted every frame.
+    return RepaintBoundary(
+      child: ClipRect(
+        child: OverflowBox(
+          alignment: AlignmentDirectional.centerStart,
+          minWidth: 0,
+          maxWidth: double.infinity,
+          child: AnimatedBuilder(
+            animation: _offset,
+            builder: (context, child) => Transform.translate(
+              offset: Offset(
+                  -widget.overflow *
+                      _offset.value *
+                      (Directionality.of(context) == TextDirection.rtl ? -1 : 1),
+                  0),
+              child: child,
+            ),
+            child: widget.child,
           ),
-          child: widget.child,
         ),
-      ),
+        ),
     );
   }
 }

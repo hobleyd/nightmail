@@ -78,13 +78,21 @@ void main() {
     await type(tester, 'bo');
 
     expect(find.text('Bea Bolt'), findsOneWidget); // on the email
-    expect(find.text('Bob Brown'), findsOneWidget);
+    expect(find.text('Bob Brown'), findsOneWidget); // reachable, no chat
     // Not reachable: an outsider with no chat.
     expect(find.text('Bo Outsider'), findsNothing);
     expect(find.text('#board'), findsOneWidget);
-    // A one-on-one with someone offered as a person is not listed twice.
-    expect(find.text('Bob (1:1)'), findsNothing);
-    expect(repo.reachableAsked, ['bob@contoso.com', 'bo@elsewhere.com']);
+    // Cid has a one-on-one: offered as that chat, not again as a person.
+    expect(find.text('Cid (1:1)'), findsOneWidget);
+    expect(find.text('Cid Bond'), findsNothing);
+    expect(repo.reachableAsked,
+        ['bob@contoso.com', 'bo@elsewhere.com', 'cid@contoso.com']);
+
+    // The email's people, then chats, then the address book: rows found
+    // late go last, under the ones already shown.
+    double y(String t) => tester.getTopLeft(find.text(t)).dy;
+    expect(y('Bea Bolt'), lessThan(y('#board')));
+    expect(y('#board'), lessThan(y('Bob Brown')));
 
     await tester.tap(find.text('#board'));
     await tester.pumpAndSettle();
@@ -101,22 +109,46 @@ void main() {
     expect(picked.people.single.email, 'ann@contoso.com');
   });
 
-  testWidgets('Enter picks the first match, a person before a chat',
+  Future<void> enter(WidgetTester tester) async {
+    await tester.testTextInput.receiveAction(TextInputAction.done);
+    await tester.pumpAndSettle();
+  }
+
+  testWidgets('Enter picks the first row: someone on the email',
+      (tester) async {
+    final picked = await show(tester);
+    await type(tester, 'bea');
+    await enter(tester);
+    expect(picked.people.single.email, 'bea@contoso.com');
+  });
+
+  testWidgets('Enter picks a chat before an address-book person',
+      (tester) async {
+    final picked = await show(tester);
+    await type(tester, 'b');
+    await enter(tester);
+    expect(picked.people.single.email, 'bea@contoso.com');
+
+    await type(tester, 'lunch');
+    await enter(tester);
+    expect(picked.chats.single.title, 'Lunch');
+  });
+
+  testWidgets('Enter picks an address-book person when nothing else matches',
       (tester) async {
     final picked = await show(tester);
     await type(tester, 'bob');
-    await tester.testTextInput.receiveAction(TextInputAction.done);
-    await tester.pumpAndSettle();
+    await enter(tester);
     expect(picked.people.single.email, 'bob@contoso.com');
     expect(picked.chats, isEmpty);
   });
 
-  testWidgets('Enter opens a chat when no one matches', (tester) async {
+  testWidgets('a person with a one-on-one opens the chat', (tester) async {
     final picked = await show(tester);
-    await type(tester, 'lunch');
-    await tester.testTextInput.receiveAction(TextInputAction.done);
-    await tester.pumpAndSettle();
-    expect(picked.chats.single.title, 'Lunch');
+    await type(tester, 'cid');
+    await enter(tester);
+    expect(picked.chats.single.title, 'Cid (1:1)');
+    expect(picked.people, isEmpty);
   });
 
   testWidgets('a name is asked about once, not per keystroke',
@@ -125,7 +157,8 @@ void main() {
     await type(tester, 'bo');
     await type(tester, 'bob');
     await type(tester, 'bo');
-    expect(repo.reachableAsked, ['bob@contoso.com', 'bo@elsewhere.com']);
+    expect(repo.reachableAsked,
+        ['bob@contoso.com', 'bo@elsewhere.com', 'cid@contoso.com']);
     expect(repo.listed, 1);
   });
 }
@@ -140,6 +173,7 @@ class _Contacts extends Fake implements SearchContacts {
       const [
         ContactSuggestion(address: 'Bob@contoso.com', name: 'Bob Brown'),
         ContactSuggestion(address: 'bo@elsewhere.com', name: 'Bo Outsider'),
+        ContactSuggestion(address: 'cid@contoso.com', name: 'Cid Bond'),
         ContactSuggestion(address: 'me@contoso.com', name: 'Me'),
       ].where((s) => s.name!.toLowerCase().contains(query)).toList();
 }
@@ -155,8 +189,8 @@ class _Repo extends Fake implements ChatRepository {
     ChatConversation(
       id: 'o',
       kind: ChatKind.oneOnOne,
-      title: 'Bob (1:1)',
-      members: [ChatMember(displayName: 'Bob Brown', email: 'bob@contoso.com')],
+      title: 'Cid (1:1)',
+      members: [ChatMember(displayName: 'Cid Bond', email: 'cid@contoso.com')],
     ),
   ];
 

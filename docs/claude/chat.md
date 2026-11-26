@@ -257,8 +257,10 @@ Google: the newest message the unread check already reads, remembered in
 ## Finding anyone from the pane
 
 The unread list's field (`ChatPaneList`) is the pane's only picker: typing
-matches the email's people, the address book and every listed chat and
-channel — people first, then chats newest first. It is there once the
+matches the email's people, every listed chat and channel (newest first),
+then the address book — in that order: address-book rows land after a
+debounce and `reachable`, so they go last rather than push rows already
+shown out from under the pointer. It is there once the
 system has chat access, even with no email at all.
 
 - **People** are the email's (sender, To, Cc — already through
@@ -271,9 +273,11 @@ system has chat access, even with no email at all.
 - **Chats and channels** are matched in Dart (`matchChats`) on title, team
   and members over `cachedConversations` (disk) and then one
   `conversations()` — in the main window that is often the first listing
-  this isolate has made, since the unread poll uses `listRecentChats`. A
-  one-on-one with someone already offered as a person is left out.
-- **Enter** takes the first person, else the first chat.
+  this isolate has made, since the unread poll uses `listRecentChats`.
+- **Someone with a matching one-on-one is offered as that chat**, not as a
+  person: the chat holds the pane across emails (`_held`) and shows its
+  unread state; a person row is only for someone with no listed chat.
+- **Enter** takes the first row shown.
 - **Picks:** someone on the email becomes `_chosen` (kept across emails
   while they are on them); anyone else is `_picked` and holds the pane until
   another email or system is selected; a chat is `_held` like an unread

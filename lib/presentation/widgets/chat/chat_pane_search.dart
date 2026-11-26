@@ -47,8 +47,8 @@ List<ChatConversation> matchChats(
 ///   is a request.
 /// - **Chats and channels:** [matchChats] over every listed conversation —
 ///   the cache on disk at once, then one [ChatRepository.conversations], on
-///   the first keystroke, never just for being shown. A one-on-one with
-///   someone already offered as a person is left out.
+///   the first keystroke, never just for being shown. Someone with a
+///   matching one-on-one is offered as that chat, not as a person.
 class ChatPaneList extends StatefulWidget {
   const ChatPaneList({
     super.key,
@@ -235,36 +235,51 @@ class _ChatPaneListState extends State<ChatPaneList> {
     _focus.unfocus();
   }
 
+  Widget _personRow(ChatPerson p) => _PersonRow(
+      key: ValueKey('person:${p.email}'),
+      person: p,
+      onTap: () => _openPerson(p));
+
   static bool _matches(String? text, String q) =>
       text != null && text.toLowerCase().contains(q);
 
-  /// The email's people, then the address book's, matching [q].
-  List<ChatPerson> _peopleFor(String q) {
-    final seen = <String>{};
-    return [
-      for (final p in widget.people)
-        if ((_matches(p.name, q) || _matches(p.email, q)) && seen.add(p.email))
-          p,
+  /// What [q] finds, in the order shown: the email's people, then chats
+  /// and channels, then the address book's people — last, because they
+  /// land after a debounce and [ChatRepository.reachable], and must not push
+  /// rows already shown out from under the pointer. Someone with a listed
+  /// one-on-one that matches is offered as that chat, not as a person: the
+  /// chat holds the pane across emails, a person does not.
+  ({
+    List<ChatPerson> onEmail,
+    List<ChatConversation> chats,
+    List<ChatPerson> found,
+  }) _results(String q) {
+    final chats = _chatsFor(q);
+    final seen = <String>{
+      for (final ch in chats)
+        if (ch.kind == ChatKind.oneOnOne)
+          for (final m in ch.members)
+            if (m.email != null) m.email!,
+    };
+    bool matches(ChatPerson p) =>
+        (_matches(p.name, q) || _matches(p.email, q)) && seen.add(p.email);
+    return (
+      onEmail: [for (final p in widget.people) if (matches(p)) p],
+      chats: chats,
       // A late answer for an older query still narrows to this one.
-      if (_foundFor.isNotEmpty)
-        for (final p in _found)
-          if ((_matches(p.name, q) || _matches(p.email, q)) &&
-              seen.add(p.email))
-            p,
-    ];
+      found: [
+        if (_foundFor.isNotEmpty)
+          for (final p in _found) if (matches(p)) p,
+      ],
+    );
   }
 
   /// Chats and channels matching [q], newest first within each group,
   /// unread ones bold as the poll says (full listings carry no read state
-  /// on Slack or Google). A one-on-one with one of [people] is left out.
-  List<ChatConversation> _chatsFor(String q, Set<String> people) {
+  /// on Slack or Google).
+  List<ChatConversation> _chatsFor(String q) {
     final unread = {for (final u in widget.chats) if (u.unread) u.key};
-    final byActivity = [
-      for (final ch in _all)
-        if (!(ch.kind == ChatKind.oneOnOne &&
-            ch.members.any((m) => people.contains(m.email))))
-          ch,
-    ]..sort((a, b) {
+    final byActivity = [..._all]..sort((a, b) {
         final at = a.lastActivity, bt = b.lastActivity;
         if (at == null || bt == null) {
           return at == null ? (bt == null ? 0 : 1) : -1;
@@ -277,12 +292,13 @@ class _ChatPaneListState extends State<ChatPaneList> {
     ];
   }
 
+  /// Enter: the first row shown.
   void _submit(String q) {
     if (q.isEmpty) return;
-    final people = _peopleFor(q);
-    if (people.isNotEmpty) return _openPerson(people.first);
-    final chats = _chatsFor(q, const {});
-    if (chats.isNotEmpty) _openChat(chats.first);
+    final r = _results(q);
+    if (r.onEmail.isNotEmpty) return _openPerson(r.onEmail.first);
+    if (r.chats.isNotEmpty) return _openChat(r.chats.first);
+    if (r.found.isNotEmpty) _openPerson(r.found.first);
   }
 
   @override
@@ -290,14 +306,14 @@ class _ChatPaneListState extends State<ChatPaneList> {
     final c = context.colors;
     final q = _query.text.trim().toLowerCase();
     final searching = q.isNotEmpty;
-    final people = searching ? _peopleFor(q) : const <ChatPerson>[];
-    final shown = searching
-        ? _chatsFor(q, {for (final p in people) p.email})
-        : widget.chats;
+    final r = searching ? _results(q) : null;
+    final onEmail = r?.onEmail ?? const <ChatPerson>[];
+    final found = r?.found ?? const <ChatPerson>[];
+    final shown = r?.chats ?? widget.chats;
     final pending = _loading || _foundFor != _query.text.trim();
 
     final Widget list;
-    if (shown.isEmpty && people.isEmpty) {
+    if (shown.isEmpty && onEmail.isEmpty && found.isEmpty) {
       list = Center(
         child: Text(
           !searching
@@ -316,11 +332,7 @@ class _ChatPaneListState extends State<ChatPaneList> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            for (final p in people)
-              _PersonRow(
-                  key: ValueKey('person:${p.email}'),
-                  person: p,
-                  onTap: () => _openPerson(p)),
+            for (final p in onEmail) _personRow(p),
             for (final ch in shown)
               ChatConversationRow(
                 key: !searching && ch.key == widget.selected?.key
@@ -330,6 +342,7 @@ class _ChatPaneListState extends State<ChatPaneList> {
                 selected: ch.key == widget.selected?.key,
                 onTap: () => _openChat(ch),
               ),
+            for (final p in found) _personRow(p),
           ],
         ),
       );

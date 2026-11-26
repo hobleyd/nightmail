@@ -187,6 +187,53 @@ void main() {
       await c.pollNow();
       expect(repo.marked, ['c1', 'c1'], reason: 'once per newest message');
     });
+
+    // A Slack channel lit by a thread reply: its newest post can be the
+    // user's own, or one already marked, so the posts alone mark nothing.
+    const channel = ChatConversation(
+        id: 'C1', kind: ChatKind.space, title: 'general', unread: true);
+    ChatMessage mine(String id, int minute) => ChatMessage(
+        id: id,
+        createdAt: t0.add(Duration(minutes: minute)),
+        senderName: 'Me',
+        senderUserId: 'UME',
+        bodyHtml: 'x');
+
+    test('one listed unread is marked on opening, whoever wrote the newest',
+        () async {
+      final c = ChatConversationCubit(repository: repo, isForeground: () => true);
+      addTearDown(c.close);
+      repo.page = ChatMessagePage(messages: [mine('p', 1)]);
+      await c.open('acct', channel);
+      expect(repo.marked, ['C1']);
+      repo.delta = const ChatMessageDelta(messages: [], complete: true);
+      await c.pollNow();
+      expect(repo.marked, ['C1'], reason: 'once');
+
+      await c.open('acct', channel);
+      expect(repo.marked, ['C1', 'C1'],
+          reason: 'lit again by another reply, though the newest post was '
+              'marked before');
+    });
+
+    test('a reply in the open thread newer than every post is marked',
+        () async {
+      final c = ChatConversationCubit(repository: repo, isForeground: () => true);
+      addTearDown(c.close);
+      repo.page = ChatMessagePage(messages: [msg('p', 1)]);
+      await c.open('acct', channel.copyWith(unread: false));
+      expect(repo.marked, ['C1']);
+
+      repo.threadReplies = [mine('r1', 2)];
+      await c.openThread('p');
+      expect(repo.marked, ['C1'], reason: 'the user\'s own reply');
+
+      repo.threadReplies = [mine('r1', 2), msg('r2', 3)];
+      repo.delta = const ChatMessageDelta(messages: [], complete: true);
+      await c.pollNow();
+      await pumpEventQueue();
+      expect(repo.marked, ['C1', 'C1']);
+    });
   });
 
   group('editing', () {
@@ -496,6 +543,13 @@ class _Repo implements ChatRepository {
       'UME';
 
   final marked = <String>[];
+
+  List<ChatMessage> threadReplies = const [];
+
+  @override
+  Future<Either<Failure, List<ChatMessage>>> replies(String accountId,
+          ChatConversation conversation, ChatMessage post) async =>
+      Right(threadReplies);
 
   @override
   Future<void> markRead(

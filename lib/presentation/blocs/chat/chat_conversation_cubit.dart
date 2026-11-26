@@ -204,6 +204,12 @@ class ChatConversationCubit extends Cubit<ChatConversationState> {
   /// The newest message each conversation was marked read up to, by key.
   final _markedUpTo = <String, String>{};
 
+  /// The open conversation was listed unread ([ChatConversation.unread])
+  /// and has not been marked since it opened: it is marked whatever its
+  /// newest message is. A Slack channel lit by a thread reply can have the
+  /// user's own post, or one marked earlier, as its newest, and stayed lit.
+  bool _openedUnread = false;
+
   static const pollInterval = Duration(seconds: 10);
 
   /// Where a delta asks from wholly misses edits, deletions and reactions
@@ -306,6 +312,7 @@ class ChatConversationCubit extends Cubit<ChatConversationState> {
       String accountId, ChatConversation conversation, int gen) async {
     emit(state.copyWith(conversation: () => conversation, loading: true));
     _resetPolls();
+    _openedUnread = conversation.unread;
     final own = _learnOwnId(accountId, conversation, gen);
     final cached = await _repo.cachedMessages(accountId, conversation);
     if (gen != _generation || isClosed) return;
@@ -399,13 +406,24 @@ class ChatConversationCubit extends Cubit<ChatConversationState> {
         isClosed) {
       return;
     }
-    final newest = state.messages.where((m) => !m.isSystem).firstOrNull;
-    if (newest == null || _markedUpTo[conversation.key] == newest.id) return;
-    if (newest.senderUserId == own) {
+    // The newest thing on screen: the newest message, or a reply in the
+    // open thread when that is newer — a Slack reply lights its channel.
+    ChatMessage? newest = state.messages.where((m) => !m.isSystem).firstOrNull;
+    for (final r in state.threadReplies) {
+      if (!r.isSystem &&
+          (newest == null || r.createdAt.isAfter(newest.createdAt))) {
+        newest = r;
+      }
+    }
+    if (newest == null) return;
+    final opened = _openedUnread;
+    if (!opened && _markedUpTo[conversation.key] == newest.id) return;
+    if (!opened && newest.senderUserId == own) {
       _markedUpTo[conversation.key] = newest.id;
       return;
     }
     if (!_isForeground()) return;
+    _openedUnread = false;
     _markedUpTo[conversation.key] = newest.id;
     unawaited(_repo.markRead(accountId, conversation));
   }
@@ -973,7 +991,10 @@ class ChatConversationCubit extends Cubit<ChatConversationState> {
     if (gen != _generation || isClosed || state.threadPostId != postId) return;
     replies.match(
       (f) => emit(state.copyWith(threadLoading: false, error: () => _messageOf(f))),
-      (r) => emit(state.copyWith(threadReplies: r, threadLoading: false)),
+      (r) {
+        emit(state.copyWith(threadReplies: r, threadLoading: false));
+        _markReadIfSeen();
+      },
     );
   }
 

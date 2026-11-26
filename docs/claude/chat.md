@@ -309,7 +309,12 @@ account's recent chats is unread (`ChatUnreadCubit`, main window only).
   skipped while away is marked on resume (`AppLifecycleListener`) and on
   every poll, whatever it brought: the polls after it are usually empty
   deltas, and before 1.64.3 the chat — and the pane dropdown's dot — stayed
-  lit until it was opened again.
+  lit until it was opened again. "Newest" includes a reply in the open
+  thread when it is newer than every post, and a conversation opened from
+  the unread list (`unread`) is marked once whatever its newest message is
+  (`_openedUnread`): a Slack channel lit by a thread reply often has the
+  user's own post, or one marked earlier, as its newest, and nothing was
+  sent — it stayed lit while the thread was read.
   Microsoft wants `user {id, tenantId}` (tenant from `/organization`);
   Nightware takes the id alone. `ChatRepository.reads` clears the dot at
   once in the same isolate — the repository also counts a chat it marked as
@@ -871,7 +876,8 @@ than falling into an account lookup that answers null.
   mark here passes `ChatRepositoryImpl._markedAt`. `markRead` marks the
   channel at the newest reply when that is newer than the newest post,
   falling back to the post if Slack refuses it — or the reply would light
-  it again next poll. Limits: a reply to a post older than the newest 15
+  it again next poll. The pane marks such a channel even when its newest post
+  is the user's own (see "Marking read"). Limits: a reply to a post older than the newest 15
   goes unseen; a thread the user never followed, read only in Slack,
   stays lit until the channel is opened here; a DM Slack counts read
   (`unread_count_display` 0) is not checked for replies.

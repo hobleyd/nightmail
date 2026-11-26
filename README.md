@@ -77,6 +77,7 @@ The app provides a desktop based three-pane layout (folders, message list, readi
 - Recurring event support, with per-occurrence or whole-series edit and cancel
 - Editing a meeting you organize notifies attendees of the change
 - Inline **Join** button on a meeting tile from 3 minutes before it starts until it ends, for meetings with a video-call link
+- The meeting-reminders dialog's "Starting now" row has a **Join** button for meetings with a video-call link: it joins the meeting and closes the dialog
 - Teams meeting links open straight in the Teams app rather than via a browser tab, falling back to the web link when Teams isn't installed
 - Guest RSVP status (accepted / declined / tentative) shown on each guest chip
 - Right-click a guest chip to copy their email address, including on meetings you didn't organise
@@ -194,6 +195,7 @@ Settings → Accounts.
 - Reply in a thread from Slack direct messages and group DMs, as in channels
 - Type `@` in a chat message to tag someone in the conversation on Teams, NightMail Server, Google Chat and Slack
 - Find any chat or channel by name from the field under the Chat pane's unread list
+- Opening a channel from the unread list because of a thread reply opens that thread, with the new reply on screen
 - Click someone's avatar in a chat to call them: a Teams voice or video call on Microsoft 365, a Talk call that rings them on NightMail Server, a Slack huddle, or a Google Meet whose link is sent to them on Google Chat
 
 ### Contacts

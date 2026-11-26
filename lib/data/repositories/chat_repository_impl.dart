@@ -861,6 +861,42 @@ class ChatRepositoryImpl implements ChatRepository {
   }
 
   @override
+  ChatCalling calling(String accountId) =>
+      _ds(accountId)?.calling ?? ChatCalling.none;
+
+  /// A Slack workspace calls under the token it has; an email account asks
+  /// the account manager (Google's Meet scope).
+  @override
+  Future<bool> callNeedsConsent(String accountId) async {
+    if (SlackWorkspace.teamIdOf(accountId) != null) return false;
+    return _accounts.callNeedsConsent(accountId);
+  }
+
+  @override
+  Future<Either<Failure, bool>> requestCallConsent(String accountId) async {
+    if (SlackWorkspace.teamIdOf(accountId) != null) return const Right(true);
+    try {
+      return Right(await _accounts.requestCallAccess(accountId));
+    } on AuthException catch (e) {
+      return Left(AuthFailure(message: e.message));
+    } on NetworkException catch (e) {
+      return Left(NetworkFailure(message: e.message));
+    } catch (e) {
+      return Left(ServerFailure(message: e.toString()));
+    }
+  }
+
+  @override
+  Future<Either<Failure, String>> callLink(
+    String accountId,
+    ChatConversation conversation,
+    ChatMember person, {
+    required bool video,
+  }) =>
+      _guard(accountId,
+          (ds) => ds.callLink(conversation, person, video: video));
+
+  @override
   Future<Uint8List?> photo(String accountId, String userId) {
     final ds = _ds(accountId);
     if (ds == null || userId.isEmpty) return Future.value();

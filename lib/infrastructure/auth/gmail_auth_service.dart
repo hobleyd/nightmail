@@ -231,6 +231,22 @@ class GmailAuthService implements AuthService {
     return chatScopes.every(granted.contains);
   }
 
+  /// Creating Google Meet meetings (`POST meet.googleapis.com/v2/spaces`)
+  /// for a call from a chat avatar, and reading only the ones NightMail
+  /// made. Sensitive. Requested incrementally — see [extraScopes] — the
+  /// first time a call is started, never with [chatScopes]: [grantsChat]
+  /// wants every one of those, so adding it there would send every account
+  /// that already chats back through consent.
+  static const meetScope =
+      'https://www.googleapis.com/auth/meetings.space.created';
+
+  /// Whether a token's granted `scope` carries [meetScope]. Exact
+  /// membership, as [grantsChat].
+  static bool grantsMeet(String? scope) {
+    if (scope == null || scope.isEmpty) return false;
+    return scope.split(RegExp(r'\s+')).contains(meetScope);
+  }
+
   static const _roomDirectoryScope =
       'https://www.googleapis.com/auth/admin.directory.resource.calendar.readonly';
 

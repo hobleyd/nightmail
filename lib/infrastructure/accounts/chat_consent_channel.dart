@@ -25,25 +25,37 @@ abstract final class ChatConsentChannel {
   );
 
   static const _method = 'requestChatAccess';
+  static const _callsMethod = 'requestCallAccess';
 
   /// A browser sign-in can sit for as long as the user takes; the auth flow
   /// itself gives up at five minutes.
   static const _timeout = Duration(minutes: 6);
 
   /// Main window only: answers consent requests with [run].
+  /// [calls] answers the calling consent (Google Meet) the same way.
   static Future<void> listen(
     Future<({bool chats, bool channels})> Function(
       String accountId, {
       bool channels,
-    }) run,
-  ) async {
+    }) run, {
+    Future<bool> Function(String accountId)? calls,
+  }) async {
     if (!AppWindow.isMain) return;
     try {
       await _channel.setMethodCallHandler((MethodCall call) async {
-        if (call.method != _method) return null;
         final args = call.arguments is Map ? call.arguments as Map : const {};
         final accountId = args['accountId'] as String?;
         if (accountId == null) return null;
+        if (call.method == _callsMethod && calls != null) {
+          try {
+            return {'granted': await calls(accountId)};
+          } on AuthException catch (e) {
+            return {'error': e.message};
+          } catch (e) {
+            return {'error': e.toString()};
+          }
+        }
+        if (call.method != _method) return null;
         try {
           final r = await run(accountId,
               channels: args['channels'] as bool? ?? false);
@@ -57,6 +69,25 @@ abstract final class ChatConsentChannel {
     } catch (e) {
       debugPrint('ChatConsentChannel.listen failed: $e');
     }
+  }
+
+  /// Sub-window only: asks the main window to run the calling consent.
+  static Future<bool> requestCalls(String accountId) async {
+    final Object? reply;
+    try {
+      reply = await _channel.invokeMethod<Object?>(
+          _callsMethod, {'accountId': accountId}).timeout(_timeout);
+    } catch (e) {
+      throw AuthException(
+          message: 'Could not reach the main NightMail window: $e');
+    }
+    if (reply is! Map) {
+      throw const AuthException(
+          message: 'The main NightMail window did not answer.');
+    }
+    final error = reply['error'];
+    if (error is String) throw AuthException(message: error);
+    return reply['granted'] == true;
   }
 
   /// Sub-window only: asks the main window to run the consent.

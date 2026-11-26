@@ -10,6 +10,7 @@ import '../../../core/theme/app_colors.dart';
 import '../../../domain/entities/chat.dart';
 import '../../blocs/chat/chat_conversation_cubit.dart';
 import '../../blocs/chat/chat_drafts.dart';
+import 'chat_call_menu.dart';
 import 'chat_conversation_row.dart';
 import 'chat_message_body.dart';
 import 'chat_person_style.dart';
@@ -516,7 +517,7 @@ class _MessageTile extends StatelessWidget {
         SizedBox(
           width: avatarSize,
           child: showHeader
-              ? ChatAvatar(message: m, size: avatarSize)
+              ? ChatCallableAvatar(message: m, size: avatarSize)
               : null,
         ),
         const SizedBox(width: 8),

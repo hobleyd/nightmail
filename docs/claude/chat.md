@@ -723,6 +723,83 @@ granted), a NightMail Server `/users/{id}/photo/$value`, Google
 token — Google's generated letter avatar (`default: true`) is skipped. An
 outside person has no photo in your directory and keeps their initials.
 
+### Calling someone from their avatar
+
+The avatar heading a run of messages (`ChatCallableAvatar`, not the mention
+picker's, which sits inside its own tap target) opens a call menu, built from
+`ChatRemoteDatasource.calling` (`ChatCalling`). NightMail never carries a
+call: `callLink` returns a link, and `launchMeetingJoinUrl` hands it to the
+system's app (Teams as `msteams:` on macOS/Windows) or browser. There is no
+menu for the user's own avatar (`ownUserId`), an app, a system or deleted
+message, or a sender with no id.
+
+- **Microsoft 365: voice or video**, through Teams' documented deep link
+  `teams.microsoft.com/l/call/0/0?users={upn}[&withVideo=true]`. Graph's
+  `POST /communications/calls` needs an application permission (a bot), so
+  it is not used. Teams asks the user to confirm before it rings.
+  - `users=` is the UPN from `/users/{id}?$select=userPrincipalName,mail`,
+    not the mail address. For someone outside the tenant (404/403), the
+    address the conversation lists them with is used instead.
+  - The UPN is lower-cased (calls to a capitalised UPN are reported to
+    fail) and percent-encoded (a guest's `#EXT#` would otherwise cut the
+    link short at the `#`).
+  - It is cached per identity and id.
+- **NightMail Server: voice or video**, through `POST /communications/calls`
+  (nightware ADR 0009 D7, delegated there) with `requestedModalities`.
+  - **Talk rings the person before the link comes back**, so the request
+    is sent only when a menu item is chosen, never when the menu opens.
+  - The user joins through `@nightware.joinWebUrl` (`{Talk}/call/{token}`).
+    Nothing is owed afterwards: Talk ends a call nobody joined (phase 26).
+  - A 501 (calls not configured) or a 404/405 (a server from before phase
+    26) reads "Calls are not turned on for this NightMail Server".
+  - A server account never gets a Teams link.
+- **Slack: one "Start a huddle" item**, opening
+  `app.slack.com/huddle/{team}/{channel}` for the DM with the person.
+  **Unconfirmed:** Slack documents no huddle URL. This shape comes from a
+  third-party report of what "Copy huddle link" gives, and has not been
+  checked against a live workspace. If it is wrong, compare it with a real
+  "Copy huddle link", which rings nobody. Video is turned on inside the
+  huddle.
+  - The DM is the open one-on-one, else one already listed (`_ims`), else
+    one made with `conversations.open`. Making one is fine here because the
+    user asked to call this person, unlike `findOneOnOne`, which never
+    makes a DM. An empty DM shows the other person nothing.
+- **Google Chat: "Start a Google Meet and send {name} the link".** No link
+  starts a Chat call, so NightMail does what Chat's own call button does.
+  It makes a meeting with the Meet REST API (`POST
+  meet.googleapis.com/v2/spaces`, empty body), posts "Join me on Google
+  Meet: {meetingUri}" into the DM, and opens the meeting. Meet has no
+  voice-only meeting, so there is one item.
+  - **Order matters.** The meeting is made first, so nothing is sent for one
+    that failed. A link that cannot be posted fails the call, rather than
+    opening a meeting nobody was told about.
+  - The DM is the open one-on-one, else `findDirectMessage(users/{id})`,
+    else `spaces:setup`.
+  - The posted link goes straight through the datasource, not the
+    repository, so the open DM shows it at the next poll.
+  - **Consent.** `meetings.space.created` (`GmailAuthService.meetScope`,
+    sensitive) creates meetings and reads only the ones NightMail made.
+    - It is asked for on the first call, after a dialog saying the browser
+      will open (`ChatCallableAvatar`). `ChatRepository.callNeedsConsent` /
+      `requestCallConsent` route this to `AccountManager.callNeedsConsent` /
+      `requestCallAccess`.
+    - From the chat window it goes through `ChatConsentChannel.requestCalls`
+      to the main window, for the same token-replacement reason as chat
+      consent.
+    - It is **not** one of `chatScopes`: `grantsChat` wants all of those,
+      so adding it there would send every chatting account back through
+      consent.
+    - The cubit checks `_generation` across the consent wait. A user who has
+      moved to another chat by the time they approve gets no meeting and
+      sends no link.
+  - **Setup.** The Cloud project needs `meet.googleapis.com` enabled
+    (`tool/setup_google_chat.sh`), and the scope listed under Data Access.
+    A 403 "has not been used / is disabled" reads "Google Meet is not set
+    up for NightMail yet"; any other 403 reads "not allowed".
+  - `config.accessType` is left to the user's admin default. On the usual
+    Workspace default (TRUSTED), someone outside the organisation knocks
+    to get in.
+
 ## Google Chat (Workspace accounts)
 
 `GoogleChatDatasource` speaks `chat.googleapis.com/v1` as the user.

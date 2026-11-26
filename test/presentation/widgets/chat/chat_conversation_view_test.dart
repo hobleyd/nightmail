@@ -13,6 +13,7 @@ import 'package:nightmail/domain/entities/chat.dart';
 import 'package:nightmail/domain/repositories/chat_repository.dart';
 import 'package:nightmail/presentation/blocs/chat/chat_conversation_cubit.dart';
 import 'package:nightmail/presentation/blocs/chat/chat_drafts.dart';
+import 'package:nightmail/presentation/widgets/chat/chat_call_menu.dart';
 import 'package:nightmail/presentation/widgets/chat/chat_conversation_view.dart';
 import 'package:nightmail/presentation/widgets/chat/chat_person_style.dart';
 
@@ -64,6 +65,94 @@ void main() {
     // Ann's and Bob's bubbles differ, whatever their hashes.
     expect(bubbles.length, greaterThanOrEqualTo(2));
     await cubit.close();
+  });
+
+  group('calling from an avatar', () {
+    Future<(_Repo, ChatConversationCubit, List<String>)> pump(
+        WidgetTester tester, ChatCalling calling) async {
+      final repo = _Repo([
+        msg('2', 'Bob Brown', 'u-bob', 2),
+        msg('1', 'Ann Lee', 'u-ann', 1),
+      ])
+        ..callingAs = calling;
+      final launched = <String>[];
+      final original = ChatCallableAvatar.launch;
+      ChatCallableAvatar.launch = (link) async => launched.add(link);
+      addTearDown(() => ChatCallableAvatar.launch = original);
+      final cubit = ChatConversationCubit(repository: repo);
+      await cubit.open('a',
+          const ChatConversation(id: 'c', kind: ChatKind.group, title: 'G'));
+      await tester.pumpWidget(MaterialApp(
+        home: Scaffold(
+          body: BlocProvider.value(
+            value: cubit,
+            child: const ChatConversationView(),
+          ),
+        ),
+      ));
+      await tester.pumpAndSettle();
+      return (repo, cubit, launched);
+    }
+
+    testWidgets('voice or video; the chosen one is asked for and handed over',
+        (tester) async {
+      final (repo, cubit, launched) =
+          await pump(tester, ChatCalling.voiceAndVideo);
+      await tester.tap(find.text('AL'));
+      await tester.pumpAndSettle();
+      expect(find.text('Voice call Ann Lee'), findsOneWidget);
+      await tester.tap(find.text('Video call Ann Lee'));
+      await tester.pumpAndSettle();
+      expect(repo.callsAsked, [('u-ann', true)]);
+      expect(launched, ['https://call.example/u-ann?video=true']);
+      await cubit.close();
+    });
+
+    testWidgets('Slack offers one huddle', (tester) async {
+      final (repo, cubit, launched) = await pump(tester, ChatCalling.huddle);
+      await tester.tap(find.text('BB'));
+      await tester.pumpAndSettle();
+      expect(find.textContaining('Voice call'), findsNothing);
+      await tester.tap(find.text('Start a huddle with Bob Brown in Slack'));
+      await tester.pumpAndSettle();
+      expect(repo.callsAsked, [('u-bob', false)]);
+      expect(launched, hasLength(1));
+      await cubit.close();
+    });
+
+    testWidgets('Google: one Meet item, said first that Google will ask',
+        (tester) async {
+      final (repo, cubit, launched) = await pump(tester, ChatCalling.meet);
+      repo.needsCallConsent = true;
+      await tester.tap(find.text('AL'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Start a Google Meet and send Ann Lee the link'));
+      await tester.pumpAndSettle();
+      expect(find.text('Allow Google Meet calls?'), findsOneWidget);
+      await tester.tap(find.text('Cancel'));
+      await tester.pumpAndSettle();
+      expect(repo.callsAsked, isEmpty);
+
+      await tester.tap(find.text('AL'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Start a Google Meet and send Ann Lee the link'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Continue'));
+      await tester.pumpAndSettle();
+      expect(repo.callsAsked, [('u-ann', true)]);
+      expect(launched, hasLength(1));
+      await cubit.close();
+    });
+
+    testWidgets('nothing offered where the system cannot call',
+        (tester) async {
+      final (repo, cubit, _) = await pump(tester, ChatCalling.none);
+      await tester.tap(find.text('AL'));
+      await tester.pumpAndSettle();
+      expect(find.textContaining('call'), findsNothing);
+      expect(repo.callsAsked, isEmpty);
+      await cubit.close();
+    });
   });
 
   test('everyone in a conversation gets their own colour, the same each time',
@@ -1002,6 +1091,34 @@ class _Repo extends Fake implements ChatRepository {
 
   @override
   bool canReact(String accountId, ChatConversation conversation) => true;
+
+  ChatCalling callingAs = ChatCalling.voiceAndVideo;
+  final callsAsked = <(String?, bool)>[];
+
+  @override
+  ChatCalling calling(String accountId) => callingAs;
+
+  bool needsCallConsent = false;
+
+  @override
+  Future<bool> callNeedsConsent(String accountId) async => needsCallConsent;
+
+  @override
+  Future<Either<Failure, bool>> requestCallConsent(String accountId) async {
+    needsCallConsent = false;
+    return const Right(true);
+  }
+
+  @override
+  Future<Either<Failure, String>> callLink(
+    String accountId,
+    ChatConversation conversation,
+    ChatMember person, {
+    required bool video,
+  }) async {
+    callsAsked.add((person.userId, video));
+    return Right('https://call.example/${person.userId}?video=$video');
+  }
 
   final unreactions = <(String, String)>[];
 

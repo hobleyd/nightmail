@@ -170,4 +170,20 @@ abstract interface class ChatRemoteDatasource {
   /// The photo of the user a [ChatMessage.senderUserId] names, or null when
   /// they have none (or are outside the directory). Best effort: never throws.
   Future<Uint8List?> photo(String userId);
+
+  /// How a person can be called through this provider.
+  ChatCalling get calling;
+
+  /// The link that hands a call with [person] — someone in [conversation],
+  /// named by their [ChatMember.userId] — to the provider's own app or web
+  /// page: a voice call, or with [video] a video call, where [calling] tells
+  /// them apart. Returned as text, not a `Uri`, so a link the server minted
+  /// keeps its escapes. May ring [person] (a NightMail Server) or message
+  /// them the link (Google) before it returns, so only ever asked when the
+  /// user has chosen to call.
+  Future<String> callLink(
+    ChatConversation conversation,
+    ChatMember person, {
+    required bool video,
+  });
 }

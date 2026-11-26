@@ -101,7 +101,9 @@ class HomePage extends StatelessWidget {
       await sl<TaskReminderService>().reconcileAll();
     }));
     // The chat window's consent sign-ins run here, where the accounts live.
-    unawaited(ChatConsentChannel.listen(sl<AccountManager>().requestChatAccess));
+    unawaited(ChatConsentChannel.listen(
+        sl<AccountManager>().requestChatAccess,
+        calls: sl<AccountManager>().requestCallAccess));
     // A chat read here un-bolds in the chat window at once, and the reverse.
     ChatReadRelay.start(sl<ChatRepository>());
     return MultiBlocProvider(

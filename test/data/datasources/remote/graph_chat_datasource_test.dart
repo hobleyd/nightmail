@@ -845,6 +845,89 @@ void main() {
       expect((await datasource().mentionable(channel)).single.userId, 'u-bob');
     });
   });
+
+  group('calls', () {
+    const chat = ChatConversation(
+      id: '19:g',
+      kind: ChatKind.group,
+      title: 'Group',
+      members: [
+        ChatMember(
+            displayName: 'Outside Olly', userId: 'ext-1', email: 'olly@other.example'),
+      ],
+    );
+
+    test('Microsoft 365: a Teams call link to the UPN, video on request',
+        () async {
+      routes['/users/u-1'] = (o) {
+        expect(o.uri.queryParameters[r'$select'], 'userPrincipalName,mail');
+        return {
+          'userPrincipalName': 'Ann.Lee_contoso.com#EXT#@Tenant.onmicrosoft.com',
+          'mail': 'ann@contoso.com',
+        };
+      };
+      final ds = datasource(server: false);
+      const ann = ChatMember(displayName: 'Ann', userId: 'u-1');
+
+      expect(ds.calling, ChatCalling.voiceAndVideo);
+      final voice = await ds.callLink(chat, ann, video: false);
+      expect(voice,
+          'https://teams.microsoft.com/l/call/0/0?users=ann.lee_contoso.com%23ext%23@tenant.onmicrosoft.com');
+      final video = await ds.callLink(chat, ann, video: true);
+      expect(video, endsWith('@tenant.onmicrosoft.com&withVideo=true'));
+      // The address is asked once; the call link itself posts nothing.
+      expect(requests.where((r) => r.path.contains('/users/')), hasLength(1));
+      expect(requests.where((r) => r.method == 'POST'), isEmpty);
+    });
+
+    test('Microsoft 365: someone outside the directory by the address the '
+        'conversation lists', () async {
+      routes['/users/ext-1'] = (_) => 404;
+      final link = await datasource(server: false).callLink(
+          chat, const ChatMember(displayName: 'Olly', userId: 'ext-1'),
+          video: false);
+      expect(link,
+          'https://teams.microsoft.com/l/call/0/0?users=olly@other.example');
+    });
+
+    test('NightMail Server: Talk rings them and the join link comes back, '
+        'never a Teams link', () async {
+      Map<String, dynamic>? body;
+      routes['/communications/calls'] = (o) {
+        body = o.data as Map<String, dynamic>;
+        return {
+          'id': 'sealed',
+          '@nightware.joinWebUrl': 'https://talk.example.com/call/abcd1234',
+        };
+      };
+      final link = await datasource().callLink(
+          chat, const ChatMember(displayName: 'Ann', userId: 'kc-ann'),
+          video: true);
+      expect(link, 'https://talk.example.com/call/abcd1234');
+      expect(body, {
+        'targets': [
+          {
+            'identity': {
+              'user': {'id': 'kc-ann'},
+            },
+          },
+        ],
+        'requestedModalities': ['audio', 'video'],
+      });
+      expect(requests.single.method, 'POST');
+    });
+
+    test('NightMail Server: calls switched off read as such', () async {
+      routes['/communications/calls'] = (_) => 501;
+      await expectLater(
+        datasource().callLink(
+            chat, const ChatMember(displayName: 'Ann', userId: 'kc-ann'),
+            video: false),
+        throwsA(isA<ServerException>().having((e) => e.message, 'message',
+            'Calls are not turned on for this NightMail Server.')),
+      );
+    });
+  });
 }
 
 const _json = {

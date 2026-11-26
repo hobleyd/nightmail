@@ -1364,6 +1364,59 @@ void main() {
           containsAll([('UZED', 'Zed'), ('UME', 'Me')]));
     });
   });
+
+  group('huddles', () {
+    const ann = ChatMember(displayName: 'Ann', userId: 'UANN');
+
+    test('in the DM with them, its own huddle link', () async {
+      final ds = datasource();
+      expect(ds.calling, ChatCalling.huddle);
+      final link = await ds.callLink(
+          const ChatConversation(
+              id: 'D9',
+              kind: ChatKind.oneOnOne,
+              title: 'Ann',
+              members: [ann]),
+          ann,
+          video: false);
+      expect(link, 'https://app.slack.com/huddle/T1/D9');
+      expect(requests, isEmpty);
+    });
+
+    test('from a channel, the listed DM with them', () async {
+      routes['users.conversations'] = (_) => {
+            'ok': true,
+            'channels': [
+              {'id': 'D1', 'is_im': true, 'user': 'UANN'},
+            ],
+          };
+      final link = await datasource().callLink(
+          const ChatConversation(
+              id: 'C1', kind: ChatKind.channel, title: 'general'),
+          ann,
+          video: true);
+      expect(link, 'https://app.slack.com/huddle/T1/D1');
+      expect(requests.map((r) => r.uri.pathSegments.last),
+          isNot(contains('conversations.open')));
+    });
+
+    test('with no DM yet, opens one', () async {
+      routes['users.conversations'] = (_) => {'ok': true, 'channels': []};
+      routes['conversations.open'] = (o) {
+        expect((o.data as Map)['users'], 'UANN');
+        return {
+          'ok': true,
+          'channel': {'id': 'D7'},
+        };
+      };
+      final link = await datasource().callLink(
+          const ChatConversation(
+              id: 'C1', kind: ChatKind.channel, title: 'general'),
+          ann,
+          video: false);
+      expect(link, 'https://app.slack.com/huddle/T1/D7');
+    });
+  });
 }
 
 const _json = {

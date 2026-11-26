@@ -993,6 +993,58 @@ class SlackChatDatasource implements ChatRemoteDatasource {
     return fetchImageBytes(publicImageClient, url);
   }
 
+  // ---- calls --------------------------------------------------------------
+
+  /// A huddle: Slack has no separate voice and video call.
+  @override
+  ChatCalling get calling => ChatCalling.huddle;
+
+  /// A huddle link for the direct message with [person],
+  /// `app.slack.com/huddle/{team}/{channel}`: opening it starts (or joins)
+  /// that DM's huddle in the Slack app, which rings them. Slack documents no
+  /// huddle URL — this shape is taken from what "Copy huddle link" is
+  /// reported to give, and was not confirmed against a live workspace.
+  /// [video] is the same huddle — the camera is turned on inside it.
+  ///
+  /// The DM is the open conversation when that is the one-on-one with them,
+  /// else one already listed; failing both, `conversations.open` makes it.
+  /// [findOneOnOne] never does that on the pane's say-so, but here the user
+  /// has asked to call this person, and an empty DM shows nothing to them.
+  @override
+  Future<String> callLink(
+    ChatConversation conversation,
+    ChatMember person, {
+    required bool video,
+  }) async {
+    final user = person.userId;
+    if (user == null || user.isEmpty) {
+      throw ServerException(
+          message: '${person.displayName} cannot be called from here.');
+    }
+    String? channel;
+    if (conversation.kind == ChatKind.oneOnOne &&
+        conversation.members.any((m) => m.userId == user)) {
+      channel = conversation.id;
+    }
+    channel ??= _ims[teamId]?[user];
+    if (channel == null) {
+      await _memberships('im');
+      channel = _ims[teamId]?[user];
+    }
+    if (channel == null) {
+      final data = await _call('conversations.open',
+          {'users': user, 'return_im': 'true'}, post: true);
+      final opened = data['channel'];
+      channel = opened is Map ? opened['id'] as String? : null;
+      if (channel == null) {
+        throw const ServerException(message: 'Slack opened no conversation.');
+      }
+      (_ims[teamId] ??= {})[user] = channel;
+    }
+    return 'https://app.slack.com/huddle/${Uri.encodeComponent(teamId)}/'
+        '${Uri.encodeComponent(channel)}';
+  }
+
   // ---- parsing ------------------------------------------------------------
 
   ChatConversation? _parseConversation(Map<String, dynamic> c, String? own) {

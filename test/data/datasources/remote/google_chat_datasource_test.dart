@@ -22,7 +22,11 @@ void main() {
     ))
       ..httpClientAdapter = _StubAdapter((o) async {
         requests.add(o);
-        final path = Uri.decodeComponent(o.uri.path);
+        // Meet's routes are keyed with their host, so `/v2/spaces` never
+        // stands in for a Chat route.
+        final path = o.uri.host == 'chat.googleapis.com'
+            ? Uri.decodeComponent(o.uri.path)
+            : '${o.uri.host}${Uri.decodeComponent(o.uri.path)}';
         final handler = routes.entries
             .where((e) => path.endsWith(e.key))
             .firstOrNull
@@ -732,6 +736,104 @@ void main() {
         ChatMember(displayName: 'Ann Lee', userId: 'users/1'),
         ChatMember(displayName: 'Bob Brown', userId: 'users/2'),
       ]);
+    });
+  });
+
+  group('calls', () {
+    const ann = ChatMember(displayName: 'Ann', userId: 'users/111');
+    const meet = 'https://meet.google.com/abc-mnop-xyz';
+    late List<String> sent;
+
+    void meetAnswers(Object? Function() answer) {
+      routes['meet.googleapis.com/v2/spaces'] = (o) => answer();
+    }
+
+    setUp(() {
+      sent = [];
+      routes['/spaces/DM1/messages'] = (o) {
+        sent.add((o.data as Map)['text'] as String);
+        return {'name': 'spaces/DM1/messages/m1'};
+      };
+    });
+
+    bool onMeet(RequestOptions r) => r.uri.host == 'meet.googleapis.com';
+
+    test('makes a meeting, sends its link into the existing DM, and returns it',
+        () async {
+      meetAnswers(() => {'name': 'spaces/s1', 'meetingUri': meet});
+      routes['/spaces:findDirectMessage'] = (o) {
+        expect(o.uri.queryParameters['name'], 'users/111');
+        return {'name': 'spaces/DM1', 'spaceType': 'DIRECT_MESSAGE'};
+      };
+      final ds = datasource();
+      expect(ds.calling, ChatCalling.meet);
+      final link = await ds.callLink(
+          const ChatConversation(
+              id: 'spaces/G', kind: ChatKind.space, title: 'Team'),
+          ann,
+          video: true);
+      expect(link, meet);
+      expect(sent, ['Join me on Google Meet: $meet']);
+      // The meeting first, so nothing is sent for one that failed.
+      expect(onMeet(requests.first), isTrue);
+      expect(requests.first.uri.toString(), GoogleChatDatasource.meetSpacesUrl);
+    });
+
+    test('with no DM yet, sets one up and sends the link there', () async {
+      meetAnswers(() => {'meetingUri': meet});
+      routes['/spaces:findDirectMessage'] = (_) => 404;
+      routes['/spaces:setup'] = (o) {
+        expect(jsonEncode(o.data), contains('users/111'));
+        return {'name': 'spaces/DM1', 'spaceType': 'DIRECT_MESSAGE'};
+      };
+      await datasource().callLink(
+          const ChatConversation(
+              id: 'spaces/G', kind: ChatKind.group, title: 'Group'),
+          ann,
+          video: false);
+      expect(sent, hasLength(1));
+    });
+
+    test('in the DM itself, sends it there without looking it up', () async {
+      meetAnswers(() => {'meetingUri': meet});
+      await datasource().callLink(
+          const ChatConversation(
+              id: 'spaces/DM1', kind: ChatKind.oneOnOne, title: 'Ann'),
+          ann,
+          video: false);
+      expect(sent, hasLength(1));
+      expect(requests.where((r) => r.uri.path.contains('findDirectMessage')),
+          isEmpty);
+    });
+
+    test('a meeting Google would not make sends nothing; an API that is off '
+        'reads as setup', () async {
+      meetAnswers(() =>
+          'Google Meet REST API has not been used in project 123 before or '
+          'it is disabled.');
+      await expectLater(
+        datasource().callLink(
+            const ChatConversation(
+                id: 'spaces/DM1', kind: ChatKind.oneOnOne, title: 'Ann'),
+            ann,
+            video: false),
+        throwsA(isA<ServerException>().having(
+            (e) => e.message, 'message', contains('Meet API enabled'))),
+      );
+      expect(sent, isEmpty);
+    });
+
+    test('a link that cannot be sent fails the call', () async {
+      meetAnswers(() => {'meetingUri': meet});
+      routes['/spaces/DM1/messages'] = (_) => 500;
+      await expectLater(
+        datasource().callLink(
+            const ChatConversation(
+                id: 'spaces/DM1', kind: ChatKind.oneOnOne, title: 'Ann'),
+            ann,
+            video: false),
+        throwsA(isA<ServerException>()),
+      );
     });
   });
 }

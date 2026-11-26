@@ -70,6 +70,7 @@ class GraphChatDatasource implements ChatRemoteDatasource {
   static void forgetIdentities() {
     _ownIds.clear();
     _tenantIds.clear();
+    _callAddresses.clear();
   }
 
   /// Unread is marked only once the user's id is known ([listRecentChats]
@@ -988,6 +989,110 @@ class GraphChatDatasource implements ChatRemoteDatasource {
           ? '/users/$id/photo/\$value'
           : '/users/$id/photos/64x64/\$value',
     );
+  }
+
+  // ---- calls --------------------------------------------------------------
+
+  /// Teams' voice and video calls; on a NightMail Server, Talk's.
+  @override
+  ChatCalling get calling => ChatCalling.voiceAndVideo;
+
+  /// The address Teams' `users=` names each person by, by [_identity] and
+  /// directory id.
+  static final _callAddresses = <String, String>{};
+
+  /// * **Microsoft 365** — Teams' documented call deep link,
+  ///   `teams.microsoft.com/l/call/0/0?users={upn}[&withVideo=true]`. Graph's
+  ///   own `POST /communications/calls` needs an application permission (a
+  ///   bot), so the call is the Teams client's: it asks the user to confirm,
+  ///   then rings. `launchMeetingJoinUrl` hands it to the app as `msteams:`.
+  /// * **NightMail Server** — `POST /communications/calls` (nightware ADR
+  ///   0009 D7), delegated there: Talk rings [person] at once, and the
+  ///   answer's `@nightware.joinWebUrl` is the room the user joins to talk.
+  ///   Nothing is owed afterwards — Talk ends a call nobody joined.
+  ///
+  /// A server account never gets a Teams link: its people are not on Teams.
+  @override
+  Future<String> callLink(
+    ChatConversation conversation,
+    ChatMember person, {
+    required bool video,
+  }) async {
+    final id = person.userId;
+    if (id == null || id.isEmpty) {
+      throw ServerException(
+          message: '${person.displayName} cannot be called from here.');
+    }
+    if (isNightmailServer) return _placeTalkCall(id, video: video);
+    final address = await _callAddress(conversation, person, id);
+    final users = Uri.encodeComponent(address).replaceAll('%40', '@');
+    return 'https://teams.microsoft.com/l/call/0/0?users=$users'
+        '${video ? '&withVideo=true' : ''}';
+  }
+
+  Future<String> _placeTalkCall(String id, {required bool video}) async {
+    final Map<String, dynamic> data;
+    try {
+      data = await _post('/communications/calls', {
+        'targets': [
+          {
+            'identity': {
+              'user': {'id': id},
+            },
+          },
+        ],
+        'requestedModalities': video ? ['audio', 'video'] : ['audio'],
+      });
+    } on ServerException catch (e) {
+      // 501: calls are switched off on the server; 404/405: a server from
+      // before phase 26 has no such route.
+      if (e.statusCode == 501 || e.statusCode == 404 || e.statusCode == 405) {
+        throw ServerException(
+            message: 'Calls are not turned on for this NightMail Server.',
+            statusCode: e.statusCode);
+      }
+      rethrow;
+    }
+    final link = data['@nightware.joinWebUrl'];
+    final uri = link is String ? Uri.tryParse(link) : null;
+    if (uri == null || !(uri.isScheme('https') || uri.isScheme('http'))) {
+      throw const ServerException(
+          message: 'The call was placed, but the server sent no link to '
+              'join it.');
+    }
+    return link as String;
+  }
+
+  /// Teams names a caller's target by user principal name — which is not
+  /// the mail address in every tenant, so it is asked for. Someone outside
+  /// the tenant is not in its directory: then the address the conversation
+  /// lists them with. Lower-cased: Teams' call link is reported to fail on a
+  /// UPN with capitals.
+  Future<String> _callAddress(
+    ChatConversation conversation,
+    ChatMember person,
+    String id,
+  ) async {
+    final key = '$_identity|$id';
+    if (_callAddresses[key] case final known?) return known;
+    String? address;
+    try {
+      final data = await _get('/users/${Uri.encodeComponent(id)}',
+          query: {r'$select': 'userPrincipalName,mail'});
+      address = data['userPrincipalName'] as String? ?? data['mail'] as String?;
+    } on ServerException catch (e) {
+      if (e.statusCode != 404 && e.statusCode != 403) rethrow;
+    }
+    address ??= person.email ??
+        conversation.members
+            .where((m) => m.userId == id && m.email != null)
+            .firstOrNull
+            ?.email;
+    if (address == null || address.isEmpty) {
+      throw ServerException(
+          message: 'Teams has no address for ${person.displayName} to call.');
+    }
+    return _callAddresses[key] = address.trim().toLowerCase();
   }
 
   // ---- transport ----------------------------------------------------------

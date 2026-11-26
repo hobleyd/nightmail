@@ -736,6 +736,100 @@ class GoogleChatDatasource implements ChatRemoteDatasource {
   /// none. Google's generated letter avatar (`default`) is skipped: the
   /// pane draws its own initials.
   @override
+  ChatCalling get calling => ChatCalling.meet;
+
+  /// Google Meet's REST API — `meetings.space.created`
+  /// (`GmailAuthService.meetScope`), asked for before the first call.
+  static const meetSpacesUrl = 'https://meet.googleapis.com/v2/spaces';
+
+  /// What Google Chat's own call button does, done by hand, since no link
+  /// starts a Chat call: a new Meet meeting (`POST v2/spaces`), its link
+  /// posted into the direct message with [person] so they are told, and the
+  /// meeting's `meetingUri` back for the user to join. Meet has no voice-only
+  /// meeting; [video] changes nothing.
+  ///
+  /// In that order, so nothing is sent for a meeting that could not be made,
+  /// and a link that could not be posted fails the call rather than opening
+  /// a meeting nobody was told about. The DM is the open conversation when
+  /// it is that DM, else `spaces:findDirectMessage`, and failing that
+  /// `spaces:setup` — the user asked to call this person.
+  @override
+  Future<String> callLink(
+    ChatConversation conversation,
+    ChatMember person, {
+    required bool video,
+  }) async {
+    final id = person.userId;
+    if (id == null || id.isEmpty || id == 'users/app') {
+      throw ServerException(
+          message: '${person.displayName} cannot be called from here.');
+    }
+    final user = id.startsWith('users/') ? id : 'users/$id';
+    final meeting = await _createMeeting();
+    final dm = conversation.kind == ChatKind.oneOnOne
+        ? conversation.id
+        : await _directMessageWith(user);
+    await _post('/$dm/messages',
+        {'text': 'Join me on Google Meet: $meeting'});
+    return meeting;
+  }
+
+  Future<String> _createMeeting() async {
+    final Map<String, dynamic> data;
+    try {
+      final r = await _dio.post<Map<String, dynamic>>(meetSpacesUrl,
+          data: const <String, dynamic>{});
+      data = r.data ?? const {};
+    } on DioException catch (e) {
+      final mapped = _map(e);
+      if (mapped is ServerException && mapped.statusCode == 403) {
+        final m = mapped.message;
+        // Google's words for an API the Cloud project has not turned on.
+        if (m.contains('has not been used') || m.contains('is disabled')) {
+          throw const ServerException(
+              message: 'Google Meet is not set up for NightMail yet: the '
+                  'Google Cloud project needs the Meet API enabled.',
+              statusCode: 403);
+        }
+        throw const ServerException(
+            message: 'NightMail is not allowed to create Google Meet '
+                'meetings for this account.',
+            statusCode: 403);
+      }
+      throw mapped;
+    }
+    final link = data['meetingUri'];
+    final uri = link is String ? Uri.tryParse(link) : null;
+    if (uri == null || !uri.isScheme('https') || uri.host.isEmpty) {
+      throw const ServerException(message: 'Google Meet sent no meeting link.');
+    }
+    return link as String;
+  }
+
+  /// The DM with [user] (`users/{id}`), set up when there is none yet.
+  Future<String> _directMessageWith(String user) async {
+    Map<String, dynamic> space;
+    try {
+      space = await _get('/spaces:findDirectMessage', query: {'name': user});
+    } on ServerException catch (e) {
+      if (e.statusCode != 404) rethrow;
+      space = await _post('/spaces:setup', {
+        'space': {'spaceType': 'DIRECT_MESSAGE', 'singleUserBotDm': false},
+        'memberships': [
+          {
+            'member': {'name': user, 'type': 'HUMAN'},
+          },
+        ],
+      });
+    }
+    final name = space['name'] as String? ?? '';
+    if (!name.startsWith('spaces/')) {
+      throw const ServerException(message: 'Google Chat sent no conversation.');
+    }
+    return name;
+  }
+
+  @override
   Future<Uint8List?> photo(String userId) async {
     final id = userId.startsWith('users/') ? userId.substring(6) : userId;
     if (id.isEmpty || id == 'app') return null;

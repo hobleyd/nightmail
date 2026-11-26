@@ -486,6 +486,71 @@ void main() {
       expect(cubit.canRename, isFalse);
     });
   });
+
+  group('calling from an avatar', () {
+    const group =
+        ChatConversation(id: 'g1', kind: ChatKind.group, title: 'Ann, Bob');
+    ChatMessage from(String? id, {bool app = false, bool system = false}) =>
+        ChatMessage(
+          id: 'm-$id',
+          createdAt: DateTime.utc(2026, 11, 26),
+          senderName: 'Ann',
+          senderUserId: id,
+          bodyHtml: 'hi',
+          senderIsApp: app,
+          isSystem: system,
+        );
+
+    test('offered for other people only', () async {
+      await cubit.open('acct', group);
+      expect(cubit.callingFor(from('UANN')), ChatCalling.voiceAndVideo);
+      expect(cubit.callingFor(from(cubit.state.ownUserId)), ChatCalling.none);
+      expect(cubit.callingFor(from(null)), ChatCalling.none);
+      expect(cubit.callingFor(from('BOT', app: true)), ChatCalling.none);
+      expect(cubit.callingFor(from('UANN', system: true)), ChatCalling.none);
+    });
+
+    test('the link comes back; a refusal is worded instead', () async {
+      await cubit.open('acct', group);
+      expect(await cubit.callLink(from('UANN'), video: true),
+          'call:UANN:video');
+      expect(repo.calls.single.displayName, 'Ann');
+      repo.callFailure = const ServerFailure(message: 'Calls are off');
+      expect(await cubit.callLink(from('UANN'), video: false), isNull);
+      expect(cubit.state.error, 'Could not call Ann: Calls are off');
+    });
+
+    test('permission is asked first where needed, and once', () async {
+      repo.needsCallConsent = true;
+      await cubit.open('acct', group);
+      expect(await cubit.callNeedsConsent(), isTrue);
+      expect(await cubit.callLink(from('UANN'), video: true), isNotNull);
+      expect(await cubit.callLink(from('UANN'), video: true), isNotNull);
+      expect(repo.consentsAsked, 1);
+    });
+
+    test('declined permission calls nobody', () async {
+      repo
+        ..needsCallConsent = true
+        ..grantsCallConsent = false;
+      await cubit.open('acct', group);
+      expect(await cubit.callLink(from('UANN'), video: true), isNull);
+      expect(repo.calls, isEmpty);
+      expect(cubit.state.error, contains('Google Meet'));
+    });
+
+    test('moving to another conversation during consent calls nobody',
+        () async {
+      repo
+        ..needsCallConsent = true
+        ..duringConsent = () => cubit.open('acct',
+            const ChatConversation(
+                id: 'g2', kind: ChatKind.group, title: 'Other'));
+      await cubit.open('acct', group);
+      expect(await cubit.callLink(from('UANN'), video: true), isNull);
+      expect(repo.calls, isEmpty);
+    });
+  });
 }
 
 class _Repo implements ChatRepository {
@@ -629,6 +694,42 @@ class _Repo implements ChatRepository {
     renames.add((conversation.id, title));
     if (renameFailure != null) return Left(renameFailure!);
     return Right(conversation.copyWith(title: title));
+  }
+
+  Failure? callFailure;
+  final calls = <ChatMember>[];
+
+  @override
+  ChatCalling calling(String accountId) => ChatCalling.voiceAndVideo;
+
+  bool needsCallConsent = false;
+  bool grantsCallConsent = true;
+  int consentsAsked = 0;
+
+  /// Runs while the consent "sits in the browser".
+  Future<void> Function()? duringConsent;
+
+  @override
+  Future<bool> callNeedsConsent(String accountId) async => needsCallConsent;
+
+  @override
+  Future<Either<Failure, bool>> requestCallConsent(String accountId) async {
+    consentsAsked++;
+    await duringConsent?.call();
+    if (grantsCallConsent) needsCallConsent = false;
+    return Right(grantsCallConsent);
+  }
+
+  @override
+  Future<Either<Failure, String>> callLink(
+    String accountId,
+    ChatConversation conversation,
+    ChatMember person, {
+    required bool video,
+  }) async {
+    calls.add(person);
+    if (callFailure != null) return Left(callFailure!);
+    return Right('call:${person.userId}:${video ? 'video' : 'voice'}');
   }
 
   @override

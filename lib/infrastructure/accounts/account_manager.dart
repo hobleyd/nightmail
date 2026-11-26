@@ -761,6 +761,37 @@ class AccountManager {
     );
   }
 
+  /// Whether [accountId]'s chat must ask the user before it can start a
+  /// call: a Google Workspace account whose token lacks
+  /// [GmailAuthService.meetScope]. Every other account calls under what it
+  /// already holds (Teams' link, Talk on a NightMail Server).
+  Future<bool> callNeedsConsent(String accountId) async {
+    final account = _credentialOwnerFor(accountById(accountId));
+    if (account is! GmailAccount ||
+        isConsumerGoogleAddress(account.emailAddress)) {
+      return false;
+    }
+    final token =
+        await _buildOAuthServiceForAccount(account)?.getStoredToken();
+    return !GmailAuthService.grantsMeet(token?.scope);
+  }
+
+  /// Runs the interactive sign-in again for [accountId]'s credential owner,
+  /// also asking for [GmailAuthService.meetScope]; whether it came back
+  /// granted. Same shape as the Google branch of [requestChatAccess],
+  /// including the hop to the main window from the chat window.
+  Future<bool> requestCallAccess(String accountId) async {
+    final account = _credentialOwnerFor(accountById(accountId));
+    if (account is! GmailAccount ||
+        isConsumerGoogleAddress(account.emailAddress)) {
+      return true;
+    }
+    if (!AppWindow.isMain) return ChatConsentChannel.requestCalls(accountId);
+    final token = await _signInExistingAccount(account,
+        extraScopes: const [GmailAuthService.meetScope]);
+    return GmailAuthService.grantsMeet(token.scope);
+  }
+
   /// A chat datasource acting as [accountId]'s credential owner — Graph for
   /// Microsoft 365 and NightMail Server, Google Chat for a Workspace account —
   /// or null for an account with no chat (IMAP, `@gmail.com`). A fresh one

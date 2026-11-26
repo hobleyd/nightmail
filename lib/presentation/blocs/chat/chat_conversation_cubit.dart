@@ -946,6 +946,85 @@ class ChatConversationCubit extends Cubit<ChatConversationState> {
         : _repo.photo(accountId, userId);
   }
 
+  /// How [m]'s sender can be called from their avatar: never the user
+  /// themselves, an app, a system or deleted message, or a sender the
+  /// provider names by no id.
+  ChatCalling callingFor(ChatMessage m) {
+    final accountId = state.accountId;
+    final id = m.senderUserId;
+    if (accountId == null ||
+        state.conversation == null ||
+        id == null ||
+        id.isEmpty ||
+        id == state.ownUserId ||
+        m.senderIsApp ||
+        m.isSystem ||
+        m.isDeleted) {
+      return ChatCalling.none;
+    }
+    return _repo.calling(accountId);
+  }
+
+  /// Whether calling from the open conversation needs the user's
+  /// permission first (Google's Meet scope) — the view says so before
+  /// [callLink] opens the browser for it.
+  Future<bool> callNeedsConsent() async {
+    final accountId = state.accountId;
+    return accountId != null && await _repo.callNeedsConsent(accountId);
+  }
+
+  /// The link that hands a call with [m]'s sender to the chat system's own
+  /// app or web page, or null (with [ChatConversationState.error] set) when
+  /// it could not be had. On a NightMail Server this already rings them; on
+  /// Google Chat it sends them the meeting's link, after asking for
+  /// permission to make meetings where that is still needed.
+  ///
+  /// The consent can sit in the browser for minutes: if the user has moved
+  /// to another conversation by then, nothing is made or sent.
+  Future<String?> callLink(ChatMessage m, {required bool video}) async {
+    final accountId = state.accountId;
+    final conversation = state.conversation;
+    if (callingFor(m) == ChatCalling.none ||
+        accountId == null ||
+        conversation == null) {
+      return null;
+    }
+    final gen = _generation;
+    if (await _repo.callNeedsConsent(accountId)) {
+      final consent = await _repo.requestCallConsent(accountId);
+      if (gen != _generation || isClosed) return null;
+      final granted = consent.match((f) {
+        emit(state.copyWith(
+            error: () =>
+                'Could not ask Google for permission to call: ${f.message}'));
+        return false;
+      }, (ok) {
+        if (!ok) {
+          emit(state.copyWith(
+              error: () => 'Calling ${m.senderName} needs permission to '
+                  'create Google Meet meetings.'));
+        }
+        return ok;
+      });
+      if (!granted) return null;
+    }
+    final person =
+        ChatMember(displayName: m.senderName, userId: m.senderUserId);
+    final result = await _repo.callLink(accountId, conversation, person,
+        video: video);
+    if (gen != _generation || isClosed) return null;
+    return result.match(
+      (f) {
+        emit(state.copyWith(
+            error: () => f is AuthFailure || f is NetworkFailure
+                ? _messageOf(f)
+                : 'Could not call ${m.senderName}: ${f.message}'));
+        return null;
+      },
+      (link) => link,
+    );
+  }
+
   /// Whether a message in the open conversation can be answered in a thread
   /// of its own: a channel's post, a threaded space's, and a Slack DM's.
   bool get threads {

@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Turns on Google Chat for NightMail's Google Cloud project.
+# Turns on Google Chat — and Google Meet, for calls from a chat avatar — for
+# NightMail's Google Cloud project.
 #
 # The Chat pane and window reach Google Workspace accounts through the Google
 # Chat API as the signed-in user (see docs/claude/chat.md). Google refuses
@@ -16,6 +17,13 @@
 # project whose consent screen is published and verified, add them under
 # Google Auth Platform > Data Access before shipping; until then Workspace
 # users see the unverified-app warning on the chat consent.
+#
+# A call from a chat avatar makes a Google Meet meeting through the Meet REST
+# API (meet.googleapis.com), under meetings.space.created
+# (GmailAuthService.meetScope, asked for on the first call). That scope is
+# sensitive too: add it under Data Access alongside the chat scopes. Without
+# the API enabled, the call fails with "Google Meet is not set up for
+# NightMail yet".
 #
 # Usage: tool/setup_google_chat.sh [OAUTH_CLIENT_ID]
 #   OAUTH_CLIENT_ID defaults to $GOOGLE_CLIENT_ID — the value the app is built
@@ -43,6 +51,9 @@ fi
 
 echo "Enabling the Google Chat API on project $PROJECT_NUMBER…"
 gcloud services enable chat.googleapis.com --project "$PROJECT_NUMBER"
+
+echo "Enabling the Google Meet REST API on project $PROJECT_NUMBER…"
+gcloud services enable meet.googleapis.com --project "$PROJECT_NUMBER"
 
 CONFIG_URL="https://console.cloud.google.com/apis/api/chat.googleapis.com/hangouts-chat?project=$PROJECT_NUMBER"
 cat <<EOF

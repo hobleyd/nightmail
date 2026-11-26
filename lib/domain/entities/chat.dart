@@ -13,6 +13,19 @@ enum ChatKind { oneOnOne, group, meeting, channel, space }
 /// Which chat system a [ChatSource] is.
 enum ChatSourceKind { teams, nightmailServer, googleChat, slack }
 
+/// How a person in a conversation can be called, by what the chat system
+/// itself offers. The call always runs in the system's own app or web page;
+/// NightMail only hands it over.
+///
+/// * [voiceAndVideo] — Teams (its `/l/call` deep link) and a NightMail
+///   Server (Talk, which rings the person): a voice call or a video call.
+/// * [huddle] — Slack: one huddle, voice first, video from inside it.
+/// * [meet] — Google Chat: no link starts a Chat call, so a Google Meet
+///   meeting is made and its link sent to the person in your direct message
+///   (asking Google for permission to make meetings the first time).
+/// * [none] — nothing to offer.
+enum ChatCalling { none, voiceAndVideo, huddle, meet }
+
 /// One chat system the Chat button can open: the active account's own
 /// ("platform") chat, or a connected Slack workspace.
 ///

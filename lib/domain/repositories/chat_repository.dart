@@ -258,6 +258,29 @@ abstract interface class ChatRepository {
   /// have none. Remembered for the session, misses included.
   Future<Uint8List?> photo(String accountId, String userId);
 
+  /// How a person can be called through [accountId]'s chat; see
+  /// [ChatCalling].
+  ChatCalling calling(String accountId);
+
+  /// Whether a call from [accountId]'s chat needs the user's permission
+  /// first — a browser consent ([requestCallConsent]). Only Google Chat,
+  /// whose calls are Meet meetings, ever asks.
+  Future<bool> callNeedsConsent(String accountId);
+
+  /// Asks for that permission; whether it was granted.
+  Future<Either<Failure, bool>> requestCallConsent(String accountId);
+
+  /// The link that hands a call with [person] in [conversation] to the chat
+  /// system's own app or web page (`ChatRemoteDatasource.callLink`). On a
+  /// NightMail Server this rings [person], on Google Chat it sends them the
+  /// meeting's link — ask only once the user chose to call.
+  Future<Either<Failure, String>> callLink(
+    String accountId,
+    ChatConversation conversation,
+    ChatMember person, {
+    required bool video,
+  });
+
   /// Which of [people] the Chat pane may offer: [colleagues], plus anyone
   /// outside the organisation the account already has a one-on-one with —
   /// a chat that exists has already passed the tenants' external-access

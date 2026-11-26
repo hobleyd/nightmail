@@ -2,7 +2,8 @@ import 'dart:async';
 
 import 'package:flutter_bloc/flutter_bloc.dart';
 
-import '../../../infrastructure/update/app_update_service.dart';
+import '../../../infrastructure/update/app_update_service.dart'
+    if (dart.library.js_interop) '../../../infrastructure/update/app_update_service_web.dart';
 import '../../../infrastructure/update/app_update_status.dart';
 
 /// Publishes [AppUpdateService]'s status to the widgets that draw it: the red

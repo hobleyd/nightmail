@@ -1,4 +1,3 @@
-import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/widgets.dart';
@@ -11,6 +10,7 @@ import '../../infrastructure/notifications/calendar_reminder_service.dart';
 import '../../infrastructure/notifications/notification_service.dart';
 import '../../infrastructure/notifications/task_reminder_service.dart';
 import '../../injection_container.dart';
+import '../../core/platform/platform.dart';
 
 const _periodicTaskName = 'au.com.sharpblue.nightmail.mailCheck';
 const _periodicTaskTag = 'mailCheck';

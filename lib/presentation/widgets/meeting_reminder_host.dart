@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:io';
 
 import 'package:desktop_multi_window/desktop_multi_window.dart';
 import 'package:flutter/foundation.dart';
@@ -13,6 +12,7 @@ import '../../infrastructure/notifications/meeting_reminder_channel.dart';
 import '../../injection_container.dart';
 import '../pages/meeting_reminders_window.dart';
 import 'meeting_reminder_list.dart';
+import '../../core/platform/platform.dart';
 
 /// Shows [MeetingReminderBoard]'s rows as the one meeting-reminders dialog:
 /// its own window on macOS, Windows and Linux, a modal dialog over the app on

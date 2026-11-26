@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:io';
 import 'dart:math' as math;
 
 import 'package:desktop_multi_window/desktop_multi_window.dart';
@@ -41,6 +40,7 @@ import 'presentation/pages/chat_window.dart';
 import 'presentation/widgets/chat/chat_window_target.dart';
 import 'presentation/pages/tasks_window.dart';
 import 'presentation/pages/home_page.dart';
+import 'core/platform/platform.dart';
 
 /// Places a modestly-sized window centred on [displayBounds] so a subsequent
 /// [WindowManager.maximize] / [WindowManager.setFullScreen] targets that

@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
@@ -38,6 +37,7 @@ import '../../../infrastructure/sync/pending_removals.dart';
 import '../../../infrastructure/sync/recent_mutation_store.dart';
 import '../../../infrastructure/sync/spam_db_sync_service.dart';
 import 'mail_poller_state.dart';
+import '../../../core/platform/platform.dart';
 
 class MailPollerCubit extends Cubit<MailPollerState> with WidgetsBindingObserver {
   MailPollerCubit({

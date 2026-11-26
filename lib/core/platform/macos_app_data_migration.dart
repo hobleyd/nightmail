@@ -1,8 +1,9 @@
-import 'dart:io';
+import 'dart:io' hide Platform;
 
 import 'package:flutter/foundation.dart';
 
 import 'app_data_directory.dart';
+import 'platform.dart';
 
 /// The bundle identifier every previous macOS location is named after.
 const String _bundleId = 'au.com.sharpblue.nightmail';

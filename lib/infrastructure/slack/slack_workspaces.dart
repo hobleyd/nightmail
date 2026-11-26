@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:io' show Platform;
 import 'dart:math';
 
 import 'package:crypto/crypto.dart';
@@ -12,6 +11,7 @@ import 'package:flutter_web_auth_2/flutter_web_auth_2.dart';
 import '../../core/error/exceptions.dart';
 import '../auth/loopback_auth_flow.dart';
 import '../auth/oauth_state.dart';
+import '../../core/platform/platform.dart';
 
 /// One connected Slack workspace and the user token NightMail chats with.
 ///

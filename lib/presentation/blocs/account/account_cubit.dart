@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:io' show Platform;
 
 import 'package:equatable/equatable.dart';
 import 'package:flutter/foundation.dart' show debugPrint, kIsWeb;
@@ -17,6 +16,7 @@ import '../../../infrastructure/calendar/calendar_cache_sync_service.dart';
 import '../../../infrastructure/contacts/contact_cache_sync_service.dart';
 import '../../../infrastructure/notifications/calendar_reminder_service.dart';
 import '../../../infrastructure/notifications/task_reminder_service.dart';
+import '../../../core/platform/platform.dart';
 
 // ---------------------------------------------------------------------------
 // State

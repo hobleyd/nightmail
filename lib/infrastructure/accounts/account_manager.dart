@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:io' show Platform;
 
 import 'package:flutter/foundation.dart' show debugPrint, kIsWeb;
 import 'package:fpdart/fpdart.dart' show Either;
@@ -55,6 +54,7 @@ import 'account.dart';
 import 'account_storage.dart';
 import 'chat_consent_channel.dart';
 import 'file_sites_refresh.dart';
+import '../../core/platform/platform.dart';
 
 class AccountManager {
   AccountManager({

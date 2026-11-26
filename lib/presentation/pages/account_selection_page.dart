@@ -1,4 +1,3 @@
-import 'dart:io' show Platform;
 
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
@@ -23,6 +22,7 @@ import '../../injection_container.dart';
 import '../blocs/account/account_cubit.dart';
 import '../widgets/client_id_dialog.dart';
 import '../widgets/nightmail_server_sign_in.dart';
+import '../../core/platform/platform.dart';
 
 /// Shown when no accounts are configured. Lets the user choose a provider.
 class AccountSelectionPage extends StatefulWidget {

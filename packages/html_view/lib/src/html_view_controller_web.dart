@@ -22,6 +22,10 @@ class HtmlViewController {
   final _onPageLoaded     = StreamController<void>.broadcast();
   final _onLinkOpened     = StreamController<String>.broadcast();
   final _onLinkHovered    = StreamController<String>.broadcast();
+  final _onAttachRequested    = StreamController<String>.broadcast();
+  final _onClickFocus         = StreamController<void>.broadcast();
+  final _onImageDoubleClicked = StreamController<String>.broadcast();
+  final _onImagePasted        = StreamController<String>.broadcast();
 
   Stream<String> get onContentChanged => _onContentChanged.stream;
   Stream<void>   get onLinkRequest    => _onLinkRequest.stream;
@@ -31,6 +35,13 @@ class HtmlViewController {
   /// (`loadAsset`), and a `srcdoc` message body is out of reach. Declared so
   /// callers compile against either implementation.
   Stream<String> get onLinkHovered    => _onLinkHovered.stream;
+  /// Never fire on web, like [onLinkHovered]: the bridge forwards only
+  /// onContentChanged and onLinkRequest. Declared so callers compile against
+  /// either implementation.
+  Stream<String> get onAttachRequested    => _onAttachRequested.stream;
+  Stream<void>   get onClickFocus         => _onClickFocus.stream;
+  Stream<String> get onImageDoubleClicked => _onImageDoubleClicked.stream;
+  Stream<String> get onImagePasted        => _onImagePasted.stream;
 
   bool get isInitialized => _viewId != null;
   int? get viewId => _viewId;
@@ -118,6 +129,11 @@ class HtmlViewController {
     }
   }
 
+  /// Prints the iframe's own document, not the whole Flutter page.
+  Future<void> printCurrent() async {
+    _iframe?.contentWindow?.print();
+  }
+
   Future<void> focus() async {
     _iframe?.focus();
   }
@@ -138,6 +154,11 @@ class HtmlViewController {
   Future<void> setPosition(double x, double y, double dpr) async {}
   Future<void> setSize(double w, double h, double dpr) async {}
 
+  /// Shows or hides the iframe, as the native controller does its webview.
+  Future<void> setVisible(bool visible) async {
+    _iframe?.style.visibility = visible ? 'visible' : 'hidden';
+  }
+
   Future<void> dispose() async {
     await _messageSub?.cancel();
     _onContentChanged.close();
@@ -145,6 +166,10 @@ class HtmlViewController {
     _onPageLoaded.close();
     _onLinkOpened.close();
     _onLinkHovered.close();
+    _onAttachRequested.close();
+    _onClickFocus.close();
+    _onImageDoubleClicked.close();
+    _onImagePasted.close();
     _iframe = null;
     _viewId = null;
   }

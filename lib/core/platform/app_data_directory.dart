@@ -1,7 +1,8 @@
-import 'dart:io';
+import 'dart:io' hide Platform;
 
 import 'package:flutter/foundation.dart';
 import 'package:path_provider/path_provider.dart';
+import 'platform.dart';
 
 /// The directory [appDataDirectory] names inside the user's home on macOS.
 const String macOSAppDataDirectoryName = '.nightmail';

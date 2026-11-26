@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:io' show Platform;
 
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
@@ -38,6 +37,7 @@ import '../widgets/app_update_section.dart';
 import '../widgets/compose_body_builder.dart';
 import '../widgets/html_email_editor.dart';
 import '../widgets/insert_link_dialog.dart';
+import '../../core/platform/platform.dart';
 
 bool get _isApplePlatform => !kIsWeb && (Platform.isMacOS || Platform.isIOS);
 

@@ -1,10 +1,10 @@
-import 'dart:io';
 
 import 'package:android_package_installer/android_package_installer.dart';
 import 'package:dio/dio.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:version/version.dart';
+import '../../core/platform/platform.dart';
 
 /// The APK the newest GitHub release offers, and how it compares to this build.
 class AndroidReleaseCheck {

@@ -1,12 +1,12 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:io' show Platform;
 
 import 'package:flutter/foundation.dart' show Factory;
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:html_view/html_view.dart';
 import 'package:webview_flutter/webview_flutter.dart';
+import '../../core/platform/platform.dart';
 
 /// Which item of the toolbar's attach menu was chosen.
 enum AttachSource {

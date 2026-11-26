@@ -1,10 +1,11 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:io';
+import 'dart:io' hide Platform;
 
 import 'package:flutter/foundation.dart';
 
 import '../platform/app_data_directory.dart';
+import '../platform/platform.dart';
 
 /// A rolling copy of everything this engine says through [debugPrint], kept in
 /// the app data directory so a fault leaves evidence behind without anyone

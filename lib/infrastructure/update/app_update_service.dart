@@ -1,5 +1,5 @@
 import 'dart:async';
-import 'dart:io';
+import 'dart:io' hide Platform;
 
 import 'package:desktop_updater/desktop_updater.dart';
 import 'package:flutter/foundation.dart';
@@ -14,6 +14,7 @@ import 'completed_install_marker.dart';
 import 'release_notes_fetcher.dart';
 import 'snap_updater.dart';
 import 'update_recovery_store.dart';
+import '../../core/platform/platform.dart';
 
 /// Where the signed app-archive and the release notes are published. The
 /// release workflow's `deploy` job writes both to this GitHub Pages site.

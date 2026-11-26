@@ -1,11 +1,12 @@
 import 'dart:convert';
-import 'dart:io';
+import 'dart:io' hide Platform;
 
 import 'package:crypto/crypto.dart';
 import 'package:flutter/foundation.dart' show debugPrint, visibleForTesting;
 import 'package:path_provider/path_provider.dart';
 
 import '../../domain/entities/inline_attachment.dart';
+import '../../core/platform/platform.dart';
 
 /// On-disk cache for an email's inline (`cid:`) images and the rendered
 /// document that references them.

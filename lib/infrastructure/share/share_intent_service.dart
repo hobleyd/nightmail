@@ -1,10 +1,11 @@
 import 'dart:async';
-import 'dart:io';
+import 'dart:io' hide Platform;
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 
 import '../../domain/entities/local_attachment.dart';
+import '../../core/platform/platform.dart';
 
 /// A file handed to NightMail through the OS share sheet, already copied by
 /// the native side into storage the app owns.

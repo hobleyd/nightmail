@@ -1,6 +1,6 @@
-import 'dart:io' show Platform;
 
 import 'package:flutter/foundation.dart' show kIsWeb, kReleaseMode;
+import '../platform/platform.dart';
 
 class AppConfig {
   const AppConfig._();

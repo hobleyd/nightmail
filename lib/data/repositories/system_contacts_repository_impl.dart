@@ -1,10 +1,10 @@
-import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 
 import '../../domain/entities/contact_suggestion.dart';
 import '../../domain/repositories/system_contacts_repository.dart';
+import '../../core/platform/platform.dart';
 
 class SystemContactsRepositoryImpl implements SystemContactsRepository {
   static const _channel =

@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:io';
 
 import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
@@ -14,6 +13,7 @@ import '../../domain/usecases/mark_email_as_read.dart';
 import '../../injection_container.dart';
 import 'notification_action.dart';
 import 'reminder_reconcile_channel.dart';
+import '../../core/platform/platform.dart';
 
 // Top-level callback — required for background isolate on Android when the
 // app is killed and the user taps a notification, and reached on iOS too:

@@ -1,4 +1,3 @@
-import 'dart:io' show Platform;
 
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
@@ -23,6 +22,7 @@ import '../../injection_container.dart';
 import '../blocs/account/account_cubit.dart';
 import '../widgets/client_id_dialog.dart';
 import '../widgets/nightmail_server_sign_in.dart';
+import '../../core/platform/platform.dart';
 
 /// Pushed from inside [HomePage] when the user wants to add another account.
 class AddAccountPage extends StatefulWidget {

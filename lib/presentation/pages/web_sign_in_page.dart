@@ -12,10 +12,11 @@ import 'account_selection_page.dart';
 
 /// What a launch with no accounts shows. A native app runs as the person
 /// signed in to the device, so it offers every provider
-/// ([AccountSelectionPage]). The web build is a public site that anyone can
-/// open, so it offers only the sign-in to its own NightMail Server
-/// ([WebSignInPage]). An account on that server is the only way in, and
-/// nobody reaches a provider chooser without one. The web build can't use the
+/// ([AccountSelectionPage]). The web build runs in any browser, so it offers
+/// only the sign-in to its own NightMail Server ([WebSignInPage]), and nobody
+/// reaches a provider chooser. Its server serves none of the app's files
+/// without a Nightware sign-in in the first place (the ansible repo's
+/// `conf.d/nightmail.conf`). The web build can't use the
 /// other providers anyway: Microsoft 365 and Gmail have no web client
 /// registered for its origin, and a browser can't open IMAP's sockets.
 Widget noAccountsPage({required bool isWeb}) => isWeb

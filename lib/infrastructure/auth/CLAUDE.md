@@ -289,8 +289,8 @@ Load-bearing:
 
 ## The Web Build Opens on Its Server's Sign-In, Not the Provider Chooser
 
-A native app runs as whoever is signed in to the device. The web build is a
-public site that anyone can open. So with no accounts, `_AccountGate` asks
+A native app runs as whoever is signed in to the device. The web build runs
+in any browser. So with no accounts, `_AccountGate` asks
 `noAccountsPage(isWeb: kIsWeb)` (`presentation/pages/web_sign_in_page.dart`)
 which page to show, and on web the answer is `WebSignInPage`: one *Sign in*
 button for the server named by `--dart-define=NIGHTWARE_SERVER`. That sign-in
@@ -316,7 +316,13 @@ Load-bearing:
   in `web_auth_web.dart`), and *Cancel* abandons a sign-in whose popup was
   closed. Nothing watches the popup's `closed`, because Microsoft's COOP
   header makes it read as closed mid-sign-in.
-- **It is an app-level gate.** The static bundle is still publicly fetchable,
-  which is fine only while it holds no secrets. Keep the server URL the only
-  define in that Dockerfile. A browser that already holds an account opens
-  straight to mail, as any remembered session does.
+- **The server gates the files; this page gates the account.** The ansible
+  repo's `conf.d/nightmail.conf` serves nothing, not even `index.html`,
+  without a Keycloak session (oauth2-proxy, `nightmail-auth`). So this page
+  only ever loads for a signed-in Nightware user, and its *Sign in* rides that
+  Keycloak session (the popup opens and closes at once). A define still ends
+  up in `main.dart.js` for every Nightware user to read: never put a secret
+  in one. The manifest link carries `crossorigin="use-credentials"`
+  (`web/index.html`); without it the browser fetches it with no cookie and
+  gets a 401. A browser that already holds an account opens straight to
+  mail, once the server has let it in.

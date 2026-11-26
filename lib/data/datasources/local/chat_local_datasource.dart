@@ -201,6 +201,7 @@ class ChatLocalDatasourceImpl implements ChatLocalDatasource {
         if (m.replies.isNotEmpty)
           'replies': [for (final r in m.replies) messageToJson(r)],
         'replyCount': ?m.replyCount,
+        'latestReplyAt': ?m.latestReplyAt?.toIso8601String(),
         if (m.attachmentNames.isNotEmpty) 'attachments': m.attachmentNames,
         'threadId': ?m.threadId,
         'editable': ?m.editableText,
@@ -236,6 +237,7 @@ class ChatLocalDatasourceImpl implements ChatLocalDatasource {
             if (r is Map<String, dynamic>) messageFromJson(r),
         ],
         replyCount: (j['replyCount'] as num?)?.toInt(),
+        latestReplyAt: _date(j['latestReplyAt']),
         attachmentNames: [
           for (final a in (j['attachments'] as List?) ?? const [])
             if (a is String) a,

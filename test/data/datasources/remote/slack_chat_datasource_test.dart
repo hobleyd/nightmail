@@ -104,6 +104,7 @@ void main() {
               'user': 'UANN',
               'text': 'Hi <@UME>, see <https://x.test/a?b=1&amp;c=2|the doc>',
               'reply_count': 3,
+              'latest_reply': '1700000600.000300',
               'reactions': [
                 {'name': '+1', 'count': 2},
                 {'name': 'thumbsup::skin-tone-2', 'count': 1},
@@ -124,6 +125,7 @@ void main() {
     expect(m.senderName, 'Ann');
     expect(m.senderUserId, 'UANN');
     expect(m.replyCount, 3);
+    expect(m.latestReplyAt?.millisecondsSinceEpoch, 1700000600000);
     expect(m.reactions, const [
       ChatReaction(emoji: '👍', count: 2),
       ChatReaction(emoji: '👍🏻', count: 1),

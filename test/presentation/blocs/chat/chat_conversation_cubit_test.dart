@@ -236,6 +236,63 @@ void main() {
     });
   });
 
+  // Opening a channel from the unread list to see the thread reply that lit
+  // it: the thread opens by itself.
+  group('a reply that lit the channel', () {
+    const channel = ChatConversation(
+        id: 'C1',
+        kind: ChatKind.space,
+        title: 'general',
+        threaded: true,
+        unread: true);
+    ChatMessage post(String id, int minute, {int? replyAt}) => ChatMessage(
+          id: id,
+          createdAt: t0.add(Duration(minutes: minute)),
+          senderName: 'Ann',
+          bodyHtml: 'x',
+          replyCount: replyAt == null ? null : 1,
+          latestReplyAt:
+              replyAt == null ? null : t0.add(Duration(minutes: replyAt)),
+        );
+
+    test('opens the thread holding the newest reply', () async {
+      repo.page = ChatMessagePage(messages: [
+        post('p3', 3),
+        post('p2', 2, replyAt: 9),
+        post('p1', 1, replyAt: 5),
+      ]);
+      repo.threadReplies = [msg('r', 9)];
+      await cubit.open('acct', channel);
+      await pumpEventQueue();
+      expect(cubit.state.threadPostId, 'p2');
+      expect(cubit.state.threadReplies.map((m) => m.id), ['r']);
+    });
+
+    test('a reply listed with its post counts too (Graph, Google)', () {
+      expect(
+          ChatConversationCubit.threadWithNewestReply([
+            post('p2', 2),
+            post('p1', 1).withReplies([msg('r', 4)]),
+          ]),
+          'p1');
+    });
+
+    test('stays shut when a post is newer than every reply', () async {
+      repo.page = ChatMessagePage(
+          messages: [post('p3', 10), post('p2', 2, replyAt: 9)]);
+      await cubit.open('acct', channel);
+      await pumpEventQueue();
+      expect(cubit.state.threadPostId, isNull);
+    });
+
+    test('stays shut when the channel was not listed unread', () async {
+      repo.page = ChatMessagePage(messages: [post('p2', 2, replyAt: 9)]);
+      await cubit.open('acct', channel.copyWith(unread: false));
+      await pumpEventQueue();
+      expect(cubit.state.threadPostId, isNull);
+    });
+  });
+
   group('editing', () {
     ChatMessage mine(String id, int minute, {String? text = 'typo'}) =>
         ChatMessage(

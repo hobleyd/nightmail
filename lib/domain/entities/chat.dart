@@ -243,6 +243,7 @@ class ChatMessage extends Equatable {
     this.reactions = const [],
     this.replies = const [],
     this.replyCount,
+    this.latestReplyAt,
     this.attachmentNames = const [],
     this.conversationTitle,
     this.threadId,
@@ -279,6 +280,10 @@ class ChatMessage extends Equatable {
   /// How many replies the post has, when known beyond [replies].
   final int? replyCount;
 
+  /// When the post's newest reply was sent, where the provider says so
+  /// without listing the replies (Slack's `latest_reply`).
+  final DateTime? latestReplyAt;
+
   /// File names of attachments (files are shown by name; opening them is
   /// the provider's web client's job).
   final List<String> attachmentNames;
@@ -302,6 +307,16 @@ class ChatMessage extends Equatable {
   final bool senderIsApp;
 
   int get totalReplies => replyCount ?? replies.length;
+
+  /// When the newest reply in this post's thread was sent: [latestReplyAt],
+  /// or the newest of the [replies] listed with it. Null with no replies.
+  DateTime? get newestReplyAt {
+    var newest = latestReplyAt;
+    for (final r in replies) {
+      if (newest == null || r.createdAt.isAfter(newest)) newest = r.createdAt;
+    }
+    return newest;
+  }
 
   /// This message after the user changed its text to [editableText].
   ChatMessage withEdit({
@@ -393,6 +408,7 @@ class ChatMessage extends Equatable {
         reactions: reactions ?? this.reactions,
         replies: replies ?? this.replies,
         replyCount: replyCount ?? this.replyCount,
+        latestReplyAt: latestReplyAt,
         attachmentNames: attachmentNames,
         conversationTitle: conversationTitle,
         threadId: threadId,
@@ -415,6 +431,7 @@ class ChatMessage extends Equatable {
         reactions,
         replies,
         replyCount,
+        latestReplyAt,
         attachmentNames,
         conversationTitle,
         threadId,

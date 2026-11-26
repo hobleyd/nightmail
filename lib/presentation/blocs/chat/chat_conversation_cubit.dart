@@ -293,7 +293,7 @@ class ChatConversationCubit extends Cubit<ChatConversationState> {
       conversation: conversation,
       loading: true,
     ));
-    await _load(accountId, conversation, gen);
+    await _load(accountId, conversation, gen, expandReply: conversation.unread);
   }
 
   void clear() {
@@ -308,8 +308,12 @@ class ChatConversationCubit extends Cubit<ChatConversationState> {
 
   /// Paints what the cache on disk last held for [conversation], then reads
   /// the newest page and joins the two where they meet.
+  ///
+  /// With [expandReply] (opened from the unread list) a thread reply newer
+  /// than every post opens its thread, since that reply is what lit it.
   Future<void> _load(
-      String accountId, ChatConversation conversation, int gen) async {
+      String accountId, ChatConversation conversation, int gen,
+      {bool expandReply = false}) async {
     emit(state.copyWith(conversation: () => conversation, loading: true));
     _resetPolls();
     _openedUnread = conversation.unread;
@@ -339,6 +343,10 @@ class ChatConversationCubit extends Cubit<ChatConversationState> {
         _watermark = newestStamp(p.messages);
         unawaited(_repo.cacheMessages(accountId, conversation, messages));
         _startPolling(gen);
+        if (expandReply && threads && state.threadPostId == null) {
+          final post = threadWithNewestReply(messages);
+          if (post != null) unawaited(openThread(post));
+        }
       },
     );
     await own;
@@ -362,6 +370,31 @@ class ChatConversationCubit extends Cubit<ChatConversationState> {
       for (final m in cached)
         if (!ids.contains(m.id) && m.createdAt.isBefore(oldest)) m,
     ];
+  }
+
+  /// The post whose thread holds the newest activity in [messages] — a
+  /// reply newer than every post and every other thread's replies — or null
+  /// when the newest thing is a post.
+  @visibleForTesting
+  static String? threadWithNewestReply(List<ChatMessage> messages) {
+    DateTime? newestPost;
+    String? thread;
+    DateTime? newestReply;
+    for (final m in messages) {
+      if (m.replyToId != null) continue;
+      if (!m.isSystem &&
+          (newestPost == null || m.createdAt.isAfter(newestPost))) {
+        newestPost = m.createdAt;
+      }
+      final r = m.newestReplyAt;
+      if (r != null && (newestReply == null || r.isAfter(newestReply))) {
+        newestReply = r;
+        thread = m.id;
+      }
+    }
+    if (newestReply == null) return null;
+    if (newestPost != null && !newestReply.isAfter(newestPost)) return null;
+    return thread;
   }
 
   /// The newest server time [messages] carry: a post or its edit.

@@ -1135,6 +1135,7 @@ class SlackChatDatasource implements ChatRemoteDatasource {
       isSystem: subtype != null && _systemSubtypes.contains(subtype),
       senderIsApp: user == null || subtype == 'bot_message' || m['bot_id'] != null,
       replyCount: (m['reply_count'] as num?)?.toInt(),
+      latestReplyAt: _ts(m['latest_reply'] as String?),
       reactions: [
         for (final r in _list(m['reactions']))
           if (r['name'] is String)

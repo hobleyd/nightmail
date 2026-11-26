@@ -991,6 +991,13 @@ than falling into an account lookup that answers null.
   goes unseen; a thread the user never followed, read only in Slack,
   stays lit until the channel is opened here; a DM Slack counts read
   (`unread_count_display` 0) is not checked for replies.
+- **Opening it shows the reply.** A threaded conversation opened from the
+  unread list (`open` with `unread`, never `openPerson`) opens the thread
+  whose newest reply is newer than every post
+  (`ChatConversationCubit.threadWithNewestReply`) once the first page
+  lands. Slack's `latest_reply` rides on the post as `latestReplyAt`;
+  Graph and Google list replies with the post. A newer post, or a channel
+  not listed unread, leaves the thread shut.
 - **A poll's answer is remembered** (`_wasUnread`, per isolate): a
   conversation not asked about this poll keeps its last answer, or an
   unread channel blinked out whenever the rotation passed it by — the

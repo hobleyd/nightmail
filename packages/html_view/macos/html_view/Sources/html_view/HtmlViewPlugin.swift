@@ -17,6 +17,19 @@ public class HtmlViewPlugin: NSObject, FlutterPlugin {
   }
 
   public static func register(with registrar: FlutterPluginRegistrar) {
+    // WKWebView only honours the compose editor's `spellcheck="true"` when
+    // WebKit's app-wide check-while-typing switches are on, and it reads both
+    // from this app's user defaults — absent means off, so a fresh install
+    // never underlined anything and grammar was never checked. *Registered*
+    // rather than set: the Edit > Spelling and Grammar toggles write the same
+    // keys to the persistent domain, which outranks these, so turning either
+    // off there still sticks. Must land before the first WKWebView reads them;
+    // repeating it per engine (sub-windows register again) is harmless.
+    UserDefaults.standard.register(defaults: [
+      "WebContinuousSpellCheckingEnabled": true,
+      "WebGrammarCheckingEnabled": true,
+    ])
+
     let messenger = registrar.messenger
     let channel = FlutterMethodChannel(name: "html_view",
                                        binaryMessenger: messenger)

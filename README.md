@@ -194,6 +194,7 @@ Settings → Accounts.
 - Reply in a thread from Slack direct messages and group DMs, as in channels
 - Type `@` in a chat message to tag someone in the conversation on Teams, NightMail Server, Google Chat and Slack
 - Find any chat or channel by name from the field under the Chat pane's unread list
+- Click someone's avatar in a chat to call them: a Teams voice or video call on Microsoft 365, a Talk call that rings them on NightMail Server, a Slack huddle, or a Google Meet whose link is sent to them on Google Chat
 
 ### Contacts
 - Typeahead in the compose window drawing from three sources:

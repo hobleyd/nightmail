@@ -1,8 +1,11 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 
 import '../../data/datasources/local/email_local_datasource.dart';
 import '../../data/datasources/remote/email_remote_datasource.dart';
 import '../../domain/entities/email.dart';
+import '../../domain/entities/meeting_invite.dart';
 
 /// Warms the message cache by downloading full bodies for newly-arrived mail
 /// in the background, so opening a message later is instant instead of
@@ -28,10 +31,26 @@ import '../../domain/entities/email.dart';
 /// lists. Every batch logs one `[BodyPrefetch]` line to the diagnostics log,
 /// so "it downloaded on click" can be checked against what was warmed.
 class BodyPrefetchService {
-  BodyPrefetchService({required EmailLocalDatasource localDatasource})
-      : _local = localDatasource;
+  BodyPrefetchService({
+    required EmailLocalDatasource localDatasource,
+    Future<void> Function()? onMeetingMail,
+  })  : _local = localDatasource,
+        _onMeetingMail = onMeetingMail;
 
   final EmailLocalDatasource _local;
+
+  /// Called once after a batch that warmed a meeting invitation or
+  /// cancellation — the reminder reconcile, in the app.
+  ///
+  /// The organiser's update email is the first sign this app gets that a
+  /// meeting moved: a Google calendar has no change stream, so the reminder
+  /// reconciler and the calendar cache otherwise learn it at their next
+  /// 15-minute pass. Seen on a real machine: a meeting moved from 09:00 to
+  /// 10:15 at 08:53 still put up its 08:55 and 09:00 reminders, from the
+  /// 08:50 pass's copy. The full fetch here is where an invite is first
+  /// recognised (a list's envelope does not carry it), and by the time its
+  /// email is delivered the provider's calendar already holds the change.
+  final Future<void> Function()? _onMeetingMail;
 
   /// Accounts with a prefetch batch currently running. A second trigger for
   /// the same account while one is in flight is dropped rather than queued —
@@ -98,6 +117,7 @@ class BodyPrefetchService {
     final started = DateTime.now();
     var fetched = 0;
     var failed = 0;
+    var meetingMail = false;
     _inFlight.add(accountId);
     try {
       for (final candidate in candidates) {
@@ -128,6 +148,7 @@ class BodyPrefetchService {
             email: full,
           );
           fetched++;
+          if (_changesCalendar(full)) meetingMail = true;
         } catch (_) {
           // Best-effort: leave this one to load lazily on tap.
           failed++;
@@ -144,7 +165,23 @@ class BodyPrefetchService {
           '$skipped already warm or gone, $failed failed) in '
           '${DateTime.now().difference(started).inMilliseconds} ms');
     }
+    if (meetingMail && _onMeetingMail != null) {
+      debugPrint('[BodyPrefetch] $accountId: meeting mail arrived — '
+          'reconciling reminders now');
+      unawaited(_onMeetingMail().catchError((Object e) {
+        debugPrint('[BodyPrefetch] reminder reconcile failed: $e');
+      }));
+    }
   }
+
+  /// An invitation (new, or an update to a meeting's time) or a
+  /// cancellation: what moves or removes a meeting on the user's own
+  /// calendar. Replies, counter-proposals and published events do not.
+  static bool _changesCalendar(Email email) =>
+      switch (email.meetingInvite?.type) {
+        MeetingEmailType.invitation || MeetingEmailType.cancellation => true,
+        _ => false,
+      };
 
   /// Unread before read; within each, newest first.
   static int _unreadThenNewest(Email a, Email b) {

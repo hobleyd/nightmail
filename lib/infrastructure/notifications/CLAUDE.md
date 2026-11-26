@@ -323,3 +323,32 @@ row as "not wanted" and cancels its alerts. Two details matter:
 - **`requestReconcile` alone is not enough.** It returns early in the main
   window, and `CalendarBloc` runs there too (the home page's calendar), which
   is why `listen` keeps the handler for `reconcileNow` to call.
+
+## A Meeting Moved by Its Organiser Is Learned From the Update Email
+
+Observed on a real machine (2.1.0, 2026-11-27): "H3 – Wave 0 go/no go", a
+Google meeting the user had accepted for 09:00, was moved to 10:15 at about
+08:53. The 08:50 pass had queued 08:50/08:55/09:00 alerts and fed the
+meeting-reminders board the 09:00 start; nothing re-read the calendar before
+the next 15-minute pass, so the 08:55 and 09:00 alerts (OS banner and dialog)
+both fired for a meeting that was no longer at 09:00. The forensics: the
+`scheduled_reminders` row still said `event_start_ms` 09:00 while
+`cached_calendar_events` (synced at 09:00:09) said 10:15, and the log showed
+the update email warmed at 08:53:18 (`[BodyPrefetch]`) and opened at 08:54
+(`[GoogleCalendar] invite …: found by UID listing`).
+
+A Google calendar has no change stream (only NightMail Server accounts push
+`calendar` changes, to `CalendarCacheSyncService`), so the organiser's email
+is the first signal. `BodyPrefetchService` is where an arrival is first
+parsed in full (a list's envelope carries no `meetingInvite`), so a batch that
+warms an `invitation` or `cancellation` calls `onMeetingMail` once —
+`ReminderReconcileChannel.reconcileNow` in the app — and the reconciler's
+fetch re-keys the row, cancels the stale alerts and updates the board. Replies
+and counter-proposals do not move the user's own meeting and do not trigger
+it. By the time the email is delivered the provider's calendar already holds
+the change (Google applies it at the organiser's save; Exchange when it
+processes the iMIP message), so the fetch sees the new time.
+
+What this does not cover: a move with no email (organiser chose not to notify
+guests), or mail that is never prefetched (already opened elsewhere, or past
+the 20-message batch cap). Those still wait for the 15-minute pass.

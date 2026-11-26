@@ -182,6 +182,7 @@ import 'infrastructure/contacts/contact_cache_sync_service.dart';
 import 'infrastructure/network/connectivity_service.dart';
 import 'infrastructure/notifications/calendar_reminder_service.dart';
 import 'infrastructure/notifications/meeting_reminder_board.dart';
+import 'infrastructure/notifications/reminder_reconcile_channel.dart';
 import 'infrastructure/notifications/task_reminder_service.dart';
 import 'infrastructure/notifications/notification_service.dart';
 import 'infrastructure/share/share_intent_service.dart';
@@ -345,7 +346,12 @@ Future<void> configureDependencies() async {
         sl<PendingCalendarOperationsDatasource>()),
   );
   sl.registerLazySingleton(
-    () => BodyPrefetchService(localDatasource: sl<EmailLocalDatasource>()),
+    () => BodyPrefetchService(
+      localDatasource: sl<EmailLocalDatasource>(),
+      // A moved or cancelled meeting's update email: re-read the calendars
+      // now rather than at the next 15-minute pass, or its old reminders fire.
+      onMeetingMail: ReminderReconcileChannel.reconcileNow,
+    ),
   );
   sl.registerLazySingleton(
     () => CacheMembershipRepairService(

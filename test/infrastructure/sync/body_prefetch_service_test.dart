@@ -6,6 +6,7 @@ import 'package:nightmail/data/datasources/remote/email_remote_datasource.dart';
 import 'package:nightmail/data/models/email_address_model.dart';
 import 'package:nightmail/data/models/email_model.dart';
 import 'package:nightmail/domain/entities/email.dart';
+import 'package:nightmail/domain/entities/meeting_invite.dart';
 import 'package:nightmail/infrastructure/sync/body_prefetch_service.dart';
 
 const _accountId = 'acct-1';
@@ -16,6 +17,7 @@ EmailModel _email(
   String folderId = 'INBOX',
   bool isRead = false,
   DateTime? receivedDateTime,
+  MeetingEmailType? invite,
 }) =>
     EmailModel(
       id: id,
@@ -30,6 +32,7 @@ EmailModel _email(
       receivedDateTime: receivedDateTime ?? DateTime(2026, 6, 1),
       importance: EmailImportance.normal,
       parentFolderId: folderId,
+      meetingInvite: invite == null ? null : MeetingInvite(type: invite),
     );
 
 /// In-memory stand-in: records cache writes and answers by-id lookups from a
@@ -279,6 +282,63 @@ void main() {
     expect(remote.getEmailCalls.take(3),
         unorderedEquals(['unread0', 'unread1', 'unread2']));
   });
+
+  group('meeting mail', () {
+    late int reconciles;
+
+    setUp(() {
+      reconciles = 0;
+      service = BodyPrefetchService(
+        localDatasource: local,
+        onMeetingMail: () async => reconciles++,
+      );
+    });
+
+    for (final type in [
+      MeetingEmailType.invitation,
+      MeetingEmailType.cancellation,
+    ]) {
+      test('${type.name} reconciles reminders once per batch', () async {
+        for (final id in ['m1', 'm2', 'm3']) {
+          local.cached[id] = _email(id);
+        }
+        remote.full['m1'] = _email('m1', body: 'MOVED', invite: type);
+        remote.full['m2'] = _email('m2', body: 'ALSO', invite: type);
+        remote.full['m3'] = _email('m3', body: 'PLAIN');
+
+        await run([_email('m1'), _email('m2'), _email('m3')]);
+        await Future<void>.delayed(Duration.zero);
+
+        expect(reconciles, 1);
+      });
+    }
+
+    test('a reply, a counter-proposal or plain mail does not', () async {
+      local.cached['m1'] = _email('m1');
+      local.cached['m2'] = _email('m2');
+      local.cached['m3'] = _email('m3');
+      remote.full['m1'] = _email('m1',
+          body: 'ACCEPTED', invite: MeetingEmailType.responseNotification);
+      remote.full['m2'] = _email('m2',
+          body: 'COUNTER', invite: MeetingEmailType.proposedNewTime);
+      remote.full['m3'] = _email('m3', body: 'PLAIN');
+
+      await run([_email('m1'), _email('m2'), _email('m3')]);
+      await Future<void>.delayed(Duration.zero);
+
+      expect(reconciles, 0);
+    });
+
+    test('an invite already warm is not reconciled for again', () async {
+      local.cached['m1'] = _email('m1',
+          body: 'WARM', invite: MeetingEmailType.invitation);
+
+      await run([_email('m1')]);
+      await Future<void>.delayed(Duration.zero);
+
+      expect(reconciles, 0);
+    });
+  });
 }
 
 extension _CopyParent on EmailModel {
@@ -299,4 +359,5 @@ extension _CopyParent on EmailModel {
         importance: importance,
         parentFolderId: parentFolderId,
       );
+
 }

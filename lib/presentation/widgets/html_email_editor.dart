@@ -1,7 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 
-import 'package:flutter/foundation.dart' show Factory;
+import 'package:flutter/foundation.dart' show Factory, kIsWeb;
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:html_view/html_view.dart';
@@ -117,11 +117,17 @@ class HtmlEmailEditorState extends State<HtmlEmailEditor> with WidgetsBindingObs
   static bool get _isDesktop =>
       Platform.isLinux || Platform.isMacOS || Platform.isWindows;
 
+  /// The web build takes `html_view` too, whose web implementation is an
+  /// iframe composited like any other widget. webview_flutter has no web
+  /// implementation, so its controller threw there: every page holding an
+  /// editor (settings' accounts, out of office, compose) failed to build.
+  static bool get _usesHtmlView => kIsWeb || _isDesktop;
+
   @override
   void initState() {
     super.initState();
     _pendingHtml = widget.initialHtml;
-    _host = _isDesktop
+    _host = _usesHtmlView
         ? _NativeOverlayHost(onEvent: _onHostEvent)
         : _PlatformViewHost(onEvent: _onHostEvent);
     _host.load('assets/editor/editor.html');
@@ -370,7 +376,8 @@ abstract class _EditorHost {
   void dispose();
 }
 
-/// Desktop: `html_view`'s native webview, laid over the Flutter surface.
+/// Desktop: `html_view`'s native webview, laid over the Flutter surface. On
+/// the web, `html_view`'s iframe.
 class _NativeOverlayHost implements _EditorHost {
   _NativeOverlayHost({required this.onEvent});
 

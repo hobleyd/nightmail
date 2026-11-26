@@ -45,12 +45,12 @@ class HtmlViewController {
   Stream<String> get onLinkHovered    => _onLinkHovered.stream;
   /// The `src` of an image double-clicked in a reading page.
   Stream<String> get onImageDoubleClicked => _onImageDoubleClicked.stream;
-  /// Never fire on web: the bridge forwards only onContentChanged and
-  /// onLinkRequest, and an iframe takes focus without help. Declared so
-  /// callers compile against either implementation.
+  /// The editor's attach menu choice and pasted images, through the bridge.
   Stream<String> get onAttachRequested    => _onAttachRequested.stream;
-  Stream<void>   get onClickFocus         => _onClickFocus.stream;
   Stream<String> get onImagePasted        => _onImagePasted.stream;
+  /// Never fires on web: an iframe takes focus without help. Declared so
+  /// callers compile against either implementation.
+  Stream<void>   get onClickFocus         => _onClickFocus.stream;
 
   bool get isInitialized => _viewId != null;
   int? get viewId => _viewId;
@@ -92,6 +92,12 @@ class HtmlViewController {
           break;
         case 'onLinkRequest':
           _onLinkRequest.add(null);
+          break;
+        case 'onAttachRequest':
+          _onAttachRequested.add(value);
+          break;
+        case 'onImagePasted':
+          _onImagePasted.add(value);
           break;
         case 'pageLoaded':
           _onPageLoaded.add(null);
@@ -197,6 +203,8 @@ class HtmlViewController {
   }
   window['onContentChanged'] = makeChannel('onContentChanged');
   window['onLinkRequest']    = makeChannel('onLinkRequest');
+  window['onAttachRequest']  = makeChannel('onAttachRequest');
+  window['onImagePasted']    = makeChannel('onImagePasted');
   if (document.readyState !== 'loading') {
     window.parent.postMessage('pageLoaded\x00', '*');
   } else {

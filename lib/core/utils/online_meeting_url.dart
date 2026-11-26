@@ -116,3 +116,28 @@ String? teamsAppJoinUrl(String url) {
   final match = _teamsWebJoin.firstMatch(url.trim());
   return match == null ? null : 'msteams:${match.group(1)}';
 }
+
+final _slackHuddleWeb = RegExp(
+  r'^https://app\.slack\.com/huddle/(T[A-Z0-9]+)/([A-Z0-9]+)/?$',
+  caseSensitive: false,
+);
+
+/// The `slack://join-huddle` deep link that starts (or joins) a huddle link's
+/// huddle in the Slack desktop app, or null when [url] is not a huddle link
+/// (`https://app.slack.com/huddle/{team}/{channel}`).
+///
+/// Opening the https link goes through the browser, whose page then hands off
+/// to Slack — so the browser opened beside the app. Slack documents no huddle
+/// deep link; `join-huddle` (`team`, `id`) is the command Slack's own web
+/// client routes from `slack://`: it switches to the channel and starts or
+/// joins its huddle. (`slack://huddle` only joins one already running.) Read
+/// from the web client Slack 4.53 caches, November 2026 — see docs/claude/chat.md.
+String? slackAppHuddleUrl(String url) {
+  final match = _slackHuddleWeb.firstMatch(url.trim());
+  if (match == null) return null;
+  return Uri(
+    scheme: 'slack',
+    host: 'join-huddle',
+    queryParameters: {'team': match.group(1)!, 'id': match.group(2)!},
+  ).toString();
+}

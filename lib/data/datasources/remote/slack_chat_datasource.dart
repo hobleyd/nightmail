@@ -1003,8 +1003,11 @@ class SlackChatDatasource implements ChatRemoteDatasource {
   /// `app.slack.com/huddle/{team}/{channel}`: opening it starts (or joins)
   /// that DM's huddle in the Slack app, which rings them. Slack documents no
   /// huddle URL — this shape is taken from what "Copy huddle link" is
-  /// reported to give, and was not confirmed against a live workspace.
-  /// [video] is the same huddle — the camera is turned on inside it.
+  /// reported to give, and was not confirmed against a live workspace. On
+  /// the desktop `launchMeetingJoinUrl` opens it as `slack://join-huddle`
+  /// (`slackAppHuddleUrl`), so only the Slack app opens, with this link as
+  /// the fallback. [video] is the same huddle — the camera is turned on
+  /// inside it.
   ///
   /// The DM is the open conversation when that is the one-on-one with them,
   /// else one already listed; failing both, `conversations.open` makes it.

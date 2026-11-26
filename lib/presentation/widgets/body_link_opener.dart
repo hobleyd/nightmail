@@ -139,15 +139,18 @@ Future<void> launchWebUrl(Uri uri) {
   );
 }
 
-/// Joins an online meeting, in the meeting's own app when it is installed.
+/// Joins an online meeting (or a Slack huddle), in its own app when that is
+/// installed.
 ///
 /// The https join link alone opens a browser tab whose launcher page then hands
-/// off to Teams, leaving the tab behind. Where the app can be reached directly
-/// it is, and the web link is only the fallback:
+/// off to Teams or Slack, leaving the tab behind. Where the app can be reached
+/// directly it is, and the web link is only the fallback:
 ///
-/// * **macOS / Windows** — the app's `msteams:` scheme ([teamsAppJoinUrl]),
-///   checked with `canLaunch` first so Windows does not offer to find a Store
-///   app for a scheme nobody has registered.
+/// * **macOS / Windows** — the app's own scheme: `msteams:` for Teams
+///   ([teamsAppJoinUrl]), `slack://join-huddle` for a huddle
+///   ([slackAppHuddleUrl], Linux too), checked with `canLaunch` first so
+///   Windows does not offer to find a Store app for a scheme nobody has
+///   registered.
 /// * **iOS / Android** — the https link itself, restricted to a non-browser
 ///   handler: the Teams app claims those links as universal/app links, and the
 ///   launch reports false when it is not installed.
@@ -158,17 +161,18 @@ Future<void> launchMeetingJoinUrl(String url) async {
   final uri = Uri.tryParse(url.trim());
   if (uri == null) return;
 
-  if (!kIsWeb && (Platform.isMacOS || Platform.isWindows)) {
-    final app = teamsAppJoinUrl(url);
+  if (!kIsWeb && (Platform.isMacOS || Platform.isWindows || Platform.isLinux)) {
+    final app = (Platform.isLinux ? null : teamsAppJoinUrl(url)) ??
+        slackAppHuddleUrl(url);
     if (app != null) {
       try {
         if (await canLaunchUrlString(app) && await launchUrlString(app)) return;
       } catch (e) {
-        debugPrint('[Meeting] msteams launch failed, using the web link: $e');
+        debugPrint('[Meeting] $app launch failed, using the web link: $e');
       }
     }
   } else if (!kIsWeb && (Platform.isIOS || Platform.isAndroid)) {
-    if (teamsAppJoinUrl(url) != null) {
+    if (teamsAppJoinUrl(url) != null || slackAppHuddleUrl(url) != null) {
       try {
         if (await launchUrl(
           uri,
@@ -177,7 +181,7 @@ Future<void> launchMeetingJoinUrl(String url) async {
           return;
         }
       } catch (e) {
-        debugPrint('[Meeting] Teams app launch failed, using the web link: $e');
+        debugPrint('[Meeting] app launch failed, using the web link: $e');
       }
     }
   }

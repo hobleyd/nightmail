@@ -753,13 +753,28 @@ message, or a sender with no id.
   - A 501 (calls not configured) or a 404/405 (a server from before phase
     26) reads "Calls are not turned on for this NightMail Server".
   - A server account never gets a Teams link.
-- **Slack: one "Start a huddle" item**, opening
-  `app.slack.com/huddle/{team}/{channel}` for the DM with the person.
-  **Unconfirmed:** Slack documents no huddle URL. This shape comes from a
-  third-party report of what "Copy huddle link" gives, and has not been
-  checked against a live workspace. If it is wrong, compare it with a real
-  "Copy huddle link", which rings nobody. Video is turned on inside the
-  huddle.
+- **Slack: one "Start a huddle" item.** `callLink` returns
+  `app.slack.com/huddle/{team}/{channel}` for the DM with the person. Video
+  is turned on inside the huddle.
+  - **On the desktop it opens in the Slack app only.** The https link went
+    to the browser, whose page then handed off to Slack, so both opened.
+    `launchMeetingJoinUrl` now turns it into
+    `slack://join-huddle?team=…&id=…` (`slackAppHuddleUrl`), checks
+    `canLaunch`, and falls back to the https link when Slack isn't
+    installed. The same applies on macOS, Windows and Linux.
+  - **Neither form is documented by Slack.** `join-huddle` comes from the
+    `slack://` command switch in Slack's web client: `cmd`, `team`, `id`.
+    It was read from the JS the Slack 4.53 desktop app caches under
+    `~/Library/Application Support/Slack/Service Worker/CacheStorage`. It
+    switches to the channel and then starts or joins its huddle
+    (`entryPoint: "deeplink"`). `slack://huddle` only joins a huddle that
+    is already running and throws otherwise.
+    - The desktop shell itself only forwards `slack://` links to that
+      client. Its `open-url` handler ignores https, so handing the https
+      link to Slack.app does nothing.
+    - If huddles stop opening, grep a fresh cache for
+      `case"join-huddle"`.
+    - Not exercised live: it would ring a colleague.
   - The DM is the open one-on-one, else one already listed (`_ims`), else
     one made with `conversations.open`. Making one is fine here because the
     user asked to call this person, unlike `findOneOnOne`, which never

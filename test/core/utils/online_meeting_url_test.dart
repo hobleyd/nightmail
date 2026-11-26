@@ -230,4 +230,26 @@ void main() {
       );
     });
   });
+
+  group('slackAppHuddleUrl', () {
+    test('a huddle link becomes slack://join-huddle, which starts or joins it '
+        'in the app', () {
+      expect(slackAppHuddleUrl('https://app.slack.com/huddle/T0123ABCD/D07XYZ'),
+          'slack://join-huddle?team=T0123ABCD&id=D07XYZ');
+      expect(slackAppHuddleUrl(' https://app.slack.com/huddle/T1/C9/ '),
+          'slack://join-huddle?team=T1&id=C9');
+    });
+
+    test('anything else is left on the web', () {
+      for (final url in [
+        'https://app.slack.com/client/T1/C9',
+        'https://evil.example/huddle/T1/C9',
+        'https://app.slack.com/huddle/T1',
+        'https://app.slack.com/huddle/T1/C9?x=1',
+        'https://teams.microsoft.com/l/call/0/0?users=a@b.c',
+      ]) {
+        expect(slackAppHuddleUrl(url), isNull, reason: url);
+      }
+    });
+  });
 }

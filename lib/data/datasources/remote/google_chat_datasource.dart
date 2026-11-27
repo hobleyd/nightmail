@@ -459,10 +459,15 @@ class GoogleChatDatasource implements ChatRemoteDatasource {
         // Bytes, not a stream: a 401 retry sends the request again.
         data: bytes,
         queryParameters: {'uploadType': 'multipart'},
-        options: Options(headers: {
-          Headers.contentTypeHeader: 'multipart/related; boundary=$boundary',
-          Headers.contentLengthHeader: bytes.length,
-        }),
+        options: Options(
+          headers: {
+            Headers.contentTypeHeader: 'multipart/related; boundary=$boundary',
+            Headers.contentLengthHeader: bytes.length,
+          },
+          // Dio's clock starts at `close()`, while the rest of a dropped
+          // file (up to 100 MB) may still be going out.
+          receiveTimeout: const Duration(minutes: 10),
+        ),
       );
       final ref = r.data?['attachmentDataRef'];
       if (ref is! Map<String, dynamic>) {

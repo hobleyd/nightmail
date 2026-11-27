@@ -702,7 +702,7 @@ class ChatConversationCubit extends Cubit<ChatConversationState> {
         isClosed ||
         dropTarget(inThread: target.threadPostId != null) != target;
 
-    for (final file in files) {
+    for (final (i, file) in files.indexed) {
       // One send at a time: a message being sent would turn this one away.
       if (!isClosed && state.sending) {
         await stream.firstWhere((s) => !s.sending, orElse: () => state);
@@ -717,13 +717,21 @@ class ChatConversationCubit extends Cubit<ChatConversationState> {
       if (!canSendFile(file)) {
         fail(file.isPicture
             ? 'Pictures cannot be sent in this conversation.'
-            : '${file.name} was not sent: only pictures can be sent in '
-                'this conversation.');
+            : '${file.name} was not sent: only PNG, JPEG and GIF pictures '
+                'can be sent in this conversation.');
         return;
       }
       final sent = await send('',
           inThread: target.threadPostId != null, file: file);
-      if (!sent) return;
+      if (!sent) {
+        // A failed send has said why; the ones behind it are named.
+        final rest = files.skip(i + 1).map((f) => f.name).toList();
+        if (rest.isNotEmpty && !isClosed) {
+          final why = state.error;
+          fail([?why, 'Not sent: ${rest.join(', ')}.'].join(' '));
+        }
+        return;
+      }
     }
     if (refused != null) fail(refused);
   }

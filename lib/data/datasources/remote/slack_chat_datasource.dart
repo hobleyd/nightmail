@@ -673,10 +673,15 @@ class SlackChatDatasource implements ChatRemoteDatasource {
       await _dio.post<void>(
         uploadUrl,
         data: outgoing.bytes,
-        options: Options(headers: {
-          Headers.contentTypeHeader: outgoing.mimeType,
-          Headers.contentLengthHeader: outgoing.bytes.length,
-        }),
+        options: Options(
+          headers: {
+            Headers.contentTypeHeader: outgoing.mimeType,
+            Headers.contentLengthHeader: outgoing.bytes.length,
+          },
+          // Dio's clock starts at `close()`, while the rest of a dropped
+          // file (up to 100 MB) may still be going out.
+          receiveTimeout: const Duration(minutes: 10),
+        ),
       );
     } on DioException catch (e) {
       final status = e.response?.statusCode;

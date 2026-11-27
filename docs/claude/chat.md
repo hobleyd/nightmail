@@ -237,6 +237,10 @@ Google: the newest message the unread check already reads, remembered in
   it in the rest of the pane and holds it there across emails (`_held`)
   until something else is picked or the system changes; it stays listed,
   highlighted, after it is read. Nothing unread: "No unread chats".
+  A chat read here lingers for `ChatUnreadCubit.readLinger` (45 s,
+  `recentlyRead`, not bold, not counted) **below** the unread ones, also
+  newest first, so a follow-up is a click away — until 2.2.2 it vanished
+  the moment it was marked. One unread again on a poll moves back up.
 - **A field at the foot of the unread list** ("Find a person, chat or
   channel", just above the divider; `ChatPaneList`) swaps the list for the
   people and the chats and channels that match — see "Finding anyone from

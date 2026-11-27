@@ -293,6 +293,12 @@ class _ChatPanelBodyState extends State<_ChatPanelBody> {
     unawaited(unread.refresh());
   }
 
+  static int _newestFirst(ChatConversation a, ChatConversation b) {
+    final at = a.lastActivity, bt = b.lastActivity;
+    if (at == null || bt == null) return at == null ? (bt == null ? 0 : 1) : -1;
+    return bt.compareTo(at);
+  }
+
   @override
   Widget build(BuildContext context) {
     final c = context.colors;
@@ -332,17 +338,25 @@ class _ChatPanelBodyState extends State<_ChatPanelBody> {
         candidates.where((p) => p.email == _chosen).firstOrNull ??
         candidates.firstOrNull;
 
-    final unreadChats = [
+    // Unread first, newest first; below them the chats read in the last
+    // `readLinger` (a follow-up is a click away) and the held one, also
+    // newest first.
+    final unread = [
       ...unreadState.unreadChats[chatId] ?? const <ChatConversation>[],
+    ]..sort(_newestFirst);
+    final read = <ChatConversation>[
+      for (final r in unreadState.recentlyRead[chatId] ??
+          const <ChatConversation>[])
+        if (!unread.any((u) => u.key == r.key)) r,
     ];
-    if (chat != null && _held && !unreadChats.any((u) => u.key == chat.key)) {
-      unreadChats.add(chat);
+    if (chat != null &&
+        _held &&
+        !unread.any((u) => u.key == chat.key) &&
+        !read.any((r) => r.key == chat.key)) {
+      read.add(chat);
     }
-    unreadChats.sort((a, b) {
-      final at = a.lastActivity, bt = b.lastActivity;
-      if (at == null || bt == null) return at == null ? (bt == null ? 0 : 1) : -1;
-      return bt.compareTo(at);
-    });
+    read.sort(_newestFirst);
+    final unreadChats = [...unread, ...read];
     if (chatId != null) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted) _sync(chatId, person, chat);

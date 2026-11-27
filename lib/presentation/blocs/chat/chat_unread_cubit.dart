@@ -16,6 +16,7 @@ class ChatUnreadState extends Equatable {
     this.unread = const {},
     this.chosenId,
     this.unreadChats = const {},
+    this.recentlyRead = const {},
   });
 
   /// The active account's own chat first (when it has one), then each
@@ -28,6 +29,12 @@ class ChatUnreadState extends Equatable {
   /// The unread chats themselves by [ChatSource.id] — what the pane's
   /// dropdown offers beside the people on the email.
   final Map<String, List<ChatConversation>> unreadChats;
+
+  /// Chats read here in the last [ChatUnreadCubit.readLinger], by
+  /// [ChatSource.id], newest read first — kept in the pane's unread list
+  /// (below the unread ones, not bold) so a follow-up is a click away.
+  /// Not counted in [unread].
+  final Map<String, List<ChatConversation>> recentlyRead;
 
   /// The system last picked in the pane's dropdown, by id; may name one no longer
   /// offered (an account switch), see [chosen].
@@ -47,7 +54,8 @@ class ChatUnreadState extends Equatable {
   bool get hasChoice => sources.length > 1;
 
   @override
-  List<Object?> get props => [sources, unread, chosenId, unreadChats];
+  List<Object?> get props =>
+      [sources, unread, chosenId, unreadChats, recentlyRead];
 }
 
 /// The chat systems behind the Chat button and how many of each's chats
@@ -74,6 +82,13 @@ class ChatUnreadCubit extends Cubit<ChatUnreadState> {
   final Stream<ChangeSignal>? _changeSignals;
 
   static const pollInterval = Duration(seconds: 60);
+
+  /// How long a chat read here stays in the pane's list
+  /// ([ChatUnreadState.recentlyRead]) after it drops out of the unread ones.
+  static const readLinger = Duration(seconds: 45);
+
+  /// One per lingering chat, by `sourceId|key`.
+  final Map<String, Timer> _lingers = {};
 
   Timer? _timer;
   StreamSubscription<String>? _reads;
@@ -126,11 +141,15 @@ class ChatUnreadCubit extends Cubit<ChatUnreadState> {
       unreadChats: {
         for (final s in sources) s.id: ?state.unreadChats[s.id],
       },
+      recentlyRead: state.recentlyRead,
     ));
     final chats = await Future.wait(sources.map((s) => s.needsReconnect
         ? Future.value(const <ChatConversation>[])
         : _repository.unreadConversations(s.id)));
     if (gen != _generation || isClosed) return;
+    final unreadChats = {
+      for (var i = 0; i < sources.length; i++) sources[i].id: chats[i],
+    };
     emit(ChatUnreadState(
       sources: sources,
       chosenId: state.chosenId,
@@ -138,8 +157,15 @@ class ChatUnreadCubit extends Cubit<ChatUnreadState> {
         for (var i = 0; i < sources.length; i++)
           sources[i].id: chats[i].length,
       },
-      unreadChats: {
-        for (var i = 0; i < sources.length; i++) sources[i].id: chats[i],
+      unreadChats: unreadChats,
+      // Unread again (someone followed up): it is back in the unread ones.
+      recentlyRead: {
+        for (final MapEntry(key: id, value: read) in state.recentlyRead.entries)
+          id: [
+            for (final r in read)
+              if (!(unreadChats[id] ?? const []).any((u) => u.key == r.key))
+                r,
+          ],
       },
     ));
   }
@@ -150,19 +176,47 @@ class ChatUnreadCubit extends Cubit<ChatUnreadState> {
         sources: state.sources,
         unread: state.unread,
         unreadChats: state.unreadChats,
+        recentlyRead: state.recentlyRead,
         chosenId: sourceId));
   }
 
   void _dropRead(String sourceId, String key) {
     final chats = state.unreadChats[sourceId];
     if (chats == null || !chats.any((c) => c.key == key)) return;
+    final read = chats.firstWhere((c) => c.key == key);
     final left = [for (final c in chats) if (c.key != key) c];
+    final lingering = state.recentlyRead[sourceId] ?? const [];
     emit(ChatUnreadState(
       sources: state.sources,
       chosenId: state.chosenId,
       unread: {...state.unread, sourceId: left.length},
       unreadChats: {...state.unreadChats, sourceId: left},
+      recentlyRead: {
+        ...state.recentlyRead,
+        sourceId: [
+          read.copyWith(unread: false),
+          for (final c in lingering) if (c.key != key) c,
+        ],
+      },
     ));
+    final id = '$sourceId|$key';
+    _lingers[id]?.cancel();
+    _lingers[id] = Timer(readLinger, () {
+      _lingers.remove(id);
+      if (isClosed) return;
+      final lingering = state.recentlyRead[sourceId];
+      if (lingering == null || !lingering.any((c) => c.key == key)) return;
+      emit(ChatUnreadState(
+        sources: state.sources,
+        chosenId: state.chosenId,
+        unread: state.unread,
+        unreadChats: state.unreadChats,
+        recentlyRead: {
+          ...state.recentlyRead,
+          sourceId: [for (final c in lingering) if (c.key != key) c],
+        },
+      ));
+    });
   }
 
   @override
@@ -172,6 +226,9 @@ class ChatUnreadCubit extends Cubit<ChatUnreadState> {
     _readKeys?.cancel();
     _sourcesChanged?.cancel();
     _changes?.cancel();
+    for (final t in _lingers.values) {
+      t.cancel();
+    }
     return super.close();
   }
 }

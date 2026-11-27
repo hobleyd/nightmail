@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:fake_async/fake_async.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:nightmail/domain/entities/chat.dart';
 import 'package:nightmail/domain/repositories/chat_repository.dart';
@@ -136,6 +137,54 @@ void main() {
     await c.close();
   });
 
+  test('a chat read here lingers below the unread ones for readLinger, not '
+      'bold and not counted, then goes', () {
+    fakeAsync((async) {
+      final repo = _Repo(const [teams, slack], const {'slack:T1': 2},
+          ChatKind.space);
+      final c = ChatUnreadCubit(accountManager: _Accounts(), repository: repo)
+        ..start();
+      async.flushMicrotasks();
+      repo.readEvents
+          .add((accountId: 'slack:T1', key: 'slack:T1-0', here: true));
+      async.flushMicrotasks();
+      expect(c.state.unreadIn('slack:T1'), 1);
+      final read = c.state.recentlyRead['slack:T1']!;
+      expect(read.map((x) => x.key), ['slack:T1-0']);
+      expect(read.single.unread, isFalse);
+
+      // A poll in the meantime (which no longer lists it) keeps it.
+      repo.markedRead.add('slack:T1-0');
+      unawaited(c.refresh());
+      async.flushMicrotasks();
+      expect(c.state.recentlyRead['slack:T1']!.map((x) => x.key),
+          ['slack:T1-0']);
+
+      async.elapse(ChatUnreadCubit.readLinger);
+      expect(c.state.recentlyRead['slack:T1'], isEmpty);
+      unawaited(c.close());
+    });
+  });
+
+  test('a lingering chat that is unread again leaves the read ones', () {
+    fakeAsync((async) {
+      final repo = _Repo(const [teams, slack], const {'slack:T1': 2},
+          ChatKind.space);
+      final c = ChatUnreadCubit(accountManager: _Accounts(), repository: repo)
+        ..start();
+      async.flushMicrotasks();
+      repo.readEvents
+          .add((accountId: 'slack:T1', key: 'slack:T1-0', here: true));
+      async.flushMicrotasks();
+      // The poll still lists it unread — someone followed up.
+      unawaited(c.refresh());
+      async.flushMicrotasks();
+      expect(c.state.unreadIn('slack:T1'), 2);
+      expect(c.state.recentlyRead['slack:T1'], isEmpty);
+      unawaited(c.close());
+    });
+  });
+
   test('a choice no longer offered falls back to the first', () async {
     final c = await cubit(const [teams, slack]);
     c.choose('slack:T9');
@@ -154,6 +203,9 @@ class _Repo extends Fake implements ChatRepository {
   final List<ChatSource> _sources;
   final Map<String, int> _unread;
   final ChatKind _kind;
+
+  /// Keys the repository counts read, as after `markRead`.
+  final markedRead = <String>{};
 
   /// How many times unread chats were listed — once per system a refresh.
   int listings = 0;
@@ -182,8 +234,9 @@ class _Repo extends Fake implements ChatRepository {
     listings++;
     return [
       for (var i = 0; i < (_unread[accountId] ?? 0); i++)
-        ChatConversation(
-            id: '$accountId-$i', kind: _kind, title: 'Chat $i', unread: true),
+        if (!markedRead.contains('$accountId-$i'))
+          ChatConversation(
+              id: '$accountId-$i', kind: _kind, title: 'Chat $i', unread: true),
     ];
   }
 }

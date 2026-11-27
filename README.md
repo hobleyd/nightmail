@@ -197,6 +197,8 @@ Settings → Accounts.
 - Find any chat or channel by name from the field under the Chat pane's unread list
 - Opening a channel from the unread list because of a thread reply opens that thread, with the new reply on screen
 - Click someone's avatar in a chat to call them: a Teams voice or video call on Microsoft 365, a Talk call that rings them on NightMail Server, a Slack huddle, or a Google Meet whose link is sent to them on Google Chat
+- Drop files on a chat conversation to send them straight away, one message each; a drop on an open thread replies in it
+- A chat you've just read stays in the Chat pane's unread list for 45 seconds, below the unread ones, so a quick follow-up is still one click away
 
 ### Contacts
 - Typeahead in the compose window drawing from three sources:
@@ -292,6 +294,7 @@ Settings → Accounts.
 - A new rule can also be run straight away on the folder the mail list is
   showing — moving, deleting or marking read the matching messages already
   loaded there (never forwarding old mail)
+- Any saved rule can be run on the current folder from Settings → Rules
 
 ### Updates
 - Checks for a new version at launch and every 6 hours, with a dot on the

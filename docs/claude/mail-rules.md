@@ -70,6 +70,13 @@ is the folder behind the Settings dialog — `SettingsDialog.open` carries the
 `EmailListBloc` across (read nullably: the macOS app-menu "About" opens
 Settings from above HomePage's providers, and then there is no checkbox), and
 it is offered only while the screen is on the active account.
+A saved rule is run the same way from the **run button** on its Settings >
+Rules row (left of Edit), shown under the same conditions as the checkbox and
+disabled, with the reason as its tooltip, wherever the checkbox would be. It
+runs the rule as stored, enabled or not, and asks first — with the count —
+before a move or delete; marking read just happens. A view-only rule
+(`hasUnsupportedParts`) is refused: the parts the entity does not model are
+not in it, and a dropped condition or exception would widen the run.
 No provider runs a rule on demand (Graph has no call; Gmail's "apply to
 matching conversations" is its own client searching and relabelling), so the
 app does it:

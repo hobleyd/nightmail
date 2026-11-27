@@ -120,6 +120,16 @@ void main() {
       expect(MailRuleRunNow.unavailableReason(rule, google: true), isNotNull);
     });
 
+    test('refuses a rule with parts it does not model — they are not in it',
+        () {
+      final rule = MailRule(
+        conditions: const [_fromNews],
+        actions: const [_moveToNews],
+        hasUnsupportedParts: true,
+      );
+      expect(MailRuleRunNow.unavailableReason(rule), isNotNull);
+    });
+
     test('refuses actions the list cannot do', () {
       expect(
         MailRuleRunNow.unavailableReason(

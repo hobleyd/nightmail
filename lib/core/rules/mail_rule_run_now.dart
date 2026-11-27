@@ -27,8 +27,9 @@ class MailRuleRunPlan {
       (moveToFolderId == null && !delete && markReadIds.isEmpty);
 }
 
-/// Runs a rule the user has just created over the mail already in a folder —
-/// the rule editor's "Run on [folder] now". No provider runs a rule on demand
+/// Runs a rule over the mail already in a folder — the rule editor's "Run on
+/// [folder] now" for a new rule, and the run button on a Settings > Rules row
+/// for one already saved. No provider runs a rule on demand
 /// (Graph has no such call, and Gmail's "apply to matching conversations" is
 /// its own client doing a search and a relabel), so the app decides which
 /// messages match, with the same [MailRuleMatcher] its IMAP rules use, and
@@ -62,6 +63,13 @@ class MailRuleRunNow {
   /// [google] for a Gmail account, whose rows say less.
   static String? unavailableReason(MailRule rule, {bool google = false}) {
     final noun = google ? 'filter' : 'rule';
+    // What the entity does not model is not in [rule] at all — a lost
+    // condition or exception would make the run act on more mail than the
+    // rule does on the server.
+    if (rule.hasUnsupportedParts) {
+      return 'This $noun uses settings NightMail cannot show, so it runs on '
+          'new mail only.';
+    }
     final kinds = [...rule.conditions, ...rule.exceptions].map((c) => c.kind);
     final actionKinds = rule.actions.map((a) => a.kind);
     if (actionKinds.any(

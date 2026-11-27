@@ -120,6 +120,7 @@ class _RuleList extends StatelessWidget {
     final caps = state.capabilities!;
     final google = _accountFor(context, state.accountId) is GmailAccount;
     final rules = state.rules;
+    final runFolder = _runFolder(context);
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -174,6 +175,10 @@ class _RuleList extends StatelessWidget {
                     state: state,
                     google: google,
                     onEdit: () => _openEditor(context, rules[i]),
+                    runFolderName: runFolder?.folderName,
+                    onRun: runFolder == null
+                        ? null
+                        : () => _runExisting(context, rules[i], google),
                   ),
                 ),
         ),
@@ -195,6 +200,75 @@ class _RuleList extends StatelessWidget {
         ],
       ],
     );
+  }
+
+  /// The folder behind Settings that a rule can be run on now — the mail
+  /// list SettingsDialog.open carries across — while this screen is on the
+  /// account that list is showing. Null hides the run buttons.
+  _FolderRun? _runFolder(BuildContext context) {
+    final account = _accountFor(context, state.accountId);
+    if (account == null || !_isActive(context, account.id)) return null;
+    return _FolderRun.of(context, context.read<EmailListBloc?>());
+  }
+
+  /// A row's run button: [rule] as stored, over the folder behind Settings.
+  /// The folder is read again at the press, not taken from the last build.
+  Future<void> _runExisting(
+    BuildContext context,
+    MailRule rule,
+    bool google,
+  ) async {
+    final account = _accountFor(context, state.accountId);
+    final folderRun = _runFolder(context);
+    if (account == null || folderRun == null) return;
+    await folderRun.run(
+      rule,
+      account,
+      justSaved: false,
+      confirm: (plan) => _confirmRun(context, rule, plan, folderRun, google),
+    );
+  }
+
+  /// A move or delete over a whole folder is one click from a lot of mail
+  /// going, so it says how much first. Marking read is not asked about.
+  Future<bool> _confirmRun(
+    BuildContext context,
+    MailRule rule,
+    MailRuleRunPlan plan,
+    _FolderRun folderRun,
+    bool google,
+  ) async {
+    if (plan.moveToFolderId == null && !plan.delete) return true;
+    final n = plan.matchedIds.length;
+    final messages = n == 1 ? '1 message' : '$n messages';
+    final target = plan.moveToFolderId == null
+        ? null
+        : (state.folderById(plan.moveToFolderId)?.displayName ?? 'another folder');
+    final noun = google ? 'filter' : 'rule';
+    final what = plan.delete
+        ? 'delete $messages in ${folderRun.folderName}'
+        : 'move $messages from ${folderRun.folderName} to $target';
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AdaptiveAlertDialog(
+        title: Text('Run this $noun now?'),
+        content: Text(
+          'It matches $messages loaded in ${folderRun.folderName}, and will '
+          '$what.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: Text(plan.delete ? 'Delete' : 'Move'),
+          ),
+        ],
+      ),
+    );
+    return ok == true;
   }
 
   Future<void> _openEditor(BuildContext context, MailRule? rule) async {
@@ -338,7 +412,12 @@ class _FolderRun {
   final String folderName;
   final ScaffoldMessengerState? messenger;
 
-  Future<void> run(MailRule rule, Account account) => _runRuleOnFolder(
+  Future<void> run(
+    MailRule rule,
+    Account account, {
+    bool justSaved = true,
+    Future<bool> Function(MailRuleRunPlan plan)? confirm,
+  }) => _runRuleOnFolder(
     rule,
     list: list,
     accounts: accounts,
@@ -346,12 +425,16 @@ class _FolderRun {
     folderName: folderName,
     account: account,
     messenger: messenger,
+    justSaved: justSaved,
+    confirm: confirm,
   );
 }
 
-/// Runs [rule], just saved, over the messages [list] holds for [folderId],
-/// through the list's own move and delete so the rows leave at once and the
-/// outbox carries the changes. Reports what it did in a snack bar.
+/// Runs [rule] over the messages [list] holds for [folderId], through the
+/// list's own move and delete so the rows leave at once and the outbox
+/// carries the changes. Reports what it did in a snack bar. [justSaved] when
+/// the editor's Save is running it, which the report mentions; [confirm], if
+/// given, sees the plan before anything is done and can call it off.
 Future<void> _runRuleOnFolder(
   MailRule rule, {
   required EmailListBloc list,
@@ -360,6 +443,8 @@ Future<void> _runRuleOnFolder(
   required String folderName,
   required Account account,
   required ScaffoldMessengerState? messenger,
+  bool justSaved = true,
+  Future<bool> Function(MailRuleRunPlan plan)? confirm,
 }) async {
   // In place of Settings' own "Rules updated", which says less.
   void report(String text) => messenger
@@ -376,7 +461,11 @@ Future<void> _runRuleOnFolder(
       state is! EmailListLoaded ||
       !state.isShowingFolder ||
       state.currentFolderId != folderId) {
-    report('Rule saved. $folderName is no longer showing, so it was not run.');
+    report(
+      justSaved
+          ? 'Rule saved. $folderName is no longer showing, so it was not run.'
+          : '$folderName is no longer showing, so the rule was not run.',
+    );
     return;
   }
   final plan = MailRuleRunNow.plan(
@@ -387,9 +476,14 @@ Future<void> _runRuleOnFolder(
     google: account is GmailAccount,
   );
   if (plan.isEmpty) {
-    report('Rule saved. Nothing loaded in $folderName needed changing.');
+    report(
+      '${justSaved ? 'Rule saved. ' : ''}Nothing loaded in $folderName '
+      'needed changing.',
+    );
     return;
   }
+  if (confirm != null && !await confirm(plan)) return;
+  final done = justSaved ? 'Rule saved and run' : 'Rule run';
 
   String messages(int n) => n == 1 ? '1 message' : '$n messages';
   final removes = plan.moveToFolderId != null || plan.delete;
@@ -420,13 +514,13 @@ Future<void> _runRuleOnFolder(
         destinationFolderId: plan.moveToFolderId!,
       ),
     );
-    report('Rule saved and run: moved $matched from $folderName.');
+    report('$done: moved $matched from $folderName.');
   } else if (plan.delete) {
     list.add(EmailListEmailsBulkDeleted(emailIds: plan.matchedIds));
-    report('Rule saved and run: deleted $matched from $folderName.');
+    report('$done: deleted $matched from $folderName.');
   } else {
     report(
-      'Rule saved and run: marked ${messages(plan.markReadIds.length)} in '
+      '$done: marked ${messages(plan.markReadIds.length)} in '
       '$folderName read.',
     );
   }
@@ -559,12 +653,20 @@ class _RuleTile extends StatelessWidget {
     required this.state,
     required this.google,
     required this.onEdit,
+    this.runFolderName,
+    this.onRun,
   });
 
   final MailRule rule;
   final MailRulesState state;
   final bool google;
   final VoidCallback onEdit;
+
+  /// The folder behind Settings that [onRun] runs the rule over; both null
+  /// when there is none (no mail list, another account), and the run button
+  /// is not shown.
+  final String? runFolderName;
+  final VoidCallback? onRun;
 
   @override
   Widget build(BuildContext context) {
@@ -660,6 +762,23 @@ class _RuleTile extends StatelessWidget {
               icon: const Icon(Icons.arrow_downward_rounded),
             ),
           ],
+          if (onRun != null && runFolderName != null)
+            Builder(
+              builder: (context) {
+                final reason = MailRuleRunNow.unavailableReason(
+                  rule,
+                  google: google,
+                );
+                return IconButton(
+                  key: ValueKey('rule-run-${rule.id}'),
+                  tooltip: reason ?? 'Run on $runFolderName now',
+                  visualDensity: VisualDensity.compact,
+                  iconSize: 18,
+                  onPressed: busy || reason != null ? null : onRun,
+                  icon: const Icon(Icons.play_arrow_outlined),
+                );
+              },
+            ),
           IconButton(
             tooltip: 'Edit',
             visualDensity: VisualDensity.compact,

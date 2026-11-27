@@ -381,6 +381,137 @@ void main() {
       ]);
     });
 
+    group('a saved rule\'s run button', () {
+      const fromNews = MailRuleCondition(
+        MailRuleConditionKind.fromAddresses,
+        values: ['news@example.com'],
+      );
+
+      void answerSaved(MailRule rule) {
+        when(get(any)).thenAnswer(
+          (_) async => Right(
+            MailRuleSet(
+              rules: [rule],
+              capabilities: MailRuleCapabilities.graph,
+            ),
+          ),
+        );
+      }
+
+      Future<void> showRules(WidgetTester tester, {EmailListBloc? list}) async {
+        await tester.binding.setSurfaceSize(const Size(1000, 900));
+        addTearDown(() => tester.binding.setSurfaceSize(null));
+        await tester.pumpWidget(
+          MaterialApp(
+            home: MultiBlocProvider(
+              providers: [
+                BlocProvider<AccountCubit>.value(value: accountCubit),
+                if (list != null)
+                  BlocProvider<EmailListBloc>.value(value: list),
+              ],
+              child: const Scaffold(body: MailRulesPage()),
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+      }
+
+      final runButton = find.byKey(const ValueKey('rule-run-r1'));
+
+      testWidgets('marks the matching messages read at once', (tester) async {
+        answerSaved(
+          const MailRule(
+            id: 'r1',
+            name: 'News',
+            conditions: [fromNews],
+            actions: [MailRuleAction(MailRuleActionKind.markAsRead)],
+          ),
+        );
+        final list = _FakeListBloc(inbox.state);
+        await showRules(tester, list: list);
+
+        await tester.tap(runButton);
+        await tester.pumpAndSettle();
+
+        expect(list.added, [
+          const EmailListMarkThreadReadRequested(
+            emailIds: ['unread'],
+            isRead: true,
+          ),
+        ]);
+        expect(find.text('Rule run: marked 1 message in Inbox read.'),
+            findsOneWidget);
+        verifyNever(save(any));
+      });
+
+      testWidgets('asks before moving, and does nothing on Cancel',
+          (tester) async {
+        answerSaved(
+          const MailRule(
+            id: 'r1',
+            name: 'News',
+            conditions: [fromNews],
+            actions: [
+              MailRuleAction(MailRuleActionKind.moveToFolder, folderId: 'news'),
+            ],
+          ),
+        );
+        final list = _FakeListBloc(inbox.state);
+        await showRules(tester, list: list);
+
+        await tester.tap(runButton);
+        await tester.pumpAndSettle();
+        expect(find.text('Run this rule now?'), findsOneWidget);
+        await tester.tap(find.text('Cancel'));
+        await tester.pumpAndSettle();
+        expect(list.added, isEmpty);
+
+        await tester.tap(runButton);
+        await tester.pumpAndSettle();
+        await tester.tap(find.text('Move'));
+        await tester.pumpAndSettle();
+        expect(list.added, [
+          const EmailListEmailsMoved(
+            emailIds: ['unread'],
+            destinationFolderId: 'news',
+          ),
+        ]);
+      });
+
+      testWidgets('is disabled for a rule that forwards', (tester) async {
+        answerSaved(
+          const MailRule(
+            id: 'r1',
+            name: 'News',
+            conditions: [fromNews],
+            actions: [
+              MailRuleAction(
+                MailRuleActionKind.forwardTo,
+                addresses: ['x@example.com'],
+              ),
+            ],
+          ),
+        );
+        await showRules(tester, list: _FakeListBloc(inbox.state));
+
+        expect(tester.widget<IconButton>(runButton).onPressed, isNull);
+      });
+
+      testWidgets('is not shown with no mail list behind Settings',
+          (tester) async {
+        answerSaved(
+          const MailRule(
+            id: 'r1',
+            conditions: [fromNews],
+            actions: [MailRuleAction(MailRuleActionKind.markAsRead)],
+          ),
+        );
+        await showRules(tester);
+
+        expect(runButton, findsNothing);
+      });
+    });
+
     testWidgets('is not offered with no mail list behind Settings',
         (tester) async {
       answerRules(MailRuleCapabilities.graph);

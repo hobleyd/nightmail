@@ -294,10 +294,12 @@ in any browser. So with no accounts, `_AccountGate` asks
 `noAccountsPage(isWeb: kIsWeb)` (`presentation/pages/web_sign_in_page.dart`)
 which page to show, and on web the answer is `WebSignInPage`: one *Sign in*
 button for the server named by `--dart-define=NIGHTWARE_SERVER`. That sign-in
-(Keycloak, through `/.well-known/nightware`) is the account. The web Add
-Account page offers only *NightMail Server* too. Microsoft 365 and Gmail have
-no web client registered for the origin, and a browser can't open IMAP's
-sockets. The production define is set in the ansible repo's
+(Keycloak, through `/.well-known/nightware`) is the account. Once that
+first account exists, Add Account offers every provider except *IMAP / Other*
+(enough_mail needs `dart:io` sockets, which a browser can't open). Microsoft 365
+and Gmail sign in through a popup that returns to `<origin>/callback.html`. The
+client ID they use must list that redirect: an SPA platform in Azure, and a
+Web-type client in Google. The production define is set in the ansible repo's
 `roles/docker_apps/files/config/nightmail-web/Dockerfile`.
 
 Load-bearing:

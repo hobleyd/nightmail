@@ -272,14 +272,6 @@ class _AddAccountPageState extends State<AddAccountPage> {
                         strokeWidth: 2,
                       ),
                     )
-                  // The web build signs in to NightMail Servers only — see
-                  // noAccountsPage (web_sign_in_page.dart).
-                  else if (kIsWeb)
-                    _ProviderButton(
-                      label: 'NightMail Server',
-                      color: const Color(0xFF111827),
-                      onTap: _signInNightmailServer,
-                    )
                   else ...[
                     _ProviderButton(
                       label: 'Microsoft 365 / Outlook',
@@ -304,12 +296,16 @@ class _AddAccountPageState extends State<AddAccountPage> {
                       color: const Color(0xFF111827),
                       onTap: _signInNightmailServer,
                     ),
-                    const SizedBox(height: 12),
-                    _ProviderButton(
-                      label: 'IMAP / Other',
-                      color: const Color(0xFF4B5563),
-                      onTap: _showImapDialog,
-                    ),
+                    // No IMAP on web: enough_mail talks to the server over
+                    // dart:io sockets, and a browser can't open one.
+                    if (!kIsWeb) ...[
+                      const SizedBox(height: 12),
+                      _ProviderButton(
+                        label: 'IMAP / Other',
+                        color: const Color(0xFF4B5563),
+                        onTap: _showImapDialog,
+                      ),
+                    ],
                     const SizedBox(height: 16),
                     Text(
                       'NightMail is preconfigured to work for everyone by '

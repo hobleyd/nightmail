@@ -147,6 +147,35 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text(':pp:'), findsOneWidget);
   });
+
+  _tables();
+}
+
+void _tables() {
+  testWidgets('a table is a grid of cells, header bold, text around it kept',
+      (tester) async {
+    await tester.pumpWidget(const MaterialApp(
+      home: Scaffold(
+        body: ChatMessageBody(
+          html: '<div>Before</div><table><tbody><tr><th>Name</th><th>Qty</th>'
+              '</tr><tr><td><b>Jake</b></td><td>3</td></tr>'
+              '<tr><td>Only one</tr></tbody></table><div>After</div>',
+          style: TextStyle(),
+        ),
+      ),
+    ));
+    final table = tester.widget<Table>(find.byType(Table));
+    expect(table.children, hasLength(3));
+    // A short row is padded so every row has the same cells.
+    expect(table.children.every((r) => r.children.length == 2), isTrue);
+    expect(find.text('Name', findRichText: true), findsOneWidget);
+    expect(find.text('Only one', findRichText: true), findsOneWidget);
+    final outer = tester.widget<Text>(find.byType(Text).first);
+    final all = outer.textSpan!.toPlainText();
+    expect(all, contains('Before'));
+    expect(all, contains('After'));
+    expect(all, isNot(contains('Name')));
+  });
 }
 
 /// A 1×1 transparent PNG.

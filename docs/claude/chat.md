@@ -1063,6 +1063,14 @@ than falling into an account lookup that answers null.
   `image_width`/`image_height`) plus a context block whose logo icon is left
   out; a pasted GIF link unfurls as an attachment's `image_url`. Both used
   to be dropped, leaving only the fallback text.
+- **Tables:** a table drawn in Slack's composer is a `table` block (rows of
+  `raw_text`/`rich_text` cells, the first row the header) and the message's
+  `text` is only Slack's "This message contains interactive elements." —
+  which is all the pane showed before. `_tableHtml` makes it a `<table>`,
+  which `ChatMessageBody` lays out as a bordered `Table` widget (cells
+  rendered like bodies, scrolling sideways; Teams' `<table>` bodies get it
+  too). The preview takes the message's `rich_text` words instead of that
+  fallback, or "Table".
 - **Search:** `search.messages` (Tier 2, user tokens), so
   `searchesOnServer` is true — no recent-history scan.
 - A 429 waits out a `Retry-After` of up to 20 s once, then fails readably.

@@ -8,7 +8,7 @@ import 'package:url_launcher/url_launcher.dart';
 ///
 /// Chat bodies are a small dialect: Teams sends `<p>`, `<b>`/`<strong>`,
 /// `<i>`/`<em>`, `<u>`, `<s>`, `<code>`, `<pre>`, `<a>`, `<at>` mentions,
-/// lists, `<blockquote>` and `<img>` (emoji, inline images); Nightware's
+/// lists, `<blockquote>`, `<table>` and `<img>` (emoji, inline images); Nightware's
 /// rendering of Talk's Markdown is the same subset (ADR 0009 D4). One
 /// webview per message would not scale to a scrolling history, and a text
 /// rendering cannot run script. An emoji keeps its `alt`; any other image is
@@ -58,6 +58,7 @@ class _ChatMessageBodyState extends State<ChatMessageBody> {
         base: widget.style,
         accent: Theme.of(context).colorScheme.primary,
         codeBg: Theme.of(context).colorScheme.onSurface.withAlpha(20),
+        rule: Theme.of(context).colorScheme.onSurface.withAlpha(50),
         onRecognizer: _recognizers.add,
         loadImage: widget.loadImage,
       ).render(widget.html);
@@ -75,6 +76,7 @@ class _ChatHtml {
     required this.base,
     required this.accent,
     required this.codeBg,
+    required this.rule,
     required this.onRecognizer,
     this.loadImage,
   });
@@ -82,10 +84,16 @@ class _ChatHtml {
   final TextStyle base;
   final Color accent;
   final Color codeBg;
+  final Color rule;
   final void Function(TapGestureRecognizer) onRecognizer;
   final Future<Uint8List?> Function(String src)? loadImage;
 
   static final _token = RegExp(r'<(/?)([a-zA-Z0-9]+)([^>]*)>|([^<]+)');
+  static final _tableEnd = RegExp(r'</table\s*>', caseSensitive: false);
+  static final _row =
+      RegExp(r'<tr\b[^>]*>(.*?)(?=<tr\b|</table|$)', caseSensitive: false, dotAll: true);
+  static final _cell = RegExp(r'<(td|th)\b[^>]*>(.*?)(?=<t[dh]\b|</tr|$)',
+      caseSensitive: false, dotAll: true);
   static final _attr = RegExp(r'''([a-zA-Z-]+)\s*=\s*("([^"]*)"|'([^']*)')''');
 
   InlineSpan render(String html) {
@@ -95,6 +103,7 @@ class _ChatHtml {
     final hrefs = <String?>[];
     final listCounters = <int?>[];
     var atLineStart = true;
+    var skipTo = 0;
 
     void text(String s) {
       if (s.isEmpty) return;
@@ -129,6 +138,7 @@ class _ChatHtml {
       '',
     );
     for (final m in _token.allMatches(source)) {
+      if (m.start < skipTo) continue;
       final raw = m.group(4);
       if (raw != null) {
         final decoded = _decode(raw.replaceAll(RegExp(r'\s*\n\s*'), ' '));
@@ -153,6 +163,19 @@ class _ChatHtml {
         continue;
       }
       switch (tag) {
+        case 'table':
+          // A table is a widget of its own, each cell rendered like a body.
+          final end = _tableEnd.firstMatch(source.substring(m.end));
+          final inner = end == null
+              ? source.substring(m.end)
+              : source.substring(m.end, m.end + end.start);
+          skipTo = end == null ? source.length : m.end + end.end;
+          final table = _table(inner);
+          if (table != null) {
+            newline();
+            out.add(WidgetSpan(child: table));
+            atLineStart = false;
+          }
         case 'br':
           text('\n');
         case 'p' || 'div':
@@ -262,6 +285,61 @@ class _ChatHtml {
       ));
     }
     return TextSpan(children: out);
+  }
+
+  /// The rows and cells of a `<table>`'s inside — `<thead>`/`<tbody>` and
+  /// unclosed cells tolerated — laid out in a bordered grid that scrolls
+  /// sideways when wider than the bubble. A header cell is bold on a tint.
+  Widget? _table(String inner) {
+    final rows = [
+      for (final r in _row.allMatches(inner))
+        [
+          for (final c in _cell.allMatches(r.group(1)!))
+            (header: c.group(1)!.toLowerCase() == 'th', html: c.group(2)!),
+        ],
+    ].where((r) => r.isNotEmpty).toList();
+    if (rows.isEmpty) return null;
+    final columns = rows.map((r) => r.length).reduce((a, b) => a > b ? a : b);
+    TableCell cell(({bool header, String html})? c) {
+      final style = c != null && c.header
+          ? base.copyWith(fontWeight: FontWeight.w700)
+          : base;
+      final span = c == null
+          ? const TextSpan()
+          : _ChatHtml(
+              base: style,
+              accent: accent,
+              codeBg: codeBg,
+              rule: rule,
+              onRecognizer: onRecognizer,
+              loadImage: loadImage,
+            ).render(c.html.replaceAll(_tableEnd, ''));
+      return TableCell(
+        child: Container(
+          color: c != null && c.header ? codeBg : null,
+          constraints: const BoxConstraints(maxWidth: 280),
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+          child: Text.rich(TextSpan(children: [span])),
+        ),
+      );
+    }
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      child: SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        child: Table(
+          defaultColumnWidth: const IntrinsicColumnWidth(),
+          border: TableBorder.all(color: rule),
+          children: [
+            for (final r in rows)
+              TableRow(children: [
+                for (var i = 0; i < columns; i++) cell(r.elementAtOrNull(i)),
+              ]),
+          ],
+        ),
+      ),
+    );
   }
 
   static Map<String, String> _attrs(String s) => {

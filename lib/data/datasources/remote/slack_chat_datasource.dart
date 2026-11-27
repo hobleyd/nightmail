@@ -593,7 +593,7 @@ class SlackChatDatasource implements ChatRemoteDatasource {
     ChatConversation conversation,
     String text, {
     ChatMessage? replyTo,
-    ChatOutgoingImage? image,
+    ChatOutgoingFile? image,
     List<ChatMember> mentions = const [],
   }) async {
     final sent = outgoingText(text, mentions);
@@ -631,7 +631,7 @@ class SlackChatDatasource implements ChatRemoteDatasource {
     ChatConversation conversation,
     String text,
     ChatMessage? replyTo,
-    ChatOutgoingImage image,
+    ChatOutgoingFile image,
   ) async {
     const reconnect = ServerException(
         message: 'Connect this Slack workspace again in Settings to send '
@@ -651,7 +651,7 @@ class SlackChatDatasource implements ChatRemoteDatasource {
     ChatConversation conversation,
     String text,
     ChatMessage? replyTo,
-    ChatOutgoingImage image,
+    ChatOutgoingFile image,
   ) async {
     final thread = replyTo == null ? null : replyTo.replyToId ?? replyTo.id;
     final ticket = await _call(
@@ -1273,6 +1273,8 @@ class SlackChatDatasource implements ChatRemoteDatasource {
     return DateTime.fromMicrosecondsSinceEpoch((seconds * 1e6).round());
   }
 
+  static const _blocksFallback = 'This message contains interactive elements.';
+
   static List<Map<String, dynamic>> _list(Object? v) => v is List
       ? v.whereType<Map<String, dynamic>>().toList()
       : const [];
@@ -1281,6 +1283,20 @@ class SlackChatDatasource implements ChatRemoteDatasource {
   /// attachment's summary.
   static String _previewText(Map<String, dynamic> m) {
     final text = m['text'] as String? ?? '';
+    final blocks = _list(m['blocks']);
+    // Slack's own stand-in for a message of blocks it cannot put as text
+    // (a table): the person's words around it say more.
+    if (text.trim() == _blocksFallback) {
+      final words = [
+        for (final b in blocks)
+          if (b['type'] == 'rich_text')
+            for (final e in _list(b['elements']))
+              for (final i in _list(e['elements']))
+                if (i['text'] case final String t) t,
+      ].join().trim();
+      if (words.isNotEmpty) return escapeText(words);
+      if (blocks.any((b) => b['type'] == 'table')) return 'Table';
+    }
     if (text.trim().isNotEmpty) return text;
     final a = _list(m['attachments']).firstOrNull;
     for (final k in const ['fallback', 'pretext', 'title', 'text']) {
@@ -1532,6 +1548,10 @@ class SlackChatDatasource implements ChatRemoteDatasource {
           ].join(' · '),
         'rich_text' => _richTextHtml(_list(b['elements']), userName, customEmoji),
         'markdown' => b['text'] is String ? md(b['text'] as String) : '',
+        'table' => _tableHtml(
+            b['rows'] is List ? b['rows'] as List : const [],
+            userName,
+            customEmoji),
         'image' => _imgHtml(
               b['image_url'] as String? ??
                   (b['slack_file'] as Map?)?['url'] as String?,
@@ -1545,6 +1565,34 @@ class SlackChatDatasource implements ChatRemoteDatasource {
       if (html.isNotEmpty) out.add('<div>$html</div>');
     }
     return out.join();
+  }
+
+  /// A `table` block (a table a person drew in Slack's composer): rows of
+  /// `raw_text` or `rich_text` cells, the first row as the header, as Slack
+  /// shows it. The message's `text` is only Slack's "This message contains
+  /// interactive elements." fallback, so without this the table was lost.
+  static String _tableHtml(
+    List<Object?> rows,
+    String? Function(String userId)? userName,
+    SlackCustomEmoji? Function(String name)? customEmoji,
+  ) {
+    if (rows.isEmpty) return '';
+    final out = StringBuffer('<table>');
+    for (final (i, row) in rows.indexed) {
+      final tag = i == 0 && rows.length > 1 ? 'th' : 'td';
+      out.write('<tr>');
+      for (final c in _list(row)) {
+        final html = switch (c['type']) {
+          'rich_text' =>
+            _richTextHtml(_list(c['elements']), userName, customEmoji),
+          _ => _escape(c['text'] as String? ?? '').replaceAll('\n', '<br>'),
+        };
+        out.write('<$tag>$html</$tag>');
+      }
+      out.write('</tr>');
+    }
+    out.write('</table>');
+    return out.toString();
   }
 
   /// An `<img>` for a picture Slack names by URL — https only (anything

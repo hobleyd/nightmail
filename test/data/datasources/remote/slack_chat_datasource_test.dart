@@ -284,6 +284,62 @@ void main() {
     });
   });
 
+  group('tables', () {
+    test('a table block is drawn, not Slack\'s "interactive elements" text',
+        () {
+      // The shape of a table a person draws in Slack's composer.
+      final html = SlackChatDatasource.messageHtml({
+        'text': 'This message contains interactive elements.',
+        'blocks': [
+          {
+            'type': 'rich_text',
+            'elements': [
+              {
+                'type': 'rich_text_section',
+                'elements': [
+                  {'type': 'text', 'text': 'Numbers:'},
+                ],
+              },
+            ],
+          },
+          {
+            'type': 'table',
+            'rows': [
+              [
+                {'type': 'raw_text', 'text': 'Name'},
+                {'type': 'raw_text', 'text': 'A<B'},
+              ],
+              [
+                {
+                  'type': 'rich_text',
+                  'elements': [
+                    {
+                      'type': 'rich_text_section',
+                      'elements': [
+                        {
+                          'type': 'text',
+                          'text': 'Jake',
+                          'style': {'bold': true},
+                        },
+                      ],
+                    },
+                  ],
+                },
+                {'type': 'raw_text', 'text': '3'},
+              ],
+            ],
+          },
+        ],
+      });
+      expect(html, contains('Numbers:'));
+      expect(
+          html,
+          contains('<table><tr><th>Name</th><th>A&lt;B</th></tr>'
+              '<tr><td><div><b>Jake</b></div></td><td>3</td></tr></table>'));
+      expect(html, isNot(contains('interactive elements')));
+    });
+  });
+
   group('GIFs', () {
     test('a /giphy post shows its image block, sized; the logo is left out',
         () {
@@ -1209,7 +1265,7 @@ void main() {
 
   group('sending a picture', () {
     const dm = ChatConversation(id: 'D1', kind: ChatKind.oneOnOne, title: 'Ann');
-    final image = ChatOutgoingImage(
+    final image = ChatOutgoingFile(
       bytes: Uint8List.fromList([1, 2, 3]),
       mimeType: 'image/png',
       name: 'image.png',

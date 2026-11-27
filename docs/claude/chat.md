@@ -608,6 +608,46 @@ before.
   (`_seedImage`): Google and Slack process an upload after answering, and a
   miss would otherwise stay a miss until restart.
 
+## Dropping a file on a conversation
+
+Files dragged in from Finder, Explorer or a file manager and dropped on the
+conversation are **sent the moment they land**, each as a message of its own,
+one after another (`_FileDrop` in `chat_conversation_view.dart`,
+`ChatConversationCubit.sendFiles`). Slack stages a drop under the box and only
+sends at once with Shift held; here at once is the default, as asked. The
+box's text and any pasted picture stay where they are. While a drag is over
+it, the conversation shows "Drop to send to {title}" (or "the thread").
+
+- **Where they go is decided when they land** (`dropTarget`), before they are
+  read: reading is async, and with no staging step a switch of conversation
+  meanwhile would post them somewhere else. `sendFiles` checks the target
+  before each file and stops with "… was not sent: the conversation changed".
+- **One at a time, queued** (`_drops`): `send` turns a call away while
+  `state.sending`, so files dropped together, or behind a message on the
+  wire, wait for it rather than vanish.
+- **Thread or list, by where it was dropped.** The thread panel is its own
+  drop target and answers in the thread; the list's never does — the same
+  rule as the two composers.
+- **What each provider takes** (`ChatRemoteDatasource.canSendAnyFile`, beside
+  `canSendImage`): Slack (`files.getUploadURLExternal`, the picture path) and
+  Google (`media.upload`) take any file. **Teams takes pictures only** —
+  hosted contents are PNG, JPEG or GIF (`ChatOutgoingFile.isPicture`); any
+  other file would have to go to OneDrive (a chat) or the channel's SharePoint
+  folder and be sent as a `reference` attachment, which NightMail does not do.
+  A dropped picture is not shrunk as a pasted one is, so Graph refuses one
+  over `maxPictureBytes` (2.8 MB) before sending. A NightMail Server takes
+  neither, and offers no drop.
+- **Read in the view**, through `readDroppedFileBytes`
+  (`core/platform/dropped_file.dart`, shared with compose: Windows' PowerShell
+  fallback for a read Flutter is refused). Folders and anything over
+  `maxDroppedFileBytes` (100 MB, held in memory) are named in the error once
+  the rest has gone. A picture's size comes from its header
+  (`ui.ImageDescriptor`) for Teams' `<img>`.
+- **A modal over the conversation disables it** (`ModalRoute.isCurrent`): a
+  `DropTarget` hears every drag over its rectangle, covered or not. The chat
+  window is a sub-window; `desktop_drop` reaches it on macOS through
+  `SecondaryWindowDropOverlay` (`MainFlutterWindow.swift`), as compose does.
+
 ## Reacting to a message
 
 - **Anyone's message**, not a deleted or system one

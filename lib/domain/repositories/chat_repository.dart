@@ -164,14 +164,14 @@ abstract interface class ChatRepository {
   );
 
   /// Sends [text] to [conversation], as a reply in [replyTo]'s thread when
-  /// given (conversations with threads only), with [image] under it when
+  /// given (conversations with threads only), with [file] under it when
   /// given, tagging each of [mentions] still written as `@displayName`.
   Future<Either<Failure, ChatMessage>> sendMessage(
     String accountId,
     ChatConversation conversation,
     String text, {
     ChatMessage? replyTo,
-    ChatOutgoingImage? image,
+    ChatOutgoingFile? file,
     List<ChatMember> mentions = const [],
   });
 
@@ -185,6 +185,10 @@ abstract interface class ChatRepository {
   /// Whether a picture can be sent in [conversation] — see
   /// `ChatRemoteDatasource.canSendImage`.
   bool canSendImage(String accountId, ChatConversation conversation);
+
+  /// Whether a file other than a picture can be sent in [conversation] —
+  /// see `ChatRemoteDatasource.canSendAnyFile`.
+  bool canSendAnyFile(String accountId, ChatConversation conversation);
 
   /// Whether the user's own messages in [conversation] can be edited — see
   /// `ChatRemoteDatasource.canEdit`.

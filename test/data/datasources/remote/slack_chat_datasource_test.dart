@@ -1329,7 +1329,7 @@ void main() {
             ],
           };
       final sent =
-          await datasource().send(dm, 'look <here>', image: image);
+          await datasource().send(dm, 'look <here>', file: image);
       expect(sent.id, '1700000000.000900');
       expect(sent.bodyHtml, contains('<img src="https://files.slack.com/'));
       expect(looks, 2, reason: 'looked again until it appeared');
@@ -1363,7 +1363,7 @@ void main() {
         senderName: 'Ann',
         bodyHtml: 'post',
       );
-      final sent = await datasource().send(dm, '', replyTo: post, image: image);
+      final sent = await datasource().send(dm, '', replyTo: post, file: image);
       expect(sent.id, '1700000000.000900');
     });
 
@@ -1371,7 +1371,7 @@ void main() {
         'not flagged', () async {
       await connected(scopes: const {'chat:write'});
       await expectLater(
-          datasource().send(dm, '', image: image),
+          datasource().send(dm, '', file: image),
           throwsA(isA<ServerException>().having(
               (e) => e.message, 'message', contains('send pictures'))));
       expect(requests, isEmpty);
@@ -1379,9 +1379,36 @@ void main() {
       await connected(scopes: SlackWorkspaces.userScopes.toSet());
       routes['files.getUploadURLExternal'] =
           (_) => {'ok': false, 'error': 'missing_scope'};
-      await expectLater(datasource().send(dm, '', image: image),
+      await expectLater(datasource().send(dm, '', file: image),
           throwsA(isA<ServerException>()));
       expect((await workspaces.byTeam('T1'))!.needsReconnect, isFalse);
+    });
+
+    test('any file goes the same way, with its own type; a stand-in shown '
+        'before Slack posts it names the file', () async {
+      await connected(scopes: SlackWorkspaces.userScopes.toSet());
+      routes['users.info'] = (_) => user('UME', 'Me');
+      routes['files.getUploadURLExternal'] = (o) {
+        expect(o.data, {'filename': 'notes.pdf', 'length': '3'});
+        return {
+          'ok': true,
+          'upload_url': 'https://files.slack.com/upload/v1/ABC',
+          'file_id': 'F2',
+        };
+      };
+      routes['ABC'] = (o) {
+        expect(o.headers[Headers.contentTypeHeader], 'application/pdf');
+        return 'OK';
+      };
+      routes['files.completeUploadExternal'] = (_) => {'ok': true};
+      routes['conversations.history'] = (_) => {'ok': true, 'messages': []};
+      expect(datasource().canSendAnyFile(dm), isTrue);
+      final sent = await datasource().send(dm, '',
+          file: ChatOutgoingFile(
+              bytes: Uint8List.fromList([1, 2, 3]),
+              mimeType: 'application/pdf',
+              name: 'notes.pdf'));
+      expect(sent.attachmentNames, ['notes.pdf']);
     });
   });
 

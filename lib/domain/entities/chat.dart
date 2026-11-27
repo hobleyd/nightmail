@@ -440,9 +440,10 @@ class ChatMessage extends Equatable {
       ];
 }
 
-/// A picture sent with a message — pasted into the composer.
-class ChatOutgoingImage extends Equatable {
-  const ChatOutgoingImage({
+/// A file sent with a message: a picture pasted into the composer, or any
+/// file dropped on the conversation.
+class ChatOutgoingFile extends Equatable {
+  const ChatOutgoingFile({
     required this.bytes,
     required this.mimeType,
     required this.name,
@@ -452,11 +453,18 @@ class ChatOutgoingImage extends Equatable {
 
   final Uint8List bytes;
 
-  /// `image/png`, `image/jpeg` or `image/gif`.
+  /// `image/png`, `image/jpeg` or `image/gif` for a picture; anything for
+  /// a dropped file.
   final String mimeType;
 
   /// A file name for providers that keep one (Google, Slack).
   final String name;
+
+  /// Whether this is a picture every provider that sends pictures takes:
+  /// Teams' hosted contents are PNG, JPEG or GIF.
+  bool get isPicture => pictureTypes.contains(mimeType);
+
+  static const pictureTypes = {'image/png', 'image/jpeg', 'image/gif'};
 
   /// Pixels, when known — Teams draws a hosted picture at the size its
   /// `<img>` gives.

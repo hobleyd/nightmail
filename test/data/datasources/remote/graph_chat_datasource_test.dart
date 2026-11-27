@@ -558,7 +558,7 @@ void main() {
   });
 
   group('sending a picture', () {
-    final image = ChatOutgoingImage(
+    final image = ChatOutgoingFile(
       bytes: Uint8List.fromList([1, 2, 3]),
       mimeType: 'image/png',
       name: 'shot.png',
@@ -588,10 +588,33 @@ void main() {
     test('a picture alone has no caption', () {
       final body = GraphChatDatasource.imageMessageBody(
           ' ',
-          ChatOutgoingImage(
+          ChatOutgoingFile(
               bytes: image.bytes, mimeType: 'image/png', name: 'x.png'));
       expect((body['body'] as Map)['content'],
           '<p><img src="../hostedContents/1/\$value" alt="x.png"></p>');
+    });
+
+    test('a file that is not a picture, or a picture too big for one '
+        'request, is refused before anything is sent', () async {
+      const chat = ChatConversation(id: 'c', kind: ChatKind.group, title: 'G');
+      final ds = datasource(server: false);
+      expect(ds.canSendAnyFile(chat), isFalse);
+      await expectLater(
+          ds.send(chat, '',
+              file: ChatOutgoingFile(
+                  bytes: image.bytes,
+                  mimeType: 'application/pdf',
+                  name: 'notes.pdf')),
+          throwsA(isA<ServerException>().having(
+              (e) => e.message, 'message', contains('pictures only'))));
+      await expectLater(
+          ds.send(chat, '',
+              file: ChatOutgoingFile(
+                  bytes: Uint8List(GraphChatDatasource.maxPictureBytes + 1),
+                  mimeType: 'image/jpeg',
+                  name: 'big.jpg')),
+          throwsA(isA<ServerException>().having(
+              (e) => e.message, 'message', contains('too large'))));
     });
   });
 

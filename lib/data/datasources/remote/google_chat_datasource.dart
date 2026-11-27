@@ -326,11 +326,11 @@ class GoogleChatDatasource implements ChatRemoteDatasource {
     ChatConversation conversation,
     String text, {
     ChatMessage? replyTo,
-    ChatOutgoingImage? image,
+    ChatOutgoingFile? file,
     List<ChatMember> mentions = const [],
   }) async {
     final thread = replyTo?.threadId;
-    final ref = image == null ? null : await _upload(conversation, image);
+    final ref = file == null ? null : await _upload(conversation, file);
     final data = await _post(
       '/${conversation.id}/messages',
       {
@@ -428,13 +428,17 @@ class GoogleChatDatasource implements ChatRemoteDatasource {
   @override
   bool canSendImage(ChatConversation conversation) => true;
 
-  /// Uploads [image] into [conversation] (`media.upload`, one multipart
+  /// `media.upload` takes any file up to 200 MB.
+  @override
+  bool canSendAnyFile(ChatConversation conversation) => true;
+
+  /// Uploads [file] into [conversation] (`media.upload`, one multipart
   /// request: the file name, then the bytes) and returns the
   /// `attachmentDataRef` a message attaches it by. A whole URL: the upload
   /// lives under `/upload/v1`, beside the client's `/v1` base.
   Future<Map<String, dynamic>> _upload(
     ChatConversation conversation,
-    ChatOutgoingImage image,
+    ChatOutgoingFile file,
   ) async {
     final base = Uri.parse(_dio.options.baseUrl);
     final url = base.replace(
@@ -443,10 +447,10 @@ class GoogleChatDatasource implements ChatRemoteDatasource {
     final body = BytesBuilder(copy: false)
       ..add(utf8.encode('--$boundary\r\n'
           'Content-Type: application/json; charset=UTF-8\r\n\r\n'
-          '${jsonEncode({'filename': image.name})}\r\n'
+          '${jsonEncode({'filename': file.name})}\r\n'
           '--$boundary\r\n'
-          'Content-Type: ${image.mimeType}\r\n\r\n'))
-      ..add(image.bytes)
+          'Content-Type: ${file.mimeType}\r\n\r\n'))
+      ..add(file.bytes)
       ..add(utf8.encode('\r\n--$boundary--\r\n'));
     final bytes = body.takeBytes();
     try {
@@ -463,7 +467,7 @@ class GoogleChatDatasource implements ChatRemoteDatasource {
       final ref = r.data?['attachmentDataRef'];
       if (ref is! Map<String, dynamic>) {
         throw const ServerException(
-            message: 'Google Chat did not accept the picture.');
+            message: 'Google Chat did not accept the file.');
       }
       return ref;
     } on DioException catch (e) {

@@ -333,9 +333,19 @@ class GraphChatDatasource implements ChatRemoteDatasource {
     ChatConversation conversation,
     String text, {
     ChatMessage? replyTo,
-    ChatOutgoingImage? image,
+    ChatOutgoingFile? file,
     List<ChatMember> mentions = const [],
   }) async {
+    if (file != null && !file.isPicture) {
+      throw const ServerException(
+          message: 'Teams chats here take pictures only, not other files.');
+    }
+    if (file != null && file.bytes.length > maxPictureBytes) {
+      // Base64 in one request under Graph's 4 MB limit; a pasted picture
+      // is shrunk to fit by the clipboard reader, a dropped one is not.
+      throw const ServerException(
+          message: 'That picture is too large for Teams (2.8 MB at most).');
+    }
     final path = !conversation.isChannel
         ? '/chats/${conversation.id}/messages'
         : replyTo == null
@@ -345,8 +355,8 @@ class GraphChatDatasource implements ChatRemoteDatasource {
     final tagged = mentionBody(text, mentions);
     final data = await _post(
         path,
-        image != null
-            ? imageMessageBody(text, image, mentions: mentions)
+        file != null
+            ? imageMessageBody(text, file, mentions: mentions)
             : tagged ?? {'body': {'contentType': 'text', 'content': text}});
     return _parseMessage(data);
   }
@@ -423,7 +433,7 @@ class GraphChatDatasource implements ChatRemoteDatasource {
   /// answers with the `…/hostedContents/{id}/$value` it was given.
   @visibleForTesting
   static Map<String, dynamic> imageMessageBody(
-      String text, ChatOutgoingImage image,
+      String text, ChatOutgoingFile image,
       {List<ChatMember> mentions = const []}) {
     final tagged = mentionBody(text, mentions);
     var size = '';
@@ -463,6 +473,16 @@ class GraphChatDatasource implements ChatRemoteDatasource {
   /// Hosted contents are Graph's; nightware's chat API has none.
   @override
   bool canSendImage(ChatConversation conversation) => !isNightmailServer;
+
+  /// Hosted contents are pictures; a file would go through OneDrive or the
+  /// channel's SharePoint folder, which NightMail does not upload to.
+  @override
+  bool canSendAnyFile(ChatConversation conversation) => false;
+
+  /// The largest picture [send] takes: its base64 has to fit, with the
+  /// message, in one request under Graph's 4 MB.
+  @visibleForTesting
+  static const maxPictureBytes = 2800 * 1024;
 
   /// Creates (or, as both servers do for an existing pair, returns) the
   /// one-on-one chat between the signed-in user and [email].

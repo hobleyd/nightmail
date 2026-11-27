@@ -1,3 +1,7 @@
+import 'dart:async';
+import 'dart:ui' as ui;
+
+import 'package:desktop_drop/desktop_drop.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
@@ -5,9 +9,11 @@ import 'package:intl/intl.dart';
 
 import '../../../core/platform/touch_metrics.dart';
 import '../../../core/platform/clipboard_image.dart';
+import '../../../core/platform/dropped_file.dart';
 import '../../../core/text/emoji.dart';
 import '../../../core/theme/app_colors.dart';
 import '../../../domain/entities/chat.dart';
+import '../../../domain/entities/local_attachment.dart';
 import '../../blocs/chat/chat_conversation_cubit.dart';
 import '../../blocs/chat/chat_drafts.dart';
 import 'chat_call_menu.dart';
@@ -50,7 +56,9 @@ class ChatConversationView extends StatelessWidget {
         final threads = context.read<ChatConversationCubit>().threads;
         final threadOpen = threads && state.threadPostId != null;
 
-        final history = Column(
+        final history = _FileDrop(
+          inThread: false,
+          child: Column(
           children: [
             if (state.error != null) _ErrorBanner(text: state.error!),
             Expanded(
@@ -97,6 +105,7 @@ class ChatConversationView extends StatelessWidget {
                 sending: state.sending,
               ),
           ],
+        ),
         );
 
         Widget colored(Widget child) => ChatPeopleColors(
@@ -108,13 +117,16 @@ class ChatConversationView extends StatelessWidget {
               child: child,
             );
         if (!threadOpen) return colored(history);
-        final thread = _ThreadPanel(
-          post: state.threadPost,
-          replies: state.threadReplies,
-          loading: state.threadLoading,
-          sending: state.sending,
-          showBack: !wideThreads,
-          backLabel: isChannel ? 'Back to posts' : 'Back to messages',
+        final thread = _FileDrop(
+          inThread: true,
+          child: _ThreadPanel(
+            post: state.threadPost,
+            replies: state.threadReplies,
+            loading: state.threadLoading,
+            sending: state.sending,
+            showBack: !wideThreads,
+            backLabel: isChannel ? 'Back to posts' : 'Back to messages',
+          ),
         );
         if (!wideThreads) return colored(thread);
         return colored(Row(
@@ -1122,7 +1134,7 @@ class _ComposerState extends State<_Composer> {
       s.editing != null && s.editingInThread == widget.inThread;
 
   /// A pasted picture waiting to go with the next send.
-  ChatOutgoingImage? _image;
+  ChatOutgoingFile? _image;
 
   Future<void> _send() async {
     final text = _controller.text;
@@ -1138,7 +1150,7 @@ class _ComposerState extends State<_Composer> {
       _sendingFrom = _key;
       final sent = await cubit.send(text,
           inThread: widget.inThread,
-          image: image,
+          file: image,
           mentions: List.of(_picked));
       final from = _sendingFrom;
       _sendingFrom = null;
@@ -1164,7 +1176,7 @@ class _ComposerState extends State<_Composer> {
     if (_mine(cubit.state) || !cubit.canSendImage) return false;
     final found = await readClipboardImage();
     if (found == null || !mounted) return false;
-    setState(() => _image = ChatOutgoingImage(
+    setState(() => _image = ChatOutgoingFile(
           bytes: found.bytes,
           mimeType: found.mimeType,
           name: found.name,
@@ -1509,11 +1521,167 @@ class _ImagePasteAction extends Action<PasteTextIntent> {
   }
 }
 
+/// The largest file a drop reads: it is held in memory and sent in one go.
+@visibleForTesting
+const maxDroppedFileBytes = 100 * 1024 * 1024;
+
+/// Files dragged in from the desktop onto [child] are sent at once, each as
+/// a message of its own — Slack only does that with Shift held, and stages
+/// them under the box otherwise. [inThread]: dropped on the open thread,
+/// they go to it; dropped on the list, never. Only where the conversation
+/// takes a picture (and, for anything else, a file); the box's text stays.
+class _FileDrop extends StatefulWidget {
+  const _FileDrop({required this.inThread, required this.child});
+
+  final bool inThread;
+  final Widget child;
+
+  @override
+  State<_FileDrop> createState() => _FileDropState();
+}
+
+class _FileDropState extends State<_FileDrop> {
+  bool _over = false;
+
+  void _setOver(bool over) {
+    if (mounted && _over != over) setState(() => _over = over);
+  }
+
+  Future<void> _drop(DropDoneDetails details) async {
+    _setOver(false);
+    final cubit = context.read<ChatConversationCubit>();
+    if (!cubit.canSendImage) return;
+    // Where they go is decided now, not once they are read.
+    final target = cubit.dropTarget(inThread: widget.inThread);
+    final files = <ChatOutgoingFile>[];
+    final refused = <String>[];
+    for (final item in details.files) {
+      if (isDroppedDirectory(item)) {
+        refused.add('${item.name} is a folder');
+        continue;
+      }
+      try {
+        if (await item.length() > maxDroppedFileBytes) {
+          refused.add('${item.name} is over 100 MB');
+          continue;
+        }
+        files.add(await _read(item));
+      } catch (e) {
+        debugPrint('[Chat] could not read dropped "${item.name}": $e');
+        refused.add('${item.name} could not be read');
+      }
+    }
+    if (files.isEmpty && refused.isEmpty) return;
+    unawaited(cubit.sendFiles(files,
+        target: target,
+        refused: refused.isEmpty ? null : 'Not sent: ${refused.join('; ')}.'));
+  }
+
+  static Future<ChatOutgoingFile> _read(DropItem item) async {
+    final bytes = await readDroppedFileBytes(item);
+    final name = item.name;
+    var mimeType = LocalAttachment.mimeTypeFromName(name);
+    if (mimeType == 'application/octet-stream') {
+      mimeType = item.mimeType ?? mimeType;
+    }
+    int? width, height;
+    if (ChatOutgoingFile.pictureTypes.contains(mimeType)) {
+      // Teams draws a picture at the size its <img> gives; the header is
+      // enough, nothing is decoded.
+      try {
+        final buffer = await ui.ImmutableBuffer.fromUint8List(bytes);
+        final descriptor = await ui.ImageDescriptor.encoded(buffer);
+        width = descriptor.width;
+        height = descriptor.height;
+        descriptor.dispose();
+        buffer.dispose();
+      } catch (_) {}
+    }
+    return ChatOutgoingFile(
+      bytes: bytes,
+      mimeType: mimeType,
+      name: name,
+      width: width,
+      height: height,
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.colors;
+    final cubit = context.read<ChatConversationCubit>();
+    final title = context.select<ChatConversationCubit, String?>(
+        (cubit) => cubit.state.conversation?.title);
+    final canDrop = cubit.canSendImage;
+    final where = widget.inThread
+        ? 'the thread'
+        : title == null || title.isEmpty
+            ? 'this conversation'
+            : title;
+    // A dialog or page over the conversation must not take the drop: a
+    // DropTarget hears every drag over its rectangle, covered or not.
+    final current = ModalRoute.of(context)?.isCurrent ?? true;
+    return DropTarget(
+      enable: current,
+      onDragEntered: (_) => _setOver(canDrop),
+      onDragExited: (_) => _setOver(false),
+      onDragDone: canDrop ? _drop : (_) => _setOver(false),
+      child: Stack(
+        children: [
+          Positioned.fill(child: widget.child),
+          if (_over)
+            Positioned.fill(
+              child: IgnorePointer(
+                child: Container(
+                  margin: const EdgeInsets.all(6),
+                  decoration: BoxDecoration(
+                    color: c.surfaceBase.withAlpha(225),
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(color: AppColors.accent, width: 2),
+                  ),
+                  alignment: Alignment.center,
+                  padding: const EdgeInsets.all(16),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Icon(Icons.upload_file_rounded,
+                          size: 32, color: AppColors.accent),
+                      const SizedBox(height: 8),
+                      Text(
+                        'Drop to send to $where',
+                        textAlign: TextAlign.center,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                            fontSize: 14,
+                            fontWeight: FontWeight.w600,
+                            color: c.textPrimary),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        cubit.canSendAnyFile
+                            ? 'Sent as soon as you let go'
+                            : 'Pictures only here · sent as soon as you let go',
+                        textAlign: TextAlign.center,
+                        style:
+                            TextStyle(fontSize: 12, color: c.textSecondary),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
 /// The pasted picture above the box, with × to drop it.
 class _PendingImage extends StatelessWidget {
   const _PendingImage({required this.image, required this.onRemove});
 
-  final ChatOutgoingImage image;
+  final ChatOutgoingFile image;
   final VoidCallback onRemove;
 
   @override

@@ -593,11 +593,11 @@ class SlackChatDatasource implements ChatRemoteDatasource {
     ChatConversation conversation,
     String text, {
     ChatMessage? replyTo,
-    ChatOutgoingFile? image,
+    ChatOutgoingFile? file,
     List<ChatMember> mentions = const [],
   }) async {
     final sent = outgoingText(text, mentions);
-    if (image != null) return _sendImage(conversation, sent, replyTo, image);
+    if (file != null) return _sendFile(conversation, sent, replyTo, file);
     final data = await _call(
       'chat.postMessage',
       {
@@ -621,25 +621,29 @@ class SlackChatDatasource implements ChatRemoteDatasource {
   @override
   bool canSendImage(ChatConversation conversation) => true;
 
+  /// The same external upload takes any file.
+  @override
+  bool canSendAnyFile(ChatConversation conversation) => true;
+
   /// Slack's external upload: ask for an upload URL, send the bytes there,
   /// then complete it into the conversation with [text] as its comment.
   /// Slack posts the message itself, after the call returns, and names no
   /// `ts` for it, so it is looked for in the newest messages — a few tries,
   /// while Slack processes the file.
   /// [text] is already [outgoingText].
-  Future<ChatMessage> _sendImage(
+  Future<ChatMessage> _sendFile(
     ChatConversation conversation,
     String text,
     ChatMessage? replyTo,
-    ChatOutgoingFile image,
+    ChatOutgoingFile file,
   ) async {
     const reconnect = ServerException(
         message: 'Connect this Slack workspace again in Settings to send '
-            'pictures.');
+            'pictures and files.');
     final scopes = (await _workspaces.byTeam(teamId))?.scopes;
     if (scopes == null || !scopes.contains('files:write')) throw reconnect;
     try {
-      return await _upload(conversation, text, replyTo, image);
+      return await _upload(conversation, text, replyTo, file);
     } on SlackApiException {
       // `missing_scope`, the only answer `_call` hands back for these two:
       // granted as far as NightMail knew, refused by Slack.
@@ -651,27 +655,27 @@ class SlackChatDatasource implements ChatRemoteDatasource {
     ChatConversation conversation,
     String text,
     ChatMessage? replyTo,
-    ChatOutgoingFile image,
+    ChatOutgoingFile outgoing,
   ) async {
     final thread = replyTo == null ? null : replyTo.replyToId ?? replyTo.id;
     final ticket = await _call(
       'files.getUploadURLExternal',
-      {'filename': image.name, 'length': '${image.bytes.length}'},
+      {'filename': outgoing.name, 'length': '${outgoing.bytes.length}'},
       post: true,
     );
     final uploadUrl = ticket['upload_url'] as String?;
     final fileId = ticket['file_id'] as String?;
     if (uploadUrl == null || fileId == null) {
-      throw const ServerException(message: 'Slack did not accept the picture.');
+      throw const ServerException(message: 'Slack did not accept the file.');
     }
     try {
       // Slack's own upload host; the URL is the credential, not the token.
       await _dio.post<void>(
         uploadUrl,
-        data: image.bytes,
+        data: outgoing.bytes,
         options: Options(headers: {
-          Headers.contentTypeHeader: image.mimeType,
-          Headers.contentLengthHeader: image.bytes.length,
+          Headers.contentTypeHeader: outgoing.mimeType,
+          Headers.contentLengthHeader: outgoing.bytes.length,
         }),
       );
     } on DioException catch (e) {
@@ -686,7 +690,7 @@ class SlackChatDatasource implements ChatRemoteDatasource {
       'files.completeUploadExternal',
       {
         'files': jsonEncode([
-          {'id': fileId, 'title': image.name},
+          {'id': fileId, 'title': outgoing.name},
         ]),
         'channel_id': conversation.id,
         if (text.isNotEmpty) 'initial_comment': text,
@@ -694,7 +698,12 @@ class SlackChatDatasource implements ChatRemoteDatasource {
       },
       post: true,
     );
-    final file = _list(done['files']).firstOrNull ?? {'id': fileId};
+    // Named, so a stand-in for a file that is not a picture shows its name.
+    final file = {
+      'id': fileId,
+      'name': outgoing.name,
+      ...?_list(done['files']).firstOrNull,
+    };
     for (final wait in uploadWaits) {
       await Future<void>.delayed(wait);
       final found = await _uploaded(conversation, thread, fileId);

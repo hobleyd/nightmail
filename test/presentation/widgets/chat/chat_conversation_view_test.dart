@@ -716,6 +716,80 @@ void main() {
     }, variant: desktops);
   });
 
+  group('dropping files', () {
+    ChatOutgoingFile file(String name, String mimeType) => ChatOutgoingFile(
+        bytes: Uint8List.fromList([1, 2, 3]), mimeType: mimeType, name: name);
+    final pdf = file('notes.pdf', 'application/pdf');
+    final png = file('shot.png', 'image/png');
+    const g = ChatConversation(id: 'c', kind: ChatKind.group, title: 'G');
+
+    Future<(_Repo, ChatConversationCubit)> open({bool threads = false}) async {
+      final repo = _Repo([msg('1', 'Ann Lee', 'u-ann', 1)], ownId: 'u-me')
+        ..threadsChats = threads;
+      final cubit = ChatConversationCubit(repository: repo);
+      await cubit.open('a', g);
+      return (repo, cubit);
+    }
+
+    test('each goes at once as a message of its own, one after another, '
+        'even behind a send on the wire', () async {
+      final (repo, cubit) = await open();
+      repo.sendGate = Completer();
+      final typed = cubit.send('first');
+      final dropped = cubit.sendFiles([pdf, png], target: cubit.dropTarget());
+      await Future<void>.delayed(Duration.zero);
+      repo.sendGate!.complete();
+      await typed;
+      await dropped;
+      expect(repo.sent, [('first', null), ('', null), ('', null)]);
+      expect(repo.images.map((f) => f?.name), [null, 'notes.pdf', 'shot.png']);
+      expect(cubit.state.error, isNull);
+      await cubit.close();
+    });
+
+    test('nothing goes once the conversation it was dropped on is left',
+        () async {
+      final (repo, cubit) = await open();
+      final target = cubit.dropTarget();
+      await cubit.open('a', const ChatConversation(
+          id: 'other', kind: ChatKind.group, title: 'H'));
+      await cubit.sendFiles([pdf], target: target);
+      expect(repo.sent, isEmpty);
+      expect(cubit.state.error, contains('notes.pdf was not sent'));
+      await cubit.close();
+    });
+
+    test('dropped on the thread, they answer in it; on the list, never',
+        () async {
+      final (repo, cubit) = await open(threads: true);
+      await cubit.openThread('1');
+      await cubit.sendFiles([pdf], target: cubit.dropTarget(inThread: true));
+      await cubit.sendFiles([png], target: cubit.dropTarget());
+      expect(repo.sent, [('', '1'), ('', null)]);
+      await cubit.close();
+    });
+
+    test('where only pictures can be sent, a picture goes and another file '
+        'is refused by name', () async {
+      final (repo, cubit) = await open();
+      repo.filesAllowed = false;
+      await cubit.sendFiles([png, pdf], target: cubit.dropTarget());
+      expect(repo.images.map((f) => f?.name), ['shot.png']);
+      expect(cubit.state.error, contains('notes.pdf was not sent'));
+      await cubit.close();
+    });
+
+    test('items that could not be read are named after the rest went',
+        () async {
+      final (repo, cubit) = await open();
+      await cubit.sendFiles([png],
+          target: cubit.dropTarget(), refused: 'Not sent: Photos is a folder.');
+      expect(repo.images.single?.name, 'shot.png');
+      expect(cubit.state.error, 'Not sent: Photos is a folder.');
+      await cubit.close();
+    });
+  });
+
   group('@ typeahead', () {
     const bob = ChatMember(
         displayName: 'Bob Brown', userId: 'u-bob', email: 'bob@x.com');
@@ -1047,12 +1121,12 @@ class _Repo extends Fake implements ChatRepository {
     ChatConversation conversation,
     String text, {
     ChatMessage? replyTo,
-    ChatOutgoingImage? image,
+    ChatOutgoingFile? file,
     List<ChatMember> mentions = const [],
   }) async {
     await sendGate?.future;
     sent.add((text, replyTo?.id));
-    images.add(image);
+    images.add(file);
     sentMentions.add(mentions);
     return Right(ChatMessage(
       id: 'new-${sent.length}',
@@ -1063,7 +1137,7 @@ class _Repo extends Fake implements ChatRepository {
     ));
   }
 
-  final images = <ChatOutgoingImage?>[];
+  final images = <ChatOutgoingFile?>[];
   final sentMentions = <List<ChatMember>>[];
   List<ChatMember> roster = const [];
 
@@ -1076,6 +1150,12 @@ class _Repo extends Fake implements ChatRepository {
   @override
   bool canSendImage(String accountId, ChatConversation conversation) =>
       imagesAllowed;
+
+  bool filesAllowed = true;
+
+  @override
+  bool canSendAnyFile(String accountId, ChatConversation conversation) =>
+      filesAllowed;
 
   @override
   bool canEdit(String accountId, ChatConversation conversation) => true;

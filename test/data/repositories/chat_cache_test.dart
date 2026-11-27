@@ -59,7 +59,7 @@ void main() {
     final bytes = Uint8List.fromList([1, 2, 3]);
     const chat = ChatConversation(id: 'c', kind: ChatKind.group, title: 'G');
     await repo.sendMessage('acct', chat, 'look',
-        image: ChatOutgoingImage(
+        file: ChatOutgoingFile(
             bytes: bytes, mimeType: 'image/png', name: 'a.png'));
     expect(await repo.image('acct', 'https://x/a?b=1&c=2'), bytes);
     expect(ds.imagesFetched, isEmpty);
@@ -311,7 +311,7 @@ class _Chats extends Fake implements ChatRemoteDatasource {
     ChatConversation conversation,
     String text, {
     ChatMessage? replyTo,
-    ChatOutgoingImage? image,
+    ChatOutgoingFile? file,
     List<ChatMember> mentions = const [],
   }) async =>
       ChatMessage(

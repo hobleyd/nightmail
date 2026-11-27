@@ -595,13 +595,15 @@ class ChatRepositoryImpl implements ChatRepository {
     ChatConversation conversation,
     String text, {
     ChatMessage? replyTo,
-    ChatOutgoingImage? image,
+    ChatOutgoingFile? file,
     List<ChatMember> mentions = const [],
   }) =>
       _guard(accountId, (ds) async {
         final sent = await ds.send(conversation, text,
-            replyTo: replyTo, image: image, mentions: mentions);
-        if (image != null) _seedImage(accountId, sent, image.bytes);
+            replyTo: replyTo, file: file, mentions: mentions);
+        if (file != null && file.isPicture) {
+          _seedImage(accountId, sent, file.bytes);
+        }
         _touch(accountId, conversation, sent);
         return sent;
       });
@@ -616,6 +618,10 @@ class ChatRepositoryImpl implements ChatRepository {
   @override
   bool canSendImage(String accountId, ChatConversation conversation) =>
       _ds(accountId)?.canSendImage(conversation) ?? false;
+
+  @override
+  bool canSendAnyFile(String accountId, ChatConversation conversation) =>
+      _ds(accountId)?.canSendAnyFile(conversation) ?? false;
 
   /// The picture just sent, under the `src` its echo shows it by. Google and
   /// Slack process an upload after answering, so fetching it at once can

@@ -75,7 +75,7 @@ abstract interface class ChatRemoteDatasource {
   );
 
   /// Sends [text], as a reply in [replyTo]'s thread when given, with
-  /// [image] under it when given ([text] may then be empty). Each of
+  /// [file] under it when given ([text] may then be empty). Each of
   /// [mentions] still written in [text] as `@displayName` goes as the
   /// provider's tag for that person (`splitMentions`); with none found the
   /// message is sent exactly as before.
@@ -83,7 +83,7 @@ abstract interface class ChatRemoteDatasource {
     ChatConversation conversation,
     String text, {
     ChatMessage? replyTo,
-    ChatOutgoingImage? image,
+    ChatOutgoingFile? file,
     List<ChatMember> mentions = const [],
   });
 
@@ -97,6 +97,11 @@ abstract interface class ChatRemoteDatasource {
   /// Whether [send] takes an image in [conversation]: not on a NightMail
   /// Server, whose chat API has no hosted contents.
   bool canSendImage(ChatConversation conversation);
+
+  /// Whether [send] takes a file that is not a picture
+  /// ([ChatOutgoingFile.isPicture]) in [conversation]: Slack and Google
+  /// upload anything; Teams' hosted contents are pictures only.
+  bool canSendAnyFile(ChatConversation conversation);
 
   /// Whether the user's own messages in [conversation] can be edited with the
   /// access this datasource holds — false for a Microsoft 365 channel, whose

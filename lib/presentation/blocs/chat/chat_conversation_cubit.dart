@@ -27,6 +27,13 @@ class ChatPerson extends Equatable {
   List<Object?> get props => [email, name];
 }
 
+/// Where dropped files go — see [ChatConversationCubit.dropTarget].
+typedef ChatDropTarget = ({
+  String? accountId,
+  String? conversationId,
+  String? threadPostId,
+});
+
 class ChatConversationState extends Equatable {
   const ChatConversationState({
     this.accountId,
@@ -642,6 +649,85 @@ class ChatConversationCubit extends Cubit<ChatConversationState> {
         _repo.canSendImage(accountId, conversation);
   }
 
+  /// Whether a dropped file that is not a picture can be sent in the open
+  /// conversation (Slack and Google Chat; not Teams).
+  bool get canSendAnyFile {
+    final accountId = state.accountId;
+    final conversation = state.conversation;
+    return accountId != null &&
+        conversation != null &&
+        _repo.canSendAnyFile(accountId, conversation);
+  }
+
+  /// Whether [file] can be sent in the open conversation.
+  bool canSendFile(ChatOutgoingFile file) =>
+      file.isPicture ? canSendImage : canSendAnyFile;
+
+  /// Where files dropped now would go: the open conversation, and the open
+  /// thread when they were dropped on it. Taken when the drop lands, before
+  /// the files are read, so [sendFiles] can tell the user moved on.
+  ChatDropTarget dropTarget({bool inThread = false}) => (
+        accountId: state.accountId,
+        conversationId: state.conversation?.id,
+        threadPostId: inThread && threads ? state.threadPostId : null,
+      );
+
+  /// Dropped files waiting behind the ones being sent.
+  Future<void> _drops = Future.value();
+
+  /// Sends files dropped on the conversation, at once — no staging under the
+  /// box, as Slack does only with Shift held — each as a message of its own,
+  /// one after another, to [target] ([dropTarget], in the thread when it
+  /// names one). The box's text and any pasted picture stay where they are.
+  /// Stops with an error, sending nothing more, once the conversation or
+  /// thread is no longer [target]; [refused] is why some dropped items were
+  /// not read (a folder, too large), shown when nothing else goes wrong.
+  Future<void> sendFiles(
+    List<ChatOutgoingFile> files, {
+    required ChatDropTarget target,
+    String? refused,
+  }) =>
+      _drops = _drops.then((_) => _sendDropped(files, target, refused));
+
+  Future<void> _sendDropped(
+    List<ChatOutgoingFile> files,
+    ChatDropTarget target,
+    String? refused,
+  ) async {
+    void fail(String message) {
+      if (!isClosed) emit(state.copyWith(error: () => message));
+    }
+
+    bool moved() =>
+        isClosed ||
+        dropTarget(inThread: target.threadPostId != null) != target;
+
+    for (final file in files) {
+      // One send at a time: a message being sent would turn this one away.
+      if (!isClosed && state.sending) {
+        await stream.firstWhere((s) => !s.sending, orElse: () => state);
+      }
+      if (moved()) {
+        if (!isClosed) {
+          fail('${file.name} was not sent: the conversation changed '
+              'before it went.');
+        }
+        return;
+      }
+      if (!canSendFile(file)) {
+        fail(file.isPicture
+            ? 'Pictures cannot be sent in this conversation.'
+            : '${file.name} was not sent: only pictures can be sent in '
+                'this conversation.');
+        return;
+      }
+      final sent = await send('',
+          inThread: target.threadPostId != null, file: file);
+      if (!sent) return;
+    }
+    if (refused != null) fail(refused);
+  }
+
   /// Renames the open conversation to [title]. Null when it was renamed
   /// ([ChatConversationState.conversation] then carries the new title),
   /// otherwise why not, for the rename dialog to show.
@@ -836,8 +922,8 @@ class ChatConversationCubit extends Cubit<ChatConversationState> {
   /// [inThread] (the thread's composer) — or starts the one-on-one with
   /// [ChatConversationState.person]. Never touches an edit in progress: the
   /// composer that holds it calls [saveEdit] instead. The list's composer
-  /// never answers in a thread, even with one open beside it. [image] goes
-  /// with the text, which may then be empty; only where [canSendImage].
+  /// never answers in a thread, even with one open beside it. [file] goes
+  /// with the text, which may then be empty; only where [canSendFile].
   /// [mentions] are the people picked from the `@` typeahead
   /// ([mentionable]); any still written as `@Name` are tagged.
   /// True when the server took it — even if the user has since opened
@@ -845,19 +931,21 @@ class ChatConversationCubit extends Cubit<ChatConversationState> {
   Future<bool> send(
     String text, {
     bool inThread = false,
-    ChatOutgoingImage? image,
+    ChatOutgoingFile? file,
     List<ChatMember> mentions = const [],
   }) async {
     final trimmed = text.trim();
     final accountId = state.accountId;
-    if ((trimmed.isEmpty && image == null) ||
+    if ((trimmed.isEmpty && file == null) ||
         accountId == null ||
         state.sending) {
       return false;
     }
-    if (image != null && !canSendImage) {
+    if (file != null && !canSendFile(file)) {
       emit(state.copyWith(
-          error: () => 'Pictures cannot be sent in this conversation.'));
+          error: () => file.isPicture
+              ? 'Pictures cannot be sent in this conversation.'
+              : 'Files cannot be sent in this conversation.'));
       return false;
     }
     final gen = _generation;
@@ -896,7 +984,7 @@ class ChatConversationCubit extends Cubit<ChatConversationState> {
     final threadPost = inThread && threads ? state.threadPost : null;
     final threadId = threadPost?.id;
     final sent = await _repo.sendMessage(accountId, conversation, trimmed,
-        replyTo: threadPost, image: image, mentions: mentions);
+        replyTo: threadPost, file: file, mentions: mentions);
     if (gen != _generation || isClosed) return sent.isRight();
     return sent.match(
       (f) {

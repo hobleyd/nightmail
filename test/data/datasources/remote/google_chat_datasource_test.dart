@@ -486,7 +486,7 @@ void main() {
   group('sending a picture', () {
     const space =
         ChatConversation(id: 'spaces/D', kind: ChatKind.oneOnOne, title: 'Ann');
-    final image = ChatOutgoingImage(
+    final image = ChatOutgoingFile(
       bytes: Uint8List.fromList([1, 2, 3]),
       mimeType: 'image/png',
       name: 'image.png',
@@ -529,7 +529,7 @@ void main() {
           ],
         };
       };
-      final sent = await datasource().send(space, 'look', image: image);
+      final sent = await datasource().send(space, 'look', file: image);
       expect(sent.bodyHtml, contains('gchat-media:'));
     });
 
@@ -541,7 +541,25 @@ void main() {
         expect((o.data as Map).containsKey('text'), isFalse);
         return {'name': 'spaces/D/messages/M1'};
       };
-      await datasource().send(space, '', image: image);
+      await datasource().send(space, '', file: image);
+    });
+
+    test('any file is uploaded the same way, with its own type', () async {
+      routes['spaces/D/attachments:upload'] = (o) {
+        final text = latin1.decode(o.data as Uint8List);
+        expect(text, contains('{"filename":"notes.pdf"}'));
+        expect(text, contains('Content-Type: application/pdf\r\n\r\n'));
+        return {
+          'attachmentDataRef': {'resourceName': 'R2'},
+        };
+      };
+      routes['spaces/D/messages'] = (_) => {'name': 'spaces/D/messages/M2'};
+      expect(datasource().canSendAnyFile(space), isTrue);
+      await datasource().send(space, '',
+          file: ChatOutgoingFile(
+              bytes: Uint8List.fromList([1, 2, 3]),
+              mimeType: 'application/pdf',
+              name: 'notes.pdf'));
     });
   });
 

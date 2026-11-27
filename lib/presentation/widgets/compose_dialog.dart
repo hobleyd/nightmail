@@ -12,6 +12,7 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 
 import '../../injection_container.dart';
 import '../../core/error/failures.dart';
+import '../../core/platform/dropped_file.dart';
 import '../../core/platform/touch_metrics.dart';
 import '../../core/settings/app_settings.dart';
 import '../../core/signature/signature_merge_engine.dart';
@@ -1500,7 +1501,7 @@ class ComposeFormState extends State<ComposeForm> with WidgetsBindingObserver {
           (name, bytes) = await _readDroppedDirectory(f.path, f.name);
         } else {
           name = f.name;
-          bytes = await _readDroppedFileBytes(f.path);
+          bytes = await readDroppedFileBytes(f);
         }
         return LocalAttachment(
           path: f.path,
@@ -1648,27 +1649,6 @@ class ComposeFormState extends State<ComposeForm> with WidgetsBindingObserver {
     }
 
     throw Exception('Could not read directory: $path');
-  }
-
-  Future<Uint8List> _readDroppedFileBytes(String path) async {
-    try {
-      return await File(path).readAsBytes();
-    } catch (_) {}
-
-    if (!Platform.isWindows) return File(path).readAsBytes();
-
-    final winPath = r'\\?\' + path.replaceAll('/', r'\');
-    final extEscaped = winPath.replaceAll("'", "''");
-    final psResult = await Process.run('powershell', [
-      '-NoProfile', '-NonInteractive', '-Command',
-      "[Convert]::ToBase64String([IO.File]::ReadAllBytes('$extEscaped'))",
-    ]);
-    if (psResult.exitCode == 0) {
-      final out = (psResult.stdout as String).trim();
-      if (out.isNotEmpty) return base64Decode(out);
-    }
-
-    return File(path).readAsBytes();
   }
 
   String get _baseTitle => switch (widget.mode) {

@@ -52,6 +52,9 @@ class DeleteSupersededMeetingInvites
   /// How many plausible candidates are read before giving up on the rest.
   static const int maxCandidates = 20;
 
+  /// How many of the folder's newest threads are searched for candidates.
+  static const int candidateWindowThreads = 500;
+
   @override
   Future<Either<Failure, List<Email>>> call(
     DeleteSupersededMeetingInvitesParams params,
@@ -62,10 +65,15 @@ class DeleteSupersededMeetingInvites
       return const Right([]);
     }
 
-    final cached = await _repository.getCachedEmails(
+    // The newest stretch of the folder, not all of it: an earlier invitation
+    // to the same meeting is recent mail, and the folder's cache can hold its
+    // whole history (the offline backfill), every row of it decrypted here.
+    final cached = (await _repository.getCachedWindow(
       accountId: params.accountId,
       folderId: folderId,
-    );
+      limitThreads: candidateWindowThreads,
+    ))
+        .map((window) => window.emails);
     final rows = cached.getOrElse((_) => const []);
     final failure = cached.getLeft().toNullable();
     if (failure != null) return Left(failure);

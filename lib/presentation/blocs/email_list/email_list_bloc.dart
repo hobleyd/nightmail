@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
@@ -7,7 +8,7 @@ import 'package:fpdart/fpdart.dart';
 import '../../../core/error/failures.dart';
 import '../../../core/utils/stale_data_retry.dart';
 import '../../../domain/entities/email.dart';
-import '../../../domain/usecases/cache_emails.dart';
+import '../../../domain/entities/folder_listing.dart';
 import '../../../domain/usecases/classify_emails.dart';
 import '../../../domain/usecases/delete_email.dart';
 import '../../../domain/usecases/forget_cached_emails.dart';
@@ -22,6 +23,7 @@ import '../../../infrastructure/accounts/account.dart';
 import '../../../domain/usecases/empty_folder.dart';
 import '../../../domain/usecases/get_cached_emails.dart';
 import '../../../domain/usecases/get_emails.dart';
+import '../../../domain/usecases/get_folder_coverage.dart';
 import '../../../domain/usecases/mark_email_as_read.dart';
 import '../../../domain/usecases/move_email.dart';
 import '../../../domain/usecases/remove_conversation_from_folder.dart';
@@ -41,7 +43,7 @@ class EmailListBloc extends Bloc<EmailListEvent, EmailListState> {
   EmailListBloc({
     required this._getEmails,
     required this._getCachedEmails,
-    required this._cacheEmails,
+    required this._getFolderCoverage,
     required this._forgetCachedEmails,
     required this._markEmailAsRead,
     required this._moveEmail,
@@ -95,7 +97,7 @@ class EmailListBloc extends Bloc<EmailListEvent, EmailListState> {
   final GetEmails _getEmails;
   final BodyPrefetchService _bodyPrefetch;
   final GetCachedEmails _getCachedEmails;
-  final CacheEmails _cacheEmails;
+  final GetFolderCoverage _getFolderCoverage;
   final ForgetCachedEmails _forgetCachedEmails;
   final MarkEmailAsRead _markEmailAsRead;
   final MoveEmail _moveEmail;
@@ -131,10 +133,129 @@ class EmailListBloc extends Bloc<EmailListEvent, EmailListState> {
   /// [EmailListActionFailure.sequence].
   int _actionFailureSequence = 0;
 
-  /// Tracks the server-side skip offset for the current folder independently
-  /// of the in-memory email count, which may be inflated by cross-folder
-  /// conversation expansion on Graph accounts.
+  /// The server-side skip offset for a folder whose cache vouches for nothing
+  /// (no active account, or the write that would have said failed) — the
+  /// paging every folder used before the cache kept more than a page. Tracked
+  /// apart from the in-memory email count, which cross-folder conversation
+  /// expansion inflates.
   int _serverOffset = 0;
+
+  /// Threads read from the cache per window: what a folder open paints and
+  /// what each Load More adds while the cache still has more.
+  static const _cacheWindowThreads = 100;
+
+  /// How much of the folder on screen the cache vouches for, as of the last
+  /// read — see [FolderCoverage]. The list only ever continues into cached
+  /// rows inside it, and the network listing continues from its edge.
+  FolderCoverage _coverage = const FolderCoverage();
+
+  /// The last cached thread on screen, where the next cache window starts.
+  CacheCursor? _cacheAfter;
+
+  /// Whether the cache has nothing more inside the coverage than what is on
+  /// screen, so Load More goes to the network (or stops, at a complete one).
+  bool _cacheExhausted = false;
+
+  /// The network continuation below the coverage: a cutoff fixed for the
+  /// whole scroll (see `EmailRemoteDatasource.getEmails` on why it must not
+  /// move), how far into that listing it has paged, and the top of the
+  /// stretch the next page answers for.
+  DateTime? _netBefore;
+  int _netOffset = 0;
+  DateTime? _netWindowEnd;
+
+  bool get _hasCoverage => _coverage.complete || _coverage.coveredFrom != null;
+
+  /// The oldest thread a cache read may return: the coverage's edge, or
+  /// nothing at all once the cache holds the whole folder.
+  DateTime? get _coverageFrom =>
+      _coverage.complete ? null : _coverage.coveredFrom;
+
+  /// Whether anything lies beyond the rows on screen.
+  bool get _hasMoreBeyondCache => !(_coverage.complete && _cacheExhausted);
+
+  void _resetPaging() {
+    _cacheAfter = null;
+    _cacheExhausted = false;
+    _netBefore = null;
+    _netOffset = 0;
+    _netWindowEnd = null;
+  }
+
+  Future<void> _loadCoverage(String accountId, String folderKey) async {
+    final result = await _getFolderCoverage(
+        GetFolderCoverageParams(accountId: accountId, folderId: folderKey));
+    _coverage = result.getOrElse((_) => const FolderCoverage());
+  }
+
+  /// The top of the folder's cache, at least [threads] threads, inside the
+  /// coverage; null when the read failed or, with [requireCoverage], when the
+  /// cache vouches for nothing beyond the page just listed. Resets the paging
+  /// to continue below what it returns.
+  Future<List<Email>?> _readCacheTop(
+    String accountId,
+    String folderKey, {
+    int threads = _cacheWindowThreads,
+    bool requireCoverage = true,
+  }) async {
+    if (requireCoverage && !_hasCoverage) return null;
+    final result = await _getCachedEmails(GetCachedEmailsParams(
+      accountId: accountId,
+      folderId: folderKey,
+      from: _coverageFrom,
+      limitThreads: threads,
+    ));
+    return result.fold((_) => null, (rows) {
+      _resetPaging();
+      _cacheAfter = lastThreadOf(rows);
+      _cacheExhausted = threadKeys(rows).length < threads;
+      return rows;
+    });
+  }
+
+  /// What the folder shows once a fresh first page has landed: the page and
+  /// the cached rows the coverage vouches for below it, read back from the
+  /// cache the repository has just written the page into — so the list is
+  /// the cache and a repaint from it can never disagree with what the load
+  /// showed. At least [shownThreads] threads, so a folder the user had
+  /// scrolled does not shrink back to a page on every refresh.
+  ///
+  /// The page alone when the cache has nothing to add: no account, an empty
+  /// page (nothing was written, and the stale rows are not the folder), or a
+  /// write that failed. A page row the read did not return is kept anyway.
+  Future<({List<Email> emails, bool hasMore})> _folderAfterFreshPage(
+    String? accountId,
+    String? folderId,
+    List<Email> fresh, {
+    int shownThreads = 0,
+  }) async {
+    _resetPaging();
+    _serverOffset = _pageSize;
+    if (accountId == null || fresh.isEmpty) {
+      _coverage = const FolderCoverage();
+      return (emails: fresh, hasMore: fresh.length >= _pageSize);
+    }
+    final key = folderId ?? _defaultFolderKey;
+    await _loadCoverage(accountId, key);
+    final rows = await _readCacheTop(accountId, key,
+        threads: max(_cacheWindowThreads, shownThreads));
+    if (rows == null || rows.isEmpty) {
+      return (emails: fresh, hasMore: fresh.length >= _pageSize);
+    }
+    final cachedIds = {for (final e in rows) e.id};
+    final missing = [
+      for (final e in fresh)
+        if (!cachedIds.contains(e.id)) e,
+    ];
+    return (
+      emails: missing.isEmpty ? rows : [...rows, ...missing],
+      hasMore: _hasMoreBeyondCache,
+    );
+  }
+
+  /// How many threads [emails] holds — what a re-read has to cover so the
+  /// list does not shrink under the user.
+  static int _threadCount(List<Email> emails) => threadKeys(emails).length;
 
   /// Bumped only by [_onLoadRequested] (a folder switch). Other handlers that
   /// emit after an await (refresh, load-more) capture it at the start and
@@ -212,30 +333,33 @@ class EmailListBloc extends Bloc<EmailListEvent, EmailListState> {
         state is EmailListLoaded ? (state as EmailListLoaded).emptyingFolderIds : const <String>{};
 
     // Phase 1: serve cache immediately so the UI has content with no spinner
+    //
+    // A window of it, not the whole folder: the cache can hold every message
+    // the folder has (the listing replaces a window at a time and the offline
+    // backfill fills the rest), and each row read is decrypted here on the UI
+    // isolate. Inside the coverage when there is one; a folder no listing has
+    // vouched for yet shows the newest of whatever it holds, as it always did.
+    _coverage = const FolderCoverage();
+    _resetPaging();
     if (accountId != null) {
-      final cacheResult = await _getCachedEmails(GetCachedEmailsParams(
-        accountId: accountId,
-        folderId: folderKey,
-      ));
+      await _loadCoverage(accountId, folderKey);
       if (myGeneration != _activeRequestGeneration) return;
-      cacheResult.fold(
-        (_) => emit(const EmailListLoading()),
-        (cached) {
-          if (cached.isEmpty) {
-            emit(const EmailListLoading());
-          } else {
-            cachedEmails = cached;
-            emit(EmailListLoaded(
-              emails: cached,
-              hasMore: true,
-              isLoadingFresh: true,
-              currentFolderId: event.folderId,
-              currentFolderName: event.folderDisplayName,
-              emptyingFolderIds: priorEmptyingIds,
-            ));
-          }
-        },
-      );
+      final cached =
+          await _readCacheTop(accountId, folderKey, requireCoverage: false);
+      if (myGeneration != _activeRequestGeneration) return;
+      if (cached == null || cached.isEmpty) {
+        emit(const EmailListLoading());
+      } else {
+        cachedEmails = cached;
+        emit(EmailListLoaded(
+          emails: cached,
+          hasMore: true,
+          isLoadingFresh: true,
+          currentFolderId: event.folderId,
+          currentFolderName: event.folderDisplayName,
+          emptyingFolderIds: priorEmptyingIds,
+        ));
+      }
     } else {
       emit(const EmailListLoading());
     }
@@ -256,6 +380,16 @@ class EmailListBloc extends Bloc<EmailListEvent, EmailListState> {
       ));
       if (isClosed || myGeneration != _activeRequestGeneration) return;
 
+      // The page is in the cache by now (the repository awaits a top page's
+      // write), so the folder is read back from it — see
+      // [_folderAfterFreshPage].
+      final view = await result.fold(
+        (_) async => null,
+        (fresh) => _folderAfterFreshPage(accountId, event.folderId, fresh,
+            shownThreads: _threadCount(cachedEmails)),
+      );
+      if (isClosed || myGeneration != _activeRequestGeneration) return;
+
       result.fold(
         (failure) {
           debugPrint('[EmailList] fetch failed on attempt ${attempt + 1} for '
@@ -274,22 +408,11 @@ class EmailListBloc extends Bloc<EmailListEvent, EmailListState> {
           if (attempt > 0) {
             debugPrint('[EmailList] fetch recovered on attempt ${attempt + 1}');
           }
-          _serverOffset = _pageSize;
           loaded = freshEmails;
-          // Merge: the fresh first page, then whatever the cache holds beyond
-          // it — not every cached row the page happens not to list.
-          final merged = [
-            ...freshEmails,
-            ..._cachedRowsBeyondPage(
-              freshEmails,
-              cachedEmails,
-              event.folderId,
-            ),
-          ];
           final s = state;
           emit(EmailListLoaded(
-            emails: merged,
-            hasMore: freshEmails.length >= _pageSize,
+            emails: view!.emails,
+            hasMore: view.hasMore,
             isLoadingFresh: false,
             currentFolderId: event.folderId,
             currentFolderName: event.folderDisplayName,
@@ -319,41 +442,9 @@ class EmailListBloc extends Bloc<EmailListEvent, EmailListState> {
     }
   }
 
-  /// The cached rows a fresh first page says nothing about: the ones the
-  /// folder holds *beyond* the page, which the load keeps on screen so a folder
-  /// the user has scrolled does not shrink back to a page on every open.
-  ///
-  /// A row the page would have listed but did not is a different thing — it
-  /// has left the folder, deleted or moved here or on another client. The
-  /// repository's cache write has already dropped it, so keeping it on screen
-  /// until the next repaint showed a message that no longer existed; on a
-  /// folder the user had just deleted from, that read as the delete undoing
-  /// itself.
-  ///
-  /// The page's own rows bound it: the expansion adds a thread's copies from
-  /// other folders, and those can be older than anything the folder holds —
-  /// bounded by one of those, the folder's whole second page would count as
-  /// "on the page and missing" and go with it. A page that is not full is the
-  /// whole folder, and nothing lies beyond it.
-  List<Email> _cachedRowsBeyondPage(
-    List<Email> fresh,
-    List<Email> cached,
-    String? folderId,
-  ) {
-    if (fresh.length < _pageSize) return const [];
-    final freshIds = fresh.map((e) => e.id).toSet();
-    final own = fresh.where((e) => e.isInFolder(folderId));
-    final oldestOnPage = (own.isEmpty ? fresh : own)
-        .map((e) => e.receivedDateTime)
-        .reduce((a, b) => a.isBefore(b) ? a : b);
-    return [
-      for (final email in cached)
-        if (!freshIds.contains(email.id) &&
-            email.receivedDateTime.isBefore(oldestOnPage))
-          email,
-    ];
-  }
-
+  /// The next stretch of the folder: from the cache while it has threads
+  /// inside the coverage below the ones on screen — no network, no wait —
+  /// and then from the server, continuing from the coverage's edge.
   Future<void> _onLoadMoreRequested(
     EmailListLoadMoreRequested event,
     Emitter<EmailListState> emit,
@@ -365,32 +456,108 @@ class EmailListBloc extends Bloc<EmailListEvent, EmailListState> {
     // The page after this one belongs to the account this folder came from.
     if (_folderBelongsToAnotherAccount) return;
     final myGeneration = _activeRequestGeneration;
+    final accountId = _accountManager.activeAccount?.id;
+    final folderKey = current.currentFolderId ?? _defaultFolderKey;
 
     emit(current.copyWith(isLoadingMore: true));
 
-    final result = await _getEmails(GetEmailsParams(
-      folderId: current.currentFolderId,
-      top: _pageSize,
-      skip: _serverOffset,
-    ));
+    List<Email> appended(List<Email> rows) {
+      final existingIds = current.emails.map((e) => e.id).toSet();
+      return [
+        for (final e in rows)
+          if (!existingIds.contains(e.id)) e,
+      ];
+    }
+
+    if (accountId != null && _hasCoverage && !_cacheExhausted) {
+      final result = await _getCachedEmails(GetCachedEmailsParams(
+        accountId: accountId,
+        folderId: folderKey,
+        from: _coverageFrom,
+        after: _cacheAfter,
+        limitThreads: _cacheWindowThreads,
+      ));
+      // Re-checked after every await, for the reason the network branch
+      // below gives.
+      if (myGeneration != _activeRequestGeneration) return;
+      final rows = result.getOrElse((_) => const []);
+      _cacheAfter = lastThreadOf(rows) ?? _cacheAfter;
+      if (result.isLeft() || threadKeys(rows).length < _cacheWindowThreads) {
+        _cacheExhausted = true;
+      }
+      final more = appended(rows);
+      if (more.isNotEmpty || _coverage.complete) {
+        emit(current.copyWith(
+          emails: [...current.emails, ...more],
+          hasMore: _hasMoreBeyondCache,
+          isLoadingMore: false,
+        ));
+        return;
+      }
+    }
+
+    // Below the coverage the listing continues from its edge, never from the
+    // oldest row on screen: rows under the edge can be islands (a message
+    // moved in, filed under its destination at once), and continuing from one
+    // would skip everything between it and the edge for good.
+    final continuing =
+        accountId != null && _hasCoverage && !_coverage.complete;
+    if (continuing) {
+      _netBefore ??= _coverage.coveredFrom;
+      _netWindowEnd ??= _coverage.coveredFrom;
+    }
+    final result = await _getEmails(continuing
+        ? GetEmailsParams(
+            folderId: current.currentFolderId,
+            top: _pageSize,
+            skip: _netOffset,
+            olderThan: _netBefore,
+            windowEnd: _netWindowEnd,
+          )
+        : GetEmailsParams(
+            folderId: current.currentFolderId,
+            top: _pageSize,
+            skip: _serverOffset,
+          ));
     // Re-check: the user may have switched folders (bumping the generation
     // via _onLoadRequested) while this page was in flight. `current` here is
     // still the pre-await snapshot, so emitting unconditionally would splice
     // this page onto — or replace — whatever folder is now on screen.
     if (myGeneration != _activeRequestGeneration) return;
 
+    var hasMore = false;
+    if (result.isRight()) {
+      final page = result.getOrElse((_) => const []);
+      if (continuing) {
+        _netOffset += _pageSize;
+        // The page was written over its window; if that joined onto the
+        // coverage, the coverage now ends where the page does and the next
+        // page's window starts there. A page that did not join (another
+        // listing reset the coverage meanwhile) is only added, not replaced
+        // over.
+        final before = _coverage;
+        await _loadCoverage(accountId, folderKey);
+        if (myGeneration != _activeRequestGeneration) return;
+        _netWindowEnd = _coverage != before ? _coverage.coveredFrom : null;
+        _cacheExhausted = true;
+        hasMore = page.isNotEmpty && !_coverage.complete;
+      } else {
+        _serverOffset += _pageSize;
+        hasMore = page.length >= _pageSize;
+      }
+    }
+
     List<Email>? loadedMore;
     result.fold(
       (failure) => emit(EmailListError(message: failure.message)),
       (newEmails) {
-        _serverOffset += _pageSize;
-        // Dedup: cross-folder expansion can return messages already in the list.
-        final existingIds = current.emails.map((e) => e.id).toSet();
-        final uniqueNew = newEmails.where((e) => !existingIds.contains(e.id)).toList();
+        // Dedup: cross-folder expansion can return messages already in the
+        // list, and an inclusive cutoff repeats the rows at its edge.
+        final uniqueNew = appended(newEmails);
         loadedMore = uniqueNew;
         emit(current.copyWith(
           emails: [...current.emails, ...uniqueNew],
-          hasMore: newEmails.length >= _pageSize,
+          hasMore: hasMore,
           isLoadingMore: false,
         ));
         _recordSenders(uniqueNew, current.currentFolderName);
@@ -483,34 +650,18 @@ class EmailListBloc extends Bloc<EmailListEvent, EmailListState> {
         }
       },
       (emails) async {
-        // Replace the folder's rows with the fresh page, so an email deleted or
-        // moved elsewhere stops being listed. Written explicitly here rather
-        // than relying on the repository's own cache write inside getEmails()
-        // above, which is a fire-and-forget side effect and isn't ordered
-        // against this one.
-        //
-        // `replaceFolder` rather than clear-then-write: the drop happens inside
-        // the same transaction and *after* cacheEmails' body-preservation
-        // lookups. Clearing first made those lookups find nothing, so every
-        // refresh discarded every cached body in the folder and
-        // BodyPrefetchService re-downloaded them. An empty page is a no-op, so
-        // a transient that returns nothing can no longer blank the cache an
-        // offline repaint reads from.
-        if (accountId != null) {
-          final key = folderId ?? _defaultFolderKey;
-          await _cacheEmails(CacheEmailsParams(
-            accountId: accountId,
-            folderId: key,
-            emails: emails,
-            replaceFolder: true,
-          ));
-        }
-        _serverOffset = _pageSize;
+        // The repository has replaced the page's window of the folder's cache
+        // (awaited, inside getEmails) — so a message deleted or moved
+        // elsewhere has stopped being listed — and the folder is read back
+        // from it, keeping the rows the user had scrolled to.
+        final view = await _folderAfterFreshPage(accountId, folderId, emails,
+            shownThreads: prior == null ? 0 : _threadCount(prior.emails));
+        if (myGeneration != _activeRequestGeneration) return;
         refreshed = emails;
         final s = state;
         emit(EmailListLoaded(
-          emails: emails,
-          hasMore: emails.length >= _pageSize,
+          emails: view.emails,
+          hasMore: view.hasMore,
           currentFolderId: folderId,
           currentFolderName: folderName,
           // A refresh replaces the rows, not what the user has opened. The
@@ -694,9 +845,22 @@ class EmailListBloc extends Bloc<EmailListEvent, EmailListState> {
     final accountId = _accountManager.activeAccount?.id;
     if (accountId == null) return;
 
+    final folderKey = s.currentFolderId ?? _defaultFolderKey;
+    // As far down as the list reaches now, no further: the cache can hold the
+    // whole folder, and painting all of it would decrypt every row on each
+    // poll and lose the user's place in a list that suddenly ran to the end.
+    // Never below the coverage's edge — rows there can be islands.
+    await _loadCoverage(accountId, folderKey);
+    DateTime? from = s.emails.isEmpty
+        ? null
+        : threadKeys(s.emails).values.reduce((a, b) => a.isBefore(b) ? a : b);
+    final edge = _coverageFrom;
+    if (edge != null && (from == null || from.isBefore(edge))) from = edge;
     final result = await _getCachedEmails(GetCachedEmailsParams(
       accountId: accountId,
-      folderId: s.currentFolderId ?? _defaultFolderKey,
+      folderId: folderKey,
+      from: from,
+      limitThreads: from == null ? _cacheWindowThreads : null,
     ));
     result.fold((_) {}, (cached) {
       // Re-check after the await: the user may have switched folders while
@@ -714,6 +878,9 @@ class EmailListBloc extends Bloc<EmailListEvent, EmailListState> {
       // above what was actually paged in, so the cached length is a ceiling
       // rather than a measurement.
       if (cached.length < _serverOffset) _serverOffset = cached.length;
+      // Load More's cache window goes on from the last thread now shown. It
+      // does not un-exhaust the cache: whatever lies below was there before.
+      _cacheAfter = lastThreadOf(cached) ?? _cacheAfter;
       emit(current.copyWith(emails: cached));
     });
   }
@@ -1321,26 +1488,30 @@ class EmailListBloc extends Bloc<EmailListEvent, EmailListState> {
         folderId: event.folderId,
         top: _pageSize,
       ));
-      fetchResult.fold(
-        (_) {},
-        (emails) {
-          // Checked *after* the await as well as before it. The fetch is a
-          // folder page — seconds, on Gmail, where it is one request per thread
-          // — and a user whose list has just blanked routinely clicks somewhere
-          // else inside it. Emitting then paints the emptied folder's mail into
-          // whichever folder is now on screen, with nothing but a manual
-          // refresh to take it away again: a list pane showing the Inbox, full
-          // of Spam. [_serverOffset] would be reset under that folder too.
-          final s = state;
-          if (s is! EmailListLoaded ||
-              s.currentFolderId != event.folderId ||
-              _folderBelongsToAnotherAccount) {
-            return;
-          }
-          _serverOffset = _pageSize;
-          emit(s.copyWith(emails: emails, hasMore: emails.length >= _pageSize));
-        },
+      if (fetchResult.isLeft()) return;
+      // Checked *after* the await as well as before it. The fetch is a
+      // folder page — seconds, on Gmail, where it is one request per thread
+      // — and a user whose list has just blanked routinely clicks somewhere
+      // else inside it. Emitting then paints the emptied folder's mail into
+      // whichever folder is now on screen, with nothing but a manual
+      // refresh to take it away again: a list pane showing the Inbox, full
+      // of Spam. The paging would be reset under that folder too.
+      bool stillHere() {
+        final s = state;
+        return s is EmailListLoaded &&
+            s.currentFolderId == event.folderId &&
+            !_folderBelongsToAnotherAccount;
+      }
+
+      if (!stillHere()) return;
+      final view = await _folderAfterFreshPage(
+        _accountManager.activeAccount?.id,
+        event.folderId,
+        fetchResult.getOrElse((_) => const []),
       );
+      final s = state;
+      if (!stillHere() || s is! EmailListLoaded) return;
+      emit(s.copyWith(emails: view.emails, hasMore: view.hasMore));
     }
   }
 
@@ -1446,17 +1617,20 @@ class EmailListBloc extends Bloc<EmailListEvent, EmailListState> {
         final s = state;
         if (s is EmailListLoaded) emit(s.copyWith(isLoadingFresh: false));
       },
-      (emails) {
-        emit(EmailListLoaded(
-          emails: emails,
-          hasMore: emails.length == _pageSize,
-          currentFolderId: folderId,
-          currentFolderName: folderName,
-          emptyingFolderIds: current.emptyingFolderIds,
-        ));
-        _recordSenders(emails, folderName);
-      },
+      (_) {},
     );
+    final emails = result.getOrElse((_) => const []);
+    if (result.isLeft()) return;
+    final view = await _folderAfterFreshPage(
+        _accountManager.activeAccount?.id, folderId, emails);
+    emit(EmailListLoaded(
+      emails: view.emails,
+      hasMore: view.hasMore,
+      currentFolderId: folderId,
+      currentFolderName: folderName,
+      emptyingFolderIds: current.emptyingFolderIds,
+    ));
+    _recordSenders(emails, folderName);
   }
 
   Future<void> _onThreadFocusRequested(
@@ -1562,18 +1736,21 @@ class EmailListBloc extends Bloc<EmailListEvent, EmailListState> {
         final s = state;
         if (s is EmailListLoaded) emit(s.copyWith(isLoadingFresh: false));
       },
-      (emails) {
-        _serverOffset = _pageSize;
-        emit(EmailListLoaded(
-          emails: emails,
-          hasMore: emails.length >= _pageSize,
-          currentFolderId: folderId,
-          currentFolderName: folderName,
-          emptyingFolderIds: narrowed.emptyingFolderIds,
-        ));
-        _recordSenders(emails, folderName);
-      },
+      (_) {},
     );
+    if (result.isLeft()) return;
+    final emails = result.getOrElse((_) => const []);
+    final view = await _folderAfterFreshPage(
+        _accountManager.activeAccount?.id, folderId, emails);
+    if (myGeneration != _activeRequestGeneration) return;
+    emit(EmailListLoaded(
+      emails: view.emails,
+      hasMore: view.hasMore,
+      currentFolderId: folderId,
+      currentFolderName: folderName,
+      emptyingFolderIds: narrowed.emptyingFolderIds,
+    ));
+    _recordSenders(emails, folderName);
   }
 
   Future<void> _onResultsFocusRequested(

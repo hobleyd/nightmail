@@ -193,15 +193,34 @@ void main() {
 
   // The tripwire: bumping the version without adding an `if (from < n)` branch
   // ships a schema the upgrade path never builds.
-  test('schema version is 22', () {
+  test('schema version is 23', () {
     final db = AppDatabase.forTesting(NativeDatabase.memory());
     addTearDown(db.close);
     // v18 adds the commitments ledger tables (see
     // commitment_local_datasource_impl_test.dart for their round-trip).
     // v19 adds the scheduled-block columns to commitments; v20 the model's
     // effort estimate. v21 adds the scope column to migration_jobs; v22 the
-    // chat cache tables.
-    expect(db.schemaVersion, 22);
+    // chat cache tables; v23 folder_coverages.
+    expect(db.schemaVersion, 23);
+  });
+
+  // v23 adds folder_coverages: how much of each folder the mail cache vouches
+  // for, and the offline backfill's walk. An upgrade interrupted after the
+  // table was created but before the version was written runs the step again,
+  // and must not fail on the table that is already there.
+  test('a v22 database gains folder_coverages, and the step is safe to repeat',
+      () async {
+    final current = File('${dir.path}/v23.sqlite');
+    final first = AppDatabase.forTesting(NativeDatabase(current));
+    await first.into(first.folderCoverages).insert(
+        FolderCoveragesCompanion.insert(accountId: 'a', folderId: 'f'));
+    await first.customStatement('PRAGMA user_version = 22');
+    await first.close();
+
+    final db = AppDatabase.forTesting(NativeDatabase(current));
+    addTearDown(db.close);
+    final rows = await db.select(db.folderCoverages).get();
+    expect(rows.single.folderId, 'f');
   });
 
   // v22 adds the encrypted chat cache: the list per chat system, and each

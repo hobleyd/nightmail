@@ -9,6 +9,7 @@ import '../../core/error/failures.dart';
 import '../../core/utils/orphaned_thread_rows.dart';
 import '../../domain/entities/email.dart';
 import '../../domain/entities/email_folder.dart';
+import '../../domain/entities/folder_listing.dart';
 import '../../domain/entities/email_attachment.dart';
 import '../../domain/entities/local_attachment.dart';
 import '../../domain/repositories/email_repository.dart';
@@ -24,6 +25,7 @@ import '../datasources/local/pending_operations_datasource.dart';
 import '../datasources/remote/conversation_folder_datasource.dart';
 import '../datasources/remote/phishing_report_datasource.dart';
 import '../datasources/remote/email_remote_datasource.dart';
+import '../datasources/remote/listing_threads.dart';
 
 class EmailRepositoryImpl implements EmailRepository {
   EmailRepositoryImpl({
@@ -72,6 +74,8 @@ class EmailRepositoryImpl implements EmailRepository {
     int skip = 0,
     String? filter,
     String orderBy = 'receivedDateTime desc',
+    DateTime? olderThan,
+    DateTime? windowEnd,
   }) async {
     // Capture the active account id and its datasource together, before any
     // await, so the fetch and the cache write are bound to the *same* account.
@@ -82,54 +86,203 @@ class EmailRepositoryImpl implements EmailRepository {
     final accountId = _accountManager.activeAccount?.id;
     final datasource =
         accountId == null ? null : _accountManager.emailDatasource;
+    final result = await _listFolderPage(
+      accountId: accountId,
+      datasource: datasource,
+      folderId: folderId,
+      top: top,
+      skip: skip,
+      filter: filter,
+      orderBy: orderBy,
+      olderThan: olderThan,
+      windowEnd: windowEnd,
+    );
+    return result.map((page) => page.emails);
+  }
 
-    final result = await _execute(() =>
-        (datasource ?? _accountManager.emailDatasource).getEmails(
+  @override
+  Future<Either<Failure, SyncedPage>> syncFolderPage({
+    required String accountId,
+    required String folderId,
+    required int top,
+    int skip = 0,
+    DateTime? olderThan,
+    DateTime? windowEnd,
+  }) async {
+    final EmailRemoteDatasource datasource;
+    try {
+      datasource = _datasourceFor(accountId);
+    } on StateError catch (e) {
+      return Left(ServerFailure(message: e.message));
+    }
+    final result = await _listFolderPage(
+      accountId: accountId,
+      datasource: datasource,
+      folderId: folderId,
+      top: top,
+      skip: skip,
+      olderThan: olderThan,
+      windowEnd: windowEnd,
+    );
+    return result.map((page) => SyncedPage(
+          rows: page.emails.length,
+          windowStart: page.window?.from,
+        ));
+  }
+
+  Future<Either<Failure, ({List<Email> emails, ListingWindow? window})>>
+      _listFolderPage({
+    required String? accountId,
+    required EmailRemoteDatasource? datasource,
+    required String? folderId,
+    required int top,
+    required int skip,
+    String? filter,
+    String orderBy = 'receivedDateTime desc',
+    DateTime? olderThan,
+    DateTime? windowEnd,
+  }) async {
+    final result = await _execute(
+        () => (datasource ?? _accountManager.emailDatasource).getEmails(
           folderId: folderId,
           top: top,
           skip: skip,
           filter: filter,
           orderBy: orderBy,
+          olderThan: olderThan,
         ));
 
-    if (accountId == null) return result;
+    if (accountId == null || datasource == null) {
+      return result.map((emails) => (emails: emails, window: null));
+    }
 
     return result.fold(
-      (failure) async => Left<Failure, List<Email>>(failure),
+      (failure) async =>
+          Left<Failure, ({List<Email> emails, ListingWindow? window})>(failure),
       (emails) async {
         // Reconcile against still-queued outbox mutations before caching *or*
         // returning: a server snapshot taken before the outbox drain committed
         // the delete/move/junk would otherwise resurrect the just-removed
         // message into the cache, and the next poll's cache repaint would
         // put it back on screen. Mirrors MailPollerCubit's reconciliation.
-        final replacesFolder = skip == 0 && filter == null;
+        final isTopPage = skip == 0 && olderThan == null && filter == null;
         final reconciled = await _reconcileAgainstPendingOps(
           accountId,
           emails,
           folderId: folderId,
-          keepArrivals: replacesFolder,
+          keepArrivals: isTopPage,
         );
-        if (reconciled.isNotEmpty) {
-          final effectiveFolderId = folderId ?? _defaultFolderKey;
-          // A plain cacheEmails is an upsert — it can only ever add. skip == 0
-          // and no filter means this is the folder's own first page (not a
-          // load-more page, not a filtered AI-tool query), so it stands for
-          // the folder's whole contents: replace, or a message that has since
-          // left the folder — including a row a past bug or a stale cache
-          // once left behind — sits there forever, resurfacing on every visit
-          // to a folder nothing else ever prunes. Mirrors
-          // EmailListBloc._onRefreshRequested and MailPollerCubit's syncs.
-          unawaited(_localDatasource.cacheEmails(
+        // The stretch of the folder this page is the truth about — its
+        // cached rows are replaced, so a message that has left the folder
+        // (including a row a past bug or a stale cache once left behind)
+        // stops being listed, while the rows outside it stay. Judged on the
+        // server's own page: a moved message put back by reconciliation can
+        // be years old and would stretch the window over everything since.
+        // No window for a filtered (AI tool) query, nor for a load-more
+        // page that cannot say where the page above it started.
+        final dateOrdered = listingIsDateOrdered(datasource);
+        final ListingWindow? window = filter != null
+            ? null
+            : isTopPage
+                ? ListingWindow.topOf(emails,
+                    folderId: folderId,
+                    pageSize: top,
+                    listedCount: listedCountOf(emails),
+                    dateOrdered: dateOrdered)
+                : windowEnd != null
+                    ? ListingWindow.continuingOf(emails,
+                        folderId: folderId,
+                        pageSize: top,
+                        to: windowEnd,
+                        listedCount: listedCountOf(emails),
+                        dateOrdered: dateOrdered)
+                    : null;
+        // An empty page further down still has something to say — the folder
+        // ends above it — so it goes to the cache too, which moves only the
+        // coverage for it (see EmailLocalDatasource.cacheEmails).
+        if (reconciled.isNotEmpty || (window != null && !window.isTop)) {
+          final write = _localDatasource.cacheEmails(
             accountId: accountId,
-            folderId: effectiveFolderId,
+            folderId: folderId ?? _defaultFolderKey,
             emails: reconciled,
-            replaceFolder: replacesFolder,
-          ));
+            window: window,
+          );
+          if (window == null) {
+            unawaited(write);
+          } else {
+            // Awaited: the caller paints the folder from its cache next, and
+            // a window write is what moves the coverage that paint reads.
+            try {
+              await write;
+            } catch (e) {
+              debugPrint('[EmailRepository] cache write failed for '
+                  '${folderId ?? _defaultFolderKey}: $e');
+            }
+          }
         }
-        return Right<Failure, List<Email>>(reconciled);
+        return Right<Failure, ({List<Email> emails, ListingWindow? window})>(
+            (emails: reconciled, window: window));
       },
     );
   }
+
+  @override
+  Future<Either<Failure, CachedWindow>> getCachedWindow({
+    required String accountId,
+    required String folderId,
+    DateTime? from,
+    CacheCursor? after,
+    int? limitThreads,
+  }) =>
+      _executeLocal(() => _localDatasource.getCachedWindow(
+            accountId: accountId,
+            folderId: folderId,
+            from: from,
+            after: after,
+            limitThreads: limitThreads,
+          ));
+
+  @override
+  Future<Either<Failure, FolderCoverage>> getFolderCoverage({
+    required String accountId,
+    required String folderId,
+  }) =>
+      _executeLocal(() => _localDatasource.getFolderCoverage(
+            accountId: accountId,
+            folderId: folderId,
+          ));
+
+  @override
+  Future<Either<Failure, List<String>>> getCoveredFolderIds(
+          String accountId) =>
+      _executeLocal(() => _localDatasource.getCoveredFolderIds(accountId));
+
+  @override
+  Future<Either<Failure, FolderWalk?>> getFolderWalk({
+    required String accountId,
+    required String folderId,
+  }) =>
+      _executeLocal(() => _localDatasource.getFolderWalk(
+            accountId: accountId,
+            folderId: folderId,
+          ));
+
+  @override
+  Future<Either<Failure, Unit>> saveFolderWalk({
+    required String accountId,
+    required String folderId,
+    FolderWalk? walk,
+    DateTime? finishedFullPass,
+  }) =>
+      _executeLocal(() async {
+        await _localDatasource.saveFolderWalk(
+          accountId: accountId,
+          folderId: folderId,
+          walk: walk,
+          finishedFullPass: finishedFullPass,
+        );
+        return unit;
+      });
 
   /// Drops server results that still carry a pending delete/move/junk op, and
   /// preserves the cached read-state for a message with a pending markRead —
@@ -841,14 +994,14 @@ class EmailRepositoryImpl implements EmailRepository {
     required String accountId,
     required String folderId,
     required List<Email> emails,
-    bool replaceFolder = false,
+    ListingWindow? window,
   }) async {
     try {
       await _localDatasource.cacheEmails(
         accountId: accountId,
         folderId: folderId,
         emails: emails,
-        replaceFolder: replaceFolder,
+        window: window,
       );
       return const Right(unit);
     } on CacheException catch (e) {

@@ -7,6 +7,7 @@ import 'package:nightmail/data/datasources/local/task_reminder_schedule_local_da
 import 'package:nightmail/domain/entities/calendar_event.dart';
 import 'package:nightmail/domain/entities/commitment.dart';
 import 'package:nightmail/domain/entities/email.dart';
+import 'package:nightmail/domain/entities/folder_listing.dart';
 import 'package:nightmail/domain/entities/email_address.dart';
 import 'package:nightmail/domain/entities/email_folder.dart';
 import 'package:nightmail/domain/entities/todo_task.dart';
@@ -102,6 +103,8 @@ void main() {
     provideDummy<Either<Failure, List<Commitment>>>(const Right([]));
     provideDummy<Either<Failure, Set<String>>>(const Right({}));
     provideDummy<Either<Failure, Unit>>(Right(unit));
+    provideDummy<Either<Failure, CachedWindow>>(
+        const Right(CachedWindow(emails: [], next: null)));
     provideDummy<Either<Failure, List<EmailFolder>>>(const Right([]));
     provideDummy<Either<Failure, List<Email>>>(const Right([]));
     provideDummy<Either<Failure, List<CalendarEvent>>>(const Right([]));
@@ -145,10 +148,16 @@ void main() {
     )).thenAnswer((_) async => Right(unit));
     when(emails.getCachedFolders('acc'))
         .thenAnswer((_) async => const Right(folders));
-    when(emails.getCachedEmails(accountId: 'acc', folderId: 'g1'))
-        .thenAnswer((_) async => Right(inbox));
-    when(emails.getCachedEmails(accountId: 'acc', folderId: 'g2'))
-        .thenAnswer((_) async => Right(sent));
+    when(emails.getCachedWindow(
+            accountId: 'acc',
+            folderId: 'g1',
+            limitThreads: anyNamed('limitThreads')))
+        .thenAnswer((_) async => Right(CachedWindow(emails: inbox, next: null)));
+    when(emails.getCachedWindow(
+            accountId: 'acc',
+            folderId: 'g2',
+            limitThreads: anyNamed('limitThreads')))
+        .thenAnswer((_) async => Right(CachedWindow(emails: sent, next: null)));
     when(calendar(any)).thenAnswer((_) async => const Right([]));
     when(taskReminders.getScheduledTaskReminders('acc')).thenAnswer(
       (_) async => [

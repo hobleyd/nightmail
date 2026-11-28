@@ -509,6 +509,7 @@ class ImapDatasourceImpl
     int skip = 0,
     String? filter,
     String orderBy = 'receivedDateTime desc',
+    DateTime? olderThan,
   }) {
     final mailboxPath = folderId ?? 'INBOX';
     return _withMailbox(mailboxPath, () async {
@@ -520,8 +521,15 @@ class ImapDatasourceImpl
         // client has flagged `\Deleted` but that the server has not expunged
         // yet, and nothing here reads that flag — so they kept showing in the
         // list until the expunge finally happened.
+        //
+        // `BEFORE` compares whole days of the internal date, in the server's
+        // zone, and is exclusive — so the cutoff is pushed two days on to
+        // keep the listing inclusive wherever the server is. The repeats
+        // that lets through are dropped by the caller.
         final searchResult = await client.uidSearchMessages(
-          searchCriteria: 'UNDELETED',
+          searchCriteria: olderThan == null
+              ? 'UNDELETED'
+              : 'UNDELETED BEFORE ${imapSearchDate(olderThan.toUtc().add(const Duration(days: 2)))}',
         );
         final allUids = searchResult.matchingSequence?.toList() ?? [];
         if (allUids.isEmpty) return <EmailModel>[];
@@ -541,10 +549,13 @@ class ImapDatasourceImpl
           '(FLAGS INTERNALDATE ENVELOPE BODYSTRUCTURE)',
         );
 
-        return fetchResult.messages
-            .map((msg) =>
-                _parseToModel(msg, folderId: _selectedMailboxPath ?? mailboxPath))
-            .toList();
+        return ListedPage(
+          fetchResult.messages
+              .map((msg) => _parseToModel(msg,
+                  folderId: _selectedMailboxPath ?? mailboxPath))
+              .toList(),
+          listedCount: page.length,
+        );
       } on ImapException catch (e) {
         throw ServerException(message: e.message ?? 'IMAP error');
       } on AuthException {
@@ -3044,3 +3055,13 @@ class ImapFullMessageParams {
   /// disagree with what the list row already shows.
   final DateTime? receivedAt;
 }
+
+const _imapMonths = [
+  'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+  'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
+];
+
+/// [date] as an IMAP SEARCH date (RFC 3501 `date`: `1-Feb-1994`).
+@visibleForTesting
+String imapSearchDate(DateTime date) =>
+    '${date.day}-${_imapMonths[date.month - 1]}-${date.year}';

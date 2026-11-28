@@ -19,6 +19,8 @@ class GetEmails implements UseCase<List<Email>, GetEmailsParams> {
       skip: params.skip,
       filter: params.filter,
       orderBy: params.orderBy,
+      olderThan: params.olderThan,
+      windowEnd: params.windowEnd,
     );
   }
 }
@@ -30,6 +32,8 @@ class GetEmailsParams extends Equatable {
     this.skip = 0,
     this.filter,
     this.orderBy = 'receivedDateTime desc',
+    this.olderThan,
+    this.windowEnd,
   });
 
   final String? folderId;
@@ -38,6 +42,13 @@ class GetEmailsParams extends Equatable {
   final String? filter;
   final String orderBy;
 
+  /// Continue the folder below this instant — see `EmailRepository.getEmails`.
+  final DateTime? olderThan;
+
+  /// The top of the stretch this page answers for, so the cache replaces it.
+  final DateTime? windowEnd;
+
   @override
-  List<Object?> get props => [folderId, top, skip, filter, orderBy];
+  List<Object?> get props =>
+      [folderId, top, skip, filter, orderBy, olderThan, windowEnd];
 }

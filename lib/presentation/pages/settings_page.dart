@@ -19,6 +19,7 @@ import '../../core/theme/app_colors.dart';
 import '../../domain/entities/chat.dart';
 import '../../domain/entities/email.dart';
 import '../../domain/repositories/chat_repository.dart';
+import '../../infrastructure/sync/folder_backfill_service.dart';
 import '../../injection_container.dart';
 import '../../infrastructure/notifications/meeting_reminder_board.dart';
 import '../../infrastructure/accounts/account.dart';
@@ -359,6 +360,8 @@ class _GeneralSection extends StatelessWidget {
         _PollIntervalSetting(),
         const SizedBox(height: 12),
         const _DeleteConfirmSetting(),
+        const SizedBox(height: 12),
+        const _KeepFoldersOfflineSetting(),
         const SizedBox(height: 20),
         const _SlackSetting(),
       ],
@@ -639,6 +642,72 @@ class _DeleteConfirmSettingState extends State<_DeleteConfirmSetting> {
                 if (val == null) return;
                 setState(() => _value = val);
                 sl<AppSettings>().saveConfirmDeleteEmail(val);
+              },
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+/// Downloads every message of each opened folder in the background, so the
+/// list scrolls to the end from the cache — see `FolderBackfillService`.
+class _KeepFoldersOfflineSetting extends StatefulWidget {
+  const _KeepFoldersOfflineSetting();
+
+  @override
+  State<_KeepFoldersOfflineSetting> createState() =>
+      _KeepFoldersOfflineSettingState();
+}
+
+class _KeepFoldersOfflineSettingState
+    extends State<_KeepFoldersOfflineSetting> {
+  bool _value = AppSettings.defaultKeepFoldersOffline;
+
+  @override
+  void initState() {
+    super.initState();
+    sl<AppSettings>().loadKeepFoldersOffline().then((v) {
+      if (mounted) setState(() => _value = v);
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.colors;
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'Keep opened folders offline',
+                style: TextStyle(color: c.textSecondary, fontSize: 13),
+              ),
+              const SizedBox(height: 2),
+              Text(
+                'Downloads every message in the folders you open, so they '
+                'scroll to the end without waiting. Rechecked monthly. '
+                'Microsoft 365 and Gmail accounts.',
+                style: TextStyle(color: c.textTertiary, fontSize: 11),
+              ),
+            ],
+          ),
+        ),
+        SizedBox(
+          width: 180,
+          child: Align(
+            alignment: Alignment.centerRight,
+            child: Checkbox(
+              value: _value,
+              onChanged: (val) {
+                if (val == null) return;
+                setState(() => _value = val);
+                sl<AppSettings>().saveKeepFoldersOffline(val);
+                sl<FolderBackfillService>().setEnabled(val);
               },
             ),
           ),

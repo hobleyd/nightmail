@@ -772,4 +772,30 @@ void main() {
           'outlook.body-content-type="text"');
     });
   });
+
+  group('getEmails(olderThan:)', () {
+    test('leads the filter with the cutoff, inclusive, and reports the listed '
+        'count apart from the expansion rows', () async {
+      Map<String, dynamic>? params;
+      when(mockDio.get<String>(
+        '/me/mailFolders/inbox/messages',
+        queryParameters: anyNamed('queryParameters'),
+        options: anyNamed('options'),
+      )).thenAnswer((inv) async {
+        params = Map<String, dynamic>.from(
+            inv.namedArguments[#queryParameters] as Map);
+        return _resp({'value': <dynamic>[]});
+      });
+
+      await datasource.getEmails(
+        folderId: 'inbox',
+        skip: 50,
+        olderThan: DateTime.utc(2026, 3, 4, 5, 6, 7),
+      );
+
+      expect(params!['\$filter'],
+          'receivedDateTime le 2026-03-04T05:06:07.000Z');
+      expect(params!['\$skip'], 50);
+    });
+  });
 }

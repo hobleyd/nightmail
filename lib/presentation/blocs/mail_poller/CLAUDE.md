@@ -12,6 +12,14 @@ poll wrote nothing there. Every account's cache is refreshed, not just the activ
 one. Adding a field to `MailPollerState` means adding it to `props`, or `emit`
 drops the change.
 
+Both page writes (the Inbox page after a count change, and the watched folder)
+replace only the page's **window** of the folder's cache, judged on the
+server's page and its listed count. They never replace the whole folder: that
+threw away every row the user had scrolled to, every cycle. The watched-folder
+sync reads only the top of the folder's cache (twice the page, in threads) to
+compare against, not all of it. See "A Folder's Cache Is Replaced a Window at a
+Time" in [`../email_list/CLAUDE.md`](../email_list/CLAUDE.md).
+
 The watched folder is compared against the Inbox id the poller *remembers*
 (`_inboxIds`), because a quiet delta fetches no folders — and `_samePage` matches
 by id on what a row shows, since the two sides differ in order and in how much

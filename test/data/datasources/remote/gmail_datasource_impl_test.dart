@@ -1,10 +1,12 @@
 import 'dart:convert';
+import 'dart:math';
 
 import 'package:dio/dio.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mockito/annotations.dart';
 import 'package:mockito/mockito.dart';
 import 'package:nightmail/core/error/exceptions.dart';
+import 'package:nightmail/data/datasources/remote/email_remote_datasource.dart';
 import 'package:nightmail/data/datasources/remote/gmail_datasource_impl.dart';
 import 'package:nightmail/domain/entities/email_attachment.dart';
 import 'package:nightmail/domain/entities/meeting_invite.dart';
@@ -2252,6 +2254,76 @@ void main() {
 
       expect(peakInFlight, lessThanOrEqualTo(8));
       expect(emails, hasLength(30), reason: 'bounded, not truncated');
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // getEmails(olderThan:) — the listing below a fixed cutoff
+  // ---------------------------------------------------------------------------
+  group('GmailDatasourceImpl.getEmails — older than a cutoff', () {
+    final cutoff = DateTime.fromMillisecondsSinceEpoch(1780000000123);
+    final listings = <Map<String, dynamic>>[];
+
+    void stubListing({required int threads, String? nextPageToken}) {
+      listings.clear();
+      when(mockDio.get<String>(
+        any,
+        queryParameters: anyNamed('queryParameters'),
+        options: anyNamed('options'),
+      )).thenAnswer((inv) async {
+        final url = inv.positionalArguments[0] as String;
+        if (url.endsWith('/threads')) {
+          final params = Map<String, dynamic>.from(
+              inv.namedArguments[#queryParameters] as Map);
+          listings.add(params);
+          final count = params['maxResults'] as int;
+          return _plainResp({
+            'threads': [
+              for (var i = 0; i < min(count, threads); i++) {'id': 't$i'},
+            ],
+            'nextPageToken': ?nextPageToken,
+          }, url);
+        }
+        return _plainResp({'messages': <dynamic>[]}, url);
+      });
+    }
+
+    test('asks for the folder before the cutoff, inclusive of its second, and '
+        'reports how many threads it listed', () async {
+      stubListing(threads: 3);
+
+      final page = await datasource.getEmails(
+          folderId: 'INBOX', top: 25, olderThan: cutoff);
+
+      expect(listings.single['q'], 'before:1780000001');
+      expect(listings.single['labelIds'], 'INBOX');
+      expect(listedCountOf(page), 3);
+    });
+
+    test('continues on the token its previous page left', () async {
+      stubListing(threads: 25, nextPageToken: 'next-1');
+      await datasource.getEmails(folderId: 'INBOX', top: 25, olderThan: cutoff);
+
+      await datasource.getEmails(
+          folderId: 'INBOX', top: 25, skip: 25, olderThan: cutoff);
+
+      expect(listings.last['pageToken'], 'next-1');
+      expect(listings, hasLength(2));
+    });
+
+    // After a restart nothing holds the token: walking the pages in between
+    // in full would cost 1,010 units each, so the listing is fast-forwarded by
+    // thread ids alone.
+    test('without a token, fast-forwards by ids rather than fetching the '
+        'pages in between', () async {
+      stubListing(threads: 500, nextPageToken: 'ff');
+
+      await datasource.getEmails(
+          folderId: 'INBOX', top: 25, skip: 75, olderThan: cutoff);
+
+      expect(listings.first['maxResults'], 75);
+      expect(listings.last['pageToken'], 'ff');
+      expect(listings.last['maxResults'], 25);
     });
   });
 }

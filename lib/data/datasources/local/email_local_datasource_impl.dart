@@ -7,6 +7,7 @@ import '../../../domain/entities/calendar_recurrence.dart';
 import '../../../domain/entities/email.dart';
 import '../../../domain/entities/email_address.dart';
 import '../../../domain/entities/email_attachment.dart';
+import '../../../domain/entities/folder_listing.dart';
 import '../../../domain/entities/meeting_invite.dart';
 import '../../../domain/entities/inline_attachment.dart';
 import '../../database/app_database.dart';
@@ -140,15 +141,35 @@ class EmailLocalDatasourceImpl implements EmailLocalDatasource {
     required String accountId,
     required String folderId,
     required List<Email> emails,
-    bool replaceFolder = false,
+    ListingWindow? window,
   }) async {
-    // An empty page never rewrites anything — and with [replaceFolder] it must
+    // An empty page never rewrites anything — and with a [window] it must
     // not *clear* anything either. An empty fetch is far more likely a
     // transient (or every message tombstoned by an in-flight mutation) than a
     // genuinely emptied folder, and clearing on it blanks the cache the app
     // repaints from offline. Callers used to guard this individually; it lives
     // here so every caller gets it.
-    if (emails.isEmpty) return;
+    if (emails.isEmpty) {
+      if (window != null && !window.dateOrdered) return;
+      // Except for what a page further down says about the coverage: listed
+      // empty, the folder ends above it. Only the coverage hears that —
+      // nothing is deleted on an empty answer.
+      if (window != null && !window.isTop) {
+        await _database.transaction(() async {
+          await _advanceCoverage(
+            accountId,
+            folderId,
+            await _coverageRow(accountId, folderId),
+            // The window's own start, not "the end": a page the server
+            // listed in full can arrive empty because reconciliation took
+            // every row (all of them deleted or moved, still draining).
+            ListingWindow.continuing(from: window.from, to: window.to!),
+            false,
+          );
+        });
+      }
+      return;
+    }
 
     final now = DateTime.now().millisecondsSinceEpoch;
 
@@ -260,8 +281,27 @@ class EmailLocalDatasourceImpl implements EmailLocalDatasource {
           }
         });
 
-    if (!replaceFolder) {
+    if (window == null || (!window.dateOrdered && !window.isTop)) {
       await insertAll();
+      return;
+    }
+
+    if (!window.dateOrdered) {
+      // A listing out of date order (IMAP, by UID): its top page stands for
+      // the folder, as every first page did before windows, and nothing is
+      // vouched for beyond it — see [ListingWindow.dateOrdered].
+      await _database.transaction(() async {
+        await (_database.delete(_database.cachedEmails)
+              ..where((t) =>
+                  t.accountId.equals(accountId) & t.folderId.equals(folderId)))
+            .go();
+        await insertAll();
+        await _pruneOrphanDetails();
+        await (_database.delete(_database.folderCoverages)
+              ..where((t) =>
+                  t.accountId.equals(accountId) & t.folderId.equals(folderId)))
+            .go();
+      });
       return;
     }
 
@@ -272,16 +312,320 @@ class EmailLocalDatasourceImpl implements EmailLocalDatasource {
     // refresh blanked every cached body in the folder and BodyPrefetchService
     // re-downloaded them.
     await _database.transaction(() async {
-      await (_database.delete(_database.cachedEmails)
-            ..where((t) =>
-                t.accountId.equals(accountId) & t.folderId.equals(folderId)))
-          .go();
+      final coverage = await _coverageRow(accountId, folderId);
+      // Asked before the delete: whether this top page joins onto the rows
+      // the cache already held, which is what lets the coverage below it
+      // stand.
+      final joins = window.isTop &&
+          window.from != null &&
+          await _holdsListedRowInWindow(accountId, folderId, window);
+      await _deleteWindow(accountId, folderId, window);
       await insertAll();
       // A message that has dropped out of this folder and is in no other one
       // takes its body with it. Without this the rows that leak are precisely
       // the largest in the cache — see [_pruneOrphanDetails].
       await _pruneOrphanDetails();
+      await _advanceCoverage(accountId, folderId, coverage, window, joins);
     });
+  }
+
+  /// Drops the folder's rows inside [window] — the page about to be inserted
+  /// is the truth about that stretch.
+  ///
+  /// A date-ordered page carries whole threads, so it leaves alone a thread that also has
+  /// rows *outside* the window: those belong to a window that will answer for
+  /// them, and the page may not list the thread at all (Gmail dates a thread by
+  /// its latest message, so a long one's old messages sit in a lower page's
+  /// date range while the thread itself is listed at the top; a Graph thread's
+  /// Sent reply can be newer than the folder message that lists it). Without
+  /// this the top page deleted the Sent copy of every older thread replied to
+  /// since, and nothing below the top ever put it back.
+  Future<void> _deleteWindow(
+    String accountId,
+    String folderId,
+    ListingWindow window,
+  ) {
+    final from = window.from?.millisecondsSinceEpoch;
+    final to = window.to?.millisecondsSinceEpoch;
+    final range = StringBuffer();
+    final vars = <Variable<Object>>[
+      Variable<String>(accountId),
+      Variable<String>(folderId),
+    ];
+    if (from != null) {
+      range.write(' AND received_date_time_ms >= ?');
+      vars.add(Variable<int>(from));
+    }
+    if (to != null) {
+      range.write(' AND received_date_time_ms <= ?');
+      vars.add(Variable<int>(to));
+    }
+    var straddle = '';
+    if (from != null || to != null) {
+      final outside = [
+        if (from != null) 'o.received_date_time_ms < ?',
+        if (to != null) 'o.received_date_time_ms > ?',
+      ].join(' OR ');
+      straddle = ' AND (conversation_id IS NULL OR conversation_id NOT IN ('
+          'SELECT o.conversation_id FROM cached_emails o '
+          'WHERE o.account_id = ? AND o.folder_id = ? '
+          'AND o.conversation_id IS NOT NULL AND ($outside)))';
+      vars
+        ..add(Variable<String>(accountId))
+        ..add(Variable<String>(folderId));
+      if (from != null) vars.add(Variable<int>(from));
+      if (to != null) vars.add(Variable<int>(to));
+    }
+    return _database.customUpdate(
+      'DELETE FROM cached_emails WHERE account_id = ? AND folder_id = ?'
+      '$range$straddle',
+      variables: vars,
+      updates: {_database.cachedEmails},
+      updateKind: UpdateKind.delete,
+    );
+  }
+
+  /// Whether the folder already holds a row, dated inside [window], that the
+  /// server listed on this page — proof the page overlaps what the cache held
+  /// rather than sitting above a stretch nothing has listed.
+  ///
+  /// Only the server's own ids count ([ListingWindow.listedIds]): a moved
+  /// message put back by reconciliation is already cached by construction, and
+  /// counting it would vouch for a gap.
+  Future<bool> _holdsListedRowInWindow(
+    String accountId,
+    String folderId,
+    ListingWindow window,
+  ) async {
+    final ids = window.listedIds.toList();
+    final from = window.from!.millisecondsSinceEpoch;
+    for (var i = 0; i < ids.length; i += 500) {
+      final chunk = ids.sublist(i, min(i + 500, ids.length));
+      final row = await (_database.selectOnly(_database.cachedEmails)
+            ..addColumns([_database.cachedEmails.emailId])
+            ..where(_database.cachedEmails.accountId.equals(accountId) &
+                _database.cachedEmails.folderId.equals(folderId) &
+                _database.cachedEmails.receivedDateTimeMs
+                    .isBiggerOrEqualValue(from) &
+                _database.cachedEmails.emailId.isIn(chunk))
+            ..limit(1))
+          .getSingleOrNull();
+      if (row != null) return true;
+    }
+    return false;
+  }
+
+  /// Moves the folder's coverage for a page written over [window].
+  ///
+  /// - A top page that reached the end of the folder covers all of it.
+  /// - A top page that joins onto the cached rows keeps what lay below it.
+  /// - A top page that does not (more new mail arrived than one page holds,
+  ///   in a folder nothing listed meanwhile) vouches only for itself: the
+  ///   older rows stay cached, but they sit below a stretch no listing has
+  ///   seen, and showing them as the folder's continuation would hide it.
+  /// - A page further down extends the coverage only if it starts at or above
+  ///   the coverage's edge; a page below a gap moves nothing.
+  Future<void> _advanceCoverage(
+    String accountId,
+    String folderId,
+    FolderCoverageRow? row,
+    ListingWindow window,
+    bool joins,
+  ) async {
+    final from = window.from?.millisecondsSinceEpoch;
+    final wasComplete = row?.complete ?? false;
+    final coveredFrom = row?.coveredFromMs;
+    int? nextFrom = coveredFrom;
+    var nextComplete = wasComplete;
+    if (window.isTop) {
+      if (from == null) {
+        nextComplete = true;
+        nextFrom = null;
+      } else if (joins && (wasComplete || coveredFrom != null)) {
+        if (!wasComplete) nextFrom = min(coveredFrom!, from);
+      } else {
+        nextComplete = false;
+        nextFrom = from;
+      }
+    } else if (!wasComplete &&
+        coveredFrom != null &&
+        window.to!.millisecondsSinceEpoch >= coveredFrom) {
+      if (from == null) {
+        nextComplete = true;
+        nextFrom = null;
+      } else {
+        nextFrom = min(coveredFrom, from);
+      }
+    }
+    if (row != null &&
+        nextFrom == coveredFrom &&
+        nextComplete == wasComplete) {
+      return;
+    }
+    await _database.into(_database.folderCoverages).insertOnConflictUpdate(
+          FolderCoveragesCompanion.insert(
+            accountId: accountId,
+            folderId: folderId,
+            coveredFromMs: Value(nextFrom),
+            complete: Value(nextComplete),
+            lastFullPassMs: Value(row?.lastFullPassMs),
+            walkBeforeMs: Value(row?.walkBeforeMs),
+            walkOffset: Value(row?.walkOffset ?? 0),
+            walkWindowEndMs: Value(row?.walkWindowEndMs),
+            walkFull: Value(row?.walkFull ?? false),
+          ),
+        );
+  }
+
+  Future<FolderCoverageRow?> _coverageRow(String accountId, String folderId) =>
+      (_database.select(_database.folderCoverages)
+            ..where((t) =>
+                t.accountId.equals(accountId) & t.folderId.equals(folderId)))
+          .getSingleOrNull();
+
+  @override
+  Future<FolderCoverage> getFolderCoverage({
+    required String accountId,
+    required String folderId,
+  }) async {
+    final row = await _coverageRow(accountId, folderId);
+    if (row == null) return const FolderCoverage();
+    return FolderCoverage(
+      coveredFrom: row.coveredFromMs == null
+          ? null
+          : DateTime.fromMillisecondsSinceEpoch(row.coveredFromMs!),
+      complete: row.complete,
+      lastFullPassAt: row.lastFullPassMs == null
+          ? null
+          : DateTime.fromMillisecondsSinceEpoch(row.lastFullPassMs!),
+    );
+  }
+
+  @override
+  Future<List<String>> getCoveredFolderIds(String accountId) async {
+    final rows = await (_database.select(_database.folderCoverages)
+          ..where((t) => t.accountId.equals(accountId)))
+        .get();
+    return [for (final r in rows) r.folderId];
+  }
+
+  @override
+  Future<FolderWalk?> getFolderWalk({
+    required String accountId,
+    required String folderId,
+  }) async {
+    final row = await _coverageRow(accountId, folderId);
+    final before = row?.walkBeforeMs;
+    final windowEnd = row?.walkWindowEndMs;
+    if (row == null || before == null || windowEnd == null) return null;
+    return FolderWalk(
+      before: DateTime.fromMillisecondsSinceEpoch(before),
+      offset: row.walkOffset,
+      windowEnd: DateTime.fromMillisecondsSinceEpoch(windowEnd),
+      full: row.walkFull,
+    );
+  }
+
+  @override
+  Future<void> saveFolderWalk({
+    required String accountId,
+    required String folderId,
+    FolderWalk? walk,
+    DateTime? finishedFullPass,
+  }) async {
+    await _database.transaction(() async {
+      final row = await _coverageRow(accountId, folderId);
+      await _database.into(_database.folderCoverages).insertOnConflictUpdate(
+            FolderCoveragesCompanion.insert(
+              accountId: accountId,
+              folderId: folderId,
+              coveredFromMs: Value(row?.coveredFromMs),
+              complete: Value(row?.complete ?? false),
+              lastFullPassMs: Value(
+                  finishedFullPass?.millisecondsSinceEpoch ??
+                      row?.lastFullPassMs),
+              walkBeforeMs: Value(walk?.before.millisecondsSinceEpoch),
+              walkOffset: Value(walk?.offset ?? 0),
+              walkWindowEndMs: Value(walk?.windowEnd.millisecondsSinceEpoch),
+              walkFull: Value(walk?.full ?? false),
+            ),
+          );
+    });
+  }
+
+  @override
+  Future<CachedWindow> getCachedWindow({
+    required String accountId,
+    required String folderId,
+    DateTime? from,
+    CacheCursor? after,
+    int? limitThreads,
+  }) async {
+    // Threads are keyed and dated in SQL, so only the rows of the threads in
+    // the window are decrypted. Ordered by (date, key) so a window boundary
+    // between two threads dated to the same millisecond loses neither.
+    final where = StringBuffer();
+    final vars = <Variable<Object>>[
+      Variable<String>(accountId),
+      Variable<String>(folderId),
+    ];
+    if (from != null) {
+      where.write(' AND mx >= ?');
+      vars.add(Variable<int>(from.millisecondsSinceEpoch));
+    }
+    if (after != null) {
+      final ms = after.threadDate.millisecondsSinceEpoch;
+      where.write(' AND (mx < ? OR (mx = ? AND k < ?))');
+      vars
+        ..add(Variable<int>(ms))
+        ..add(Variable<int>(ms))
+        ..add(Variable<String>(after.threadKey));
+    }
+    vars
+      ..add(Variable<int>(limitThreads ?? -1))
+      ..add(Variable<String>(accountId))
+      ..add(Variable<String>(folderId));
+    final rows = await _database.customSelect(
+      'WITH t AS ('
+      'SELECT COALESCE(conversation_id, email_id) AS k, '
+      'MAX(received_date_time_ms) AS mx FROM cached_emails '
+      'WHERE account_id = ? AND folder_id = ? GROUP BY k'
+      '), w AS (SELECT k, mx FROM t WHERE 1 = 1$where '
+      'ORDER BY mx DESC, k DESC LIMIT ?) '
+      'SELECT ce.*, w.mx AS w_mx, w.k AS w_k FROM cached_emails ce '
+      'JOIN w ON COALESCE(ce.conversation_id, ce.email_id) = w.k '
+      'WHERE ce.account_id = ? AND ce.folder_id = ? '
+      'ORDER BY ce.received_date_time_ms DESC',
+      variables: vars,
+      readsFrom: {_database.cachedEmails},
+    ).get();
+
+    CacheCursor? last;
+    final threads = <String>{};
+    final emails = <Email>[];
+    for (final r in rows) {
+      final mx = r.read<int>('w_mx');
+      final k = r.read<String>('w_k');
+      threads.add(k);
+      if (last == null ||
+          mx < last.threadDate.millisecondsSinceEpoch ||
+          (mx == last.threadDate.millisecondsSinceEpoch &&
+              k.compareTo(last.threadKey) < 0)) {
+        last = CacheCursor(
+          threadDate: DateTime.fromMillisecondsSinceEpoch(mx),
+          threadKey: k,
+        );
+      }
+      final row = _database.cachedEmails.map(r.data);
+      final plaintext = await _encryption.decrypt(row.encryptedData);
+      emails.add(
+          _emailFromJson(jsonDecode(plaintext) as Map<String, dynamic>));
+    }
+    final more = limitThreads != null && threads.length >= limitThreads;
+    return CachedWindow(
+      emails: _withRecentReadStates(accountId, emails),
+      next: more ? last : null,
+    );
   }
 
   @override
@@ -692,6 +1036,9 @@ class EmailLocalDatasourceImpl implements EmailLocalDatasource {
     await (_database.delete(_database.cachedEmailDetails)
           ..where((t) => t.accountId.equals(accountId)))
         .go();
+    await (_database.delete(_database.folderCoverages)
+          ..where((t) => t.accountId.equals(accountId)))
+        .go();
     // The inline cache is keyed by email id alone, so there is no per-account
     // subset to target. Dropping all of it only costs a re-write on next view,
     // and this runs on account removal / an explicit "clear cached mail".
@@ -709,6 +1056,10 @@ class EmailLocalDatasourceImpl implements EmailLocalDatasource {
     required String folderId,
   }) async {
     await (_database.delete(_database.cachedEmails)
+          ..where((t) => t.accountId.equals(accountId) & t.folderId.equals(folderId)))
+        .go();
+    // Nothing is cached, so nothing is vouched for.
+    await (_database.delete(_database.folderCoverages)
           ..where((t) => t.accountId.equals(accountId) & t.folderId.equals(folderId)))
         .go();
     // A message the folder shared with another one keeps its body; one that was

@@ -4,6 +4,7 @@ import 'package:fpdart/fpdart.dart';
 import '../../core/error/failures.dart';
 import '../../core/usecases/usecase.dart';
 import '../entities/email.dart';
+import '../entities/folder_listing.dart';
 import '../repositories/email_repository.dart';
 
 class CacheEmailsParams extends Equatable {
@@ -11,19 +12,19 @@ class CacheEmailsParams extends Equatable {
     required this.accountId,
     required this.folderId,
     required this.emails,
-    this.replaceFolder = false,
+    this.window,
   });
 
   final String accountId;
   final String folderId;
   final List<Email> emails;
 
-  /// Whether [emails] is a complete page that should *become* the folder's
-  /// contents, dropping cached rows the fetch no longer lists.
-  final bool replaceFolder;
+  /// The stretch of the folder [emails] answers for, when they are a listed
+  /// page — its cached rows are replaced. See [ListingWindow].
+  final ListingWindow? window;
 
   @override
-  List<Object?> get props => [accountId, folderId, emails, replaceFolder];
+  List<Object?> get props => [accountId, folderId, emails, window];
 }
 
 class CacheEmails implements UseCase<Unit, CacheEmailsParams> {
@@ -37,7 +38,7 @@ class CacheEmails implements UseCase<Unit, CacheEmailsParams> {
       accountId: params.accountId,
       folderId: params.folderId,
       emails: params.emails,
-      replaceFolder: params.replaceFolder,
+      window: params.window,
     );
   }
 }

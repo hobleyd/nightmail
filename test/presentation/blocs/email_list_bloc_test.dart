@@ -16,6 +16,8 @@ import 'package:nightmail/domain/usecases/get_cached_emails.dart';
 import 'package:nightmail/domain/usecases/get_conversation_thread.dart';
 import 'package:nightmail/domain/usecases/get_email.dart';
 import 'package:nightmail/domain/usecases/get_emails.dart';
+import 'package:nightmail/domain/usecases/get_folder_coverage.dart';
+import 'package:nightmail/domain/entities/folder_listing.dart';
 import 'package:nightmail/domain/usecases/mark_email_as_read.dart';
 import 'package:nightmail/domain/usecases/move_email.dart';
 import 'package:nightmail/domain/usecases/not_junk.dart';
@@ -129,6 +131,7 @@ const _otherAccount = MicrosoftAccount(
   GetEmails,
   GetCachedEmails,
   CacheEmails,
+  GetFolderCoverage,
   ForgetCachedEmails,
   MarkEmailAsRead,
   MoveEmail,
@@ -161,6 +164,7 @@ void main() {
   late MockSearchEmails mockSearchEmails;
   late MockRecordKnownSenders mockRecordKnownSenders;
   late MockCacheEmails mockCacheEmails;
+  late MockGetFolderCoverage mockGetFolderCoverage;
   late MockForgetCachedEmails mockForgetCachedEmails;
   late MockReportPhishing mockReportPhishing;
   late _FakeAccountManager fakeAccountManager;
@@ -172,6 +176,8 @@ void main() {
     provideDummy<Either<Failure, Email>>(Right(_email('dummy')));
     provideDummy<Either<Failure, Unit>>(const Right(unit));
     provideDummy<Set<String>>(<String>{});
+    provideDummy<Either<Failure, FolderCoverage>>(
+        const Right(FolderCoverage()));
   });
 
   setUp(() {
@@ -194,11 +200,14 @@ void main() {
     bodyPrefetch = _RecordingBodyPrefetch();
     when(mockRecordKnownSenders(any)).thenAnswer((_) async => const Right(unit));
     when(mockCacheEmails(any)).thenAnswer((_) async => const Right(unit));
+    mockGetFolderCoverage = MockGetFolderCoverage();
+    when(mockGetFolderCoverage(any))
+        .thenAnswer((_) async => const Right(FolderCoverage()));
 
     bloc = EmailListBloc(
       getEmails: mockGetEmails,
       getCachedEmails: mockGetCachedEmails,
-      cacheEmails: mockCacheEmails,
+      getFolderCoverage: mockGetFolderCoverage,
       forgetCachedEmails: mockForgetCachedEmails,
       markEmailAsRead: mockMarkEmailAsRead,
       moveEmail: mockMoveEmail,
@@ -1628,171 +1637,171 @@ void main() {
       expect(state.emails.map((e) => e.id), ['draft-1']);
       verifyNever(mockGetEmails(argThat(
           predicate<GetEmailsParams>((p) => p.folderId == null))));
-      verify(mockCacheEmails(argThat(predicate<CacheEmailsParams>(
-          (p) => p.folderId == 'drafts' && p.replaceFolder)))).called(1);
-    });
-  });
-
-  group('EmailListRefreshRequested cache ordering (active account)', () {
-    // Regression: the fresh page must *replace* the folder's rows, so an email
-    // deleted or moved elsewhere stops being listed. The repository also fires
-    // its own unawaited cache write as a side effect of getEmails() succeeding,
-    // which isn't ordered against this one — so the bloc writes explicitly.
-    //
-    // It must do that in ONE call with replaceFolder, not clear-then-write.
-    // cacheEmails preserves an already-cached full body by looking the old row
-    // up first; a separate clear on the line before guaranteed that lookup
-    // found nothing, so every refresh discarded every cached body in the folder
-    // and BodyPrefetchService re-downloaded up to 20 messages. The delete now
-    // happens inside the same transaction and after the preservation lookups.
-    test('replaces the folder cache in a single write', () async {
-      final mockCacheEmails = MockCacheEmails();
-      final mockRecordKnownSenders = MockRecordKnownSenders();
-      final orderedBloc = EmailListBloc(
-        getEmails: mockGetEmails,
-        getCachedEmails: mockGetCachedEmails,
-        cacheEmails: mockCacheEmails,
-        forgetCachedEmails: mockForgetCachedEmails,
-        markEmailAsRead: MockMarkEmailAsRead(),
-        moveEmail: mockMoveEmail,
-        removeConversationFromFolder: mockRemoveConversationFromFolder,
-        reportJunk: MockReportJunk(),
-        reportPhishing: MockReportPhishing(),
-        notJunk: MockNotJunk(),
-        deleteEmail: MockDeleteEmail(),
-        emptyFolder: mockEmptyFolder,
-        accountManager: _FakeActiveAccountManager(),
-        recordKnownSenders: mockRecordKnownSenders,
-        classifyEmails: MockClassifyEmails(),
-        trainSpamFilter: MockTrainSpamFilter(),
-        searchEmails: MockSearchEmails(),
-        getEmail: MockGetEmail(),
-        getConversationThread: MockGetConversationThread(),
-        spamDbSyncService: MockSpamDbSyncService(),
-        outboxDrainService: MockOutboxDrainService(),
-        bodyPrefetchService: _RecordingBodyPrefetch(),
-      );
-      addTearDown(orderedBloc.close);
-
-      when(mockGetCachedEmails(any)).thenAnswer((_) async => const Right([]));
-      when(mockGetEmails(any))
-          .thenAnswer((_) async => Right([_email('id1')]));
-      when(mockCacheEmails(any)).thenAnswer((_) async => const Right(unit));
-      when(mockRecordKnownSenders(any))
-          .thenAnswer((_) async => const Right(unit));
-
-      orderedBloc
-          .add(const EmailListRefreshRequested(folderId: 'folder-1'));
-      await orderedBloc.stream.firstWhere((s) => s is EmailListLoaded);
-
-      final captured = verify(mockCacheEmails(captureAny)).captured;
-      expect(captured, hasLength(1),
-          reason: 'one write, not a clear followed by a write');
-      final params = captured.single as CacheEmailsParams;
-      expect(params.replaceFolder, isTrue,
-          reason: 'the fresh page must replace the folder, not merge into it');
-      expect(params.folderId, 'folder-1');
-      expect(params.emails.map((e) => e.id), ['id1']);
     });
   });
 
   // ---------------------------------------------------------------------------
-  // EmailListLoadRequested — a first fetch that fails behind a populated cache
+  // The folder after a fresh page: the cache, inside its coverage
   //
-  // Regression: the failure is swallowed so the cached mail stays on screen,
-  // which is right, but nothing then re-fetched the folder — so a cold start
-  // whose first request lost a race with the machine's network coming up sat
-  // there showing yesterday's mail until the user pressed Refresh.
+  // The repository writes a listed page over the stretch of the folder it
+  // answers for (awaited), and the list is read back from the cache — so what
+  // a load shows and what a later repaint shows cannot disagree, and a folder
+  // the user scrolled does not shrink back to one page. What the cache keeps
+  // and drops is the local datasource's window replace; here the question is
+  // only what the bloc reads, and from where Load More continues.
   // ---------------------------------------------------------------------------
-
-  // Regression. The load used to keep every cached row the fresh first page
-  // did not list, meaning it to be "the folder beyond page 1" — but a row the
-  // page *would* have listed and did not has left the folder, and keeping it
-  // showed a message the cache write had already dropped. On a folder the user
-  // had just deleted from, that read as the delete undoing itself until the
-  // next repaint.
-  group('EmailListLoadRequested merge with the cached page', () {
+  group('a folder read from its cache', () {
     final day = DateTime(2026, 6, 1);
-    List<Email> page(int count, {String? parentFolderId}) => [
-          for (var i = 0; i < count; i++)
-            _email('fresh-$i',
-                parentFolderId: parentFolderId,
-                receivedDateTime: day.subtract(Duration(hours: i))),
+    Email row(String id, int hoursAgo, {String? conversationId}) => _email(id,
+        conversationId: conversationId,
+        receivedDateTime: day.subtract(Duration(hours: hoursAgo)));
+    List<Email> rows(String prefix, int from, int count) => [
+          for (var i = from; i < from + count; i++) row('$prefix-$i', i),
         ];
 
-    // The cache is only read for an active account.
+    /// Answers GetCachedEmails the way the cache's window read does: whole
+    /// threads, dated by their newest row, newest first.
+    void cacheHolds(List<Email> cache) {
+      when(mockGetCachedEmails(any)).thenAnswer((inv) async {
+        final p = inv.positionalArguments.first as GetCachedEmailsParams;
+        final keys = threadKeys(cache).entries.toList()
+          ..sort((a, b) {
+            final byDate = b.value.compareTo(a.value);
+            return byDate != 0 ? byDate : b.key.compareTo(a.key);
+          });
+        final picked = <String>{};
+        for (final entry in keys) {
+          if (p.from != null && entry.value.isBefore(p.from!)) continue;
+          final after = p.after;
+          if (after != null &&
+              !(entry.value.isBefore(after.threadDate) ||
+                  (entry.value == after.threadDate &&
+                      entry.key.compareTo(after.threadKey) < 0))) {
+            continue;
+          }
+          if (p.limitThreads != null && picked.length >= p.limitThreads!) {
+            break;
+          }
+          picked.add(entry.key);
+        }
+        return Right([
+          for (final e in cache)
+            if (picked.contains(e.conversationId ?? e.id)) e,
+        ]);
+      });
+    }
+
+    void coverageIs(FolderCoverage coverage) => when(mockGetFolderCoverage(any))
+        .thenAnswer((_) async => Right(coverage));
+
+    Future<EmailListLoaded> load() async {
+      bloc.add(const EmailListLoadRequested(folderId: 'folder-1'));
+      return await bloc.stream.firstWhere(
+          (s) => s is EmailListLoaded && !s.isLoadingFresh) as EmailListLoaded;
+    }
+
     setUp(() => fakeAccountManager.account = _account);
 
-    test('drops a cached row the full page no longer lists, keeps the rows '
-        'beyond the page', () async {
-      final fresh = page(_pageSize);
-      final oldest = fresh.last.receivedDateTime;
-      when(mockGetCachedEmails(any)).thenAnswer((_) async => Right([
-            // Newer than the oldest row on the page and not on it: gone.
-            _email('deleted-meanwhile',
-                receivedDateTime: day.subtract(const Duration(minutes: 30))),
-            ...fresh.take(3),
-            // Older than anything on the page: page 2, still the folder's.
-            _email('page-2',
-                receivedDateTime: oldest.subtract(const Duration(hours: 1))),
-          ]));
-      when(mockGetEmails(any)).thenAnswer((_) async => Right(fresh));
+    test('shows the cached rows the coverage vouches for below the page, and '
+        'not the ones under its edge', () async {
+      final page = rows('page', 0, _pageSize);
+      final below = rows('below', _pageSize, 10);
+      // Under the coverage's edge — a message moved in from another folder,
+      // filed here at once. Nothing has listed the stretch above it.
+      final island = row('island', 24 * 400);
+      cacheHolds([...page, ...below, island]);
+      coverageIs(FolderCoverage(coveredFrom: below.last.receivedDateTime));
+      when(mockGetEmails(any)).thenAnswer((_) async => Right(page));
 
-      bloc.add(const EmailListLoadRequested(folderId: 'folder-1'));
-      final state = await bloc.stream.firstWhere(
-              (s) => s is EmailListLoaded && !s.isLoadingFresh)
-          as EmailListLoaded;
+      final state = await load();
 
-      final ids = state.emails.map((e) => e.id).toList();
-      expect(ids, isNot(contains('deleted-meanwhile')));
-      expect(ids.last, 'page-2');
-      expect(ids.length, _pageSize + 1);
+      final ids = state.emails.map((e) => e.id);
+      expect(ids, containsAll(below.map((e) => e.id)));
+      expect(ids, isNot(contains('island')));
+      expect(state.hasMore, isTrue);
     });
 
-    test('a page that is not full is the whole folder — nothing cached '
-        'survives it', () async {
-      when(mockGetCachedEmails(any)).thenAnswer((_) async => Right([
-            _email('stale', receivedDateTime: day.subtract(const Duration(days: 9))),
-            _email('fresh-0', receivedDateTime: day),
-          ]));
-      when(mockGetEmails(any))
-          .thenAnswer((_) async => Right([_email('fresh-0', receivedDateTime: day)]));
+    test('a cache that vouches for nothing shows the page alone', () async {
+      final page = rows('page', 0, _pageSize);
+      cacheHolds([...page, ...rows('stale', _pageSize, 10)]);
+      when(mockGetEmails(any)).thenAnswer((_) async => Right(page));
 
-      bloc.add(const EmailListLoadRequested(folderId: 'folder-1'));
-      final state = await bloc.stream.firstWhere(
-              (s) => s is EmailListLoaded && !s.isLoadingFresh)
-          as EmailListLoaded;
+      final state = await load();
 
-      expect(state.emails.map((e) => e.id), ['fresh-0']);
+      expect(state.emails.map((e) => e.id), page.map((e) => e.id));
     });
 
-    // The expansion adds a thread's copies from other folders, which can be
-    // older than anything the folder itself holds. The page is bounded by its
-    // own rows: bounded by an old Sent reply instead, the folder's whole
-    // second page would count as "on the page and missing" and be dropped.
-    test('the page is bounded by its own rows, not by an older expansion row',
-        () async {
-      final fresh = [
-        ...page(_pageSize - 1, parentFolderId: 'folder-1'),
-        _email('old-sent-copy',
-            parentFolderId: 'sent',
-            receivedDateTime: day.subtract(const Duration(days: 30))),
-      ];
-      when(mockGetCachedEmails(any)).thenAnswer((_) async => Right([
-            // Older than every row the folder has on the page, newer than the
-            // Sent copy: page 2, and must survive.
-            _email('page-2',
-                parentFolderId: 'folder-1',
-                receivedDateTime: day.subtract(const Duration(days: 2))),
-          ]));
-      when(mockGetEmails(any)).thenAnswer((_) async => Right(fresh));
+    test('a refresh writes nothing itself and keeps the rows the user had '
+        'scrolled to', () async {
+      final page = rows('page', 0, _pageSize);
+      final cache = [...page, ...rows('older', _pageSize, 150)];
+      cacheHolds(cache);
+      coverageIs(const FolderCoverage(complete: true));
+      when(mockGetEmails(any)).thenAnswer((_) async => Right(page));
+      await load();
+      bloc.add(const EmailListLoadMoreRequested());
+      final scrolled = await bloc.stream.firstWhere((s) =>
+              s is EmailListLoaded && !s.isLoadingMore && s.emails.length > 100)
+          as EmailListLoaded;
 
-      bloc.add(const EmailListLoadRequested(folderId: 'folder-1'));
-      final state = await bloc.stream.firstWhere(
+      bloc.add(const EmailListRefreshRequested());
+      final refreshed = await bloc.stream.firstWhere(
               (s) => s is EmailListLoaded && !s.isLoadingFresh)
           as EmailListLoaded;
 
-      expect(state.emails.map((e) => e.id), contains('page-2'));
+      expect(refreshed.emails.length, scrolled.emails.length);
+      verifyNever(mockCacheEmails(any));
+    });
+
+    test('Load More reads the next cache window without the network, and '
+        'stops at the end of a complete folder', () async {
+      final page = rows('page', 0, _pageSize);
+      final cache = [...page, ...rows('older', _pageSize, 125)];
+      cacheHolds(cache);
+      coverageIs(const FolderCoverage(complete: true));
+      when(mockGetEmails(any)).thenAnswer((_) async => Right(page));
+
+      final first = await load();
+      expect(first.emails, hasLength(100));
+
+      bloc.add(const EmailListLoadMoreRequested());
+      final more = await bloc.stream.firstWhere(
+              (s) => s is EmailListLoaded && !s.isLoadingMore)
+          as EmailListLoaded;
+
+      expect(more.emails, hasLength(150));
+      expect(more.hasMore, isFalse);
+      verify(mockGetEmails(any)).called(1);
+    });
+
+    test('Load More past the cache continues from the coverage edge, with the '
+        'cutoff held fixed while it pages', () async {
+      final page = rows('page', 0, _pageSize);
+      final edge = page.last.receivedDateTime;
+      cacheHolds(page);
+      coverageIs(FolderCoverage(coveredFrom: edge));
+      when(mockGetEmails(any)).thenAnswer((inv) async {
+        final p = inv.positionalArguments.first as GetEmailsParams;
+        if (p.olderThan == null) return Right(page);
+        return Right(rows('net-${p.skip}', _pageSize + p.skip, _pageSize));
+      });
+      await load();
+
+      bloc.add(const EmailListLoadMoreRequested());
+      await bloc.stream
+          .firstWhere((s) => s is EmailListLoaded && !s.isLoadingMore);
+      bloc.add(const EmailListLoadMoreRequested());
+      await bloc.stream
+          .firstWhere((s) => s is EmailListLoaded && !s.isLoadingMore);
+
+      final continued = verify(mockGetEmails(captureAny))
+          .captured
+          .cast<GetEmailsParams>()
+          .where((p) => p.olderThan != null)
+          .toList();
+      expect(continued.map((p) => p.olderThan), [edge, edge]);
+      expect(continued.map((p) => p.skip), [0, _pageSize]);
+      expect(continued.first.windowEnd, edge);
     });
   });
 
@@ -1804,7 +1813,7 @@ void main() {
       return EmailListBloc(
         getEmails: mockGetEmails,
         getCachedEmails: mockGetCachedEmails,
-        cacheEmails: MockCacheEmails(),
+        getFolderCoverage: mockGetFolderCoverage,
         forgetCachedEmails: mockForgetCachedEmails,
         markEmailAsRead: MockMarkEmailAsRead(),
         moveEmail: mockMoveEmail,
@@ -2274,7 +2283,7 @@ void main() {
       sentBloc = EmailListBloc(
         getEmails: mockGetEmails,
         getCachedEmails: mockGetCachedEmails,
-        cacheEmails: mockCacheEmails,
+        getFolderCoverage: mockGetFolderCoverage,
         forgetCachedEmails: mockForgetCachedEmails,
         markEmailAsRead: mockMarkEmailAsRead,
         moveEmail: mockMoveEmail,

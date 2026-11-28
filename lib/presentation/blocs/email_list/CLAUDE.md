@@ -48,16 +48,10 @@ reconciliation spares it there (Gmail keeps the id) and keeps it in a page
 that does not list it yet. See "A move is a removal from every folder but its
 destination" in [`../mail_poller/CLAUDE.md`](../mail_poller/CLAUDE.md).
 
-**A load keeps only the cached rows that lie beyond the fresh page.** The first
-page comes from the network and the cache is merged in behind it so a folder
-the user has scrolled does not shrink back to a page on every open — but only
-rows *older than the oldest of the page's own rows* qualify (`_cachedRowsBeyondPage`),
-and none at all when the page is not full. A cached row the page would have
-listed and did not has left the folder, and keeping it on screen until the next
-repaint showed a message the cache write had already dropped: on a folder the
-user had just deleted from, the delete undoing itself. The bound is the page's
-own rows, not its expansion rows, because a thread's Sent copy can be older
-than the whole folder and would count page two as "on the page and missing".
+**A load shows the cache inside its coverage** — see "A Folder's Cache Is
+Replaced a Window at a Time" below. What used to live here (keep only the
+cached rows older than the fresh page) is now the cache's own window replace,
+and the list is read back from the cache after every fresh page.
 
 The whole page is cached under the folder being listed, expansion rows
 included — so a `cached_emails` row is *one message as seen in one folder*, and
@@ -102,6 +96,101 @@ empty makes every IMAP folder compare unequal to its own cache on every poll.
 than 25; Gmail has no multi-thread get, so it is bounded to 8 in flight instead.
 25 at once is enough for either provider to throttle, and a 429 buys a second or
 more of `RetryInterceptor` backoff.
+
+## A Folder's Cache Is Replaced a Window at a Time
+
+Every first-page listing used to *replace the folder's whole cache* with that
+page (`replaceFolder: true`, from the list's load and refresh and from the
+poller's Inbox and watched-folder syncs). So a folder never held more than a
+page: rows the user had scrolled to were gone at the next poll, and opening a
+folder always meant scrolling and waiting on the network again. Now a listed
+page replaces only the **window** of the folder it answers for
+(`ListingWindow`, `domain/entities/folder_listing.dart`), and the rows outside
+it stay.
+
+- **A window is dated by threads.** Each thread on the page is dated by its
+  newest row (any folder's copy the listing carried), and the window starts at
+  the oldest of those. That is Gmail's order exactly (threads by latest
+  message) and a slightly *newer* bound than Graph's (messages by their own
+  date, where a Sent reply can be newer), which is the safe direction: a
+  narrower window replaces less.
+- **Only the server's listed count says a page was short**
+  (`ListedPage.listedCount`: messages on Graph and IMAP, threads on Gmail). A
+  short page means the folder ends inside it, so everything older is dropped.
+  Read from the rows, a Gmail page of 25 threads with two that sit wholly in
+  Trash looked short, and would have wiped the folder below it. Without a
+  count the rule is generous (25 own messages *or* 25 threads is full).
+- **The window is the server's page, not the reconciled one.** Reconciliation
+  puts back a moved message the server has not listed yet. It can be years old,
+  and counting it would stretch the window over everything since.
+- **A thread that straddles the window's edge is left alone.** A
+  date-ordered page carries whole threads (Graph's and Gmail's expansion), and
+  may not list a straddling thread at all: a Graph thread's recent Sent reply
+  sits in the top page's date range while its listed message is pages down.
+  Deleting it there dropped the reply from every older thread answered since,
+  and nothing below the top ever put it back. The cost is that a stale row of
+  a long thread can linger until the monthly re-check (below).
+- **IMAP keeps the old paging** (`ListingWindow.dateOrdered`,
+  `listingIsDateOrdered`). It lists by UID, the order mail arrived *in that
+  mailbox*, so an Archive filled by moves has years-old mail at the top. A
+  page's dates then say nothing about what it covers: a coverage built from
+  them claimed years the cache had never seen, and Load More continued from
+  below them, skipping everything between. An IMAP top page therefore replaces
+  the whole folder, a later page only adds, no coverage is kept, and the
+  offline backfill has nothing to walk there.
+
+**Coverage** (`FolderCoverage`, table `folder_coverages`) records how far down
+the cache vouches for the folder: every message from `coveredFrom` to now, or
+all of it once `complete`. The local datasource moves it in the same
+transaction as the write:
+
+- A top page that reached the end makes the folder complete.
+- A top page that **joins onto** the cached rows keeps the coverage below it.
+  Joining means a row the server listed inside the window was already cached.
+- A top page that does not join (more new mail than a page, in a folder
+  nothing listed meanwhile) vouches only for itself. The older rows stay
+  cached but are no longer shown as the folder's continuation, or the
+  unlisted stretch between would be hidden for good.
+- A page further down extends the coverage only if its window reaches the
+  edge. An empty one ends the folder (only the coverage hears that; nothing is
+  deleted on an empty answer), and one emptied by reconciliation extends it to
+  its own start.
+
+**The list reads the cache, a window of threads at a time**
+(`getCachedWindow`, 100 threads). Opening a folder paints the top window
+inside the coverage. After the fresh page lands, the list is read back from
+the cache the repository has just written (the write is awaited for a
+windowed page), so the load and the next repaint cannot disagree. Load More
+reads the next cache window first: no network, no wait. Past the cache it
+continues the server listing **from the coverage's edge**, never from the
+oldest row on screen. Rows under the edge can be islands (a moved message
+filed under its destination at once), and continuing from one would skip
+everything between it and the edge. The cutoff is held fixed for the whole
+scroll, with an offset into that listing (`GetEmailsParams.olderThan`, `skip`):
+Gmail dates a thread by its latest message, so a long thread with an old
+message heads every "older than" query, and re-deriving the cutoff from each
+page stalls on them. A repaint reads down to the oldest thread on screen and
+no further, so it neither shrinks the list nor decrypts the whole folder each
+poll.
+
+**Settings > General > *Keep opened folders offline*** (`FolderBackfillService`,
+off by default) walks each folder with a coverage (the folders the user has
+opened, plus the Inbox) down to its last message, a page at a time. Each page
+goes through `EmailRepository.syncFolderPage`, so it is reconciled and written
+over its window like Load More's. The walk's cutoff, offset and last window are
+persisted per folder (`FolderWalk`), so it survives a restart. Once a folder is
+complete, it is **re-walked from the top every 30 days**. That is the only
+thing that drops a message deleted or moved elsewhere deep in a folder, since
+no listing near the top ever sees one. Pacing is per provider: Gmail one page
+per 30 s (~2,000 units a minute, a third of the quota; see
+[`docs/claude/gmail-quota.md`](../../../../docs/claude/gmail-quota.md)) and
+Graph one per 4 s; IMAP folders keep no coverage, so there is nothing to walk.
+Main window only.
+
+Everything that reads a folder's cache whole had to stop, because with the
+backfill a folder can hold years of mail and every row read is decrypted on the
+UI isolate. The poller's watched-folder sync, the Commitments scan and the
+superseded-invite tidy-up all read the newest threads only.
 
 ## A Sent Reply Reaches Its Thread by a Re-Listing, Never by the Poll
 

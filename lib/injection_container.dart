@@ -169,6 +169,7 @@ import 'domain/usecases/update_calendar_event.dart';
 import 'domain/usecases/update_task_due_date.dart';
 import 'domain/usecases/update_task_status.dart';
 import 'domain/usecases/get_cached_emails.dart';
+import 'domain/usecases/get_folder_coverage.dart';
 import 'domain/usecases/cache_emails.dart';
 import 'domain/usecases/clear_email_cache_for_folder.dart';
 import 'domain/usecases/forget_cached_emails.dart';
@@ -188,6 +189,7 @@ import 'infrastructure/notifications/notification_service.dart';
 import 'infrastructure/share/share_intent_service.dart';
 import 'infrastructure/sync/change_stream_service.dart';
 import 'infrastructure/sync/body_prefetch_service.dart';
+import 'infrastructure/sync/folder_backfill_service.dart';
 import 'infrastructure/sync/cache_membership_repair_service.dart';
 import 'infrastructure/sync/calendar_outbox_drain_service.dart';
 import 'infrastructure/sync/calendar_pending_op_reconciler.dart';
@@ -351,6 +353,14 @@ Future<void> configureDependencies() async {
       // A moved or cancelled meeting's update email: re-read the calendars
       // now rather than at the next 15-minute pass, or its old reminders fire.
       onMeetingMail: ReminderReconcileChannel.reconcileNow,
+    ),
+  );
+  sl.registerLazySingleton(
+    () => FolderBackfillService(
+      repository: sl<EmailRepository>(),
+      accountManager: sl<AccountManager>(),
+      settings: sl<AppSettings>(),
+      connectivity: sl<ConnectivityService>(),
     ),
   );
   sl.registerLazySingleton(
@@ -529,6 +539,7 @@ Future<void> configureDependencies() async {
   sl.registerLazySingleton(() => DownloadAttachment(sl<EmailRepository>()));
   sl.registerLazySingleton(() => GetRawEmailBytes(sl<EmailRepository>()));
   sl.registerLazySingleton(() => GetCachedEmails(sl<EmailRepository>()));
+  sl.registerLazySingleton(() => GetFolderCoverage(sl<EmailRepository>()));
   sl.registerLazySingleton(() => CacheEmails(sl<EmailRepository>()));
   sl.registerLazySingleton(() => ClearEmailCacheForFolder(sl<EmailRepository>()));
   sl.registerLazySingleton(() => ForgetCachedEmails(sl<EmailRepository>()));
@@ -686,7 +697,7 @@ Future<void> configureDependencies() async {
   sl.registerFactory(() => EmailListBloc(
         getEmails: sl<GetEmails>(),
         getCachedEmails: sl<GetCachedEmails>(),
-        cacheEmails: sl<CacheEmails>(),
+        getFolderCoverage: sl<GetFolderCoverage>(),
         forgetCachedEmails: sl<ForgetCachedEmails>(),
         markEmailAsRead: sl<MarkEmailAsRead>(),
         moveEmail: sl<MoveEmail>(),

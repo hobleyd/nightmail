@@ -1,3 +1,4 @@
+import 'dart:collection';
 import 'dart:typed_data';
 
 import '../../../core/utils/special_folder_kind.dart';
@@ -8,12 +9,23 @@ import '../../models/email_folder_model.dart';
 import '../../models/email_model.dart';
 
 abstract interface class EmailRemoteDatasource {
+  /// A page of [folderId]'s listing, newest first, with the cross-folder copies
+  /// of each thread on it (Graph, Gmail).
+  ///
+  /// With [olderThan] the listing is the folder's messages dated at or before
+  /// that instant — inclusive, so a page boundary between two messages of the
+  /// same second loses neither (the caller drops the repeats) — and [skip]
+  /// is an offset *within* that listing. The caller keeps [olderThan] fixed
+  /// while it pages: re-deriving it from each page would stall on Gmail, whose
+  /// listing dates a thread by its latest message, so a long thread with an
+  /// old message re-appears at the head of every "older than" query.
   Future<List<EmailModel>> getEmails({
     String? folderId,
     int top = 25,
     int skip = 0,
     String? filter,
     String orderBy = 'receivedDateTime desc',
+    DateTime? olderThan,
   });
 
   Future<EmailModel> getEmail(String id);
@@ -212,3 +224,38 @@ abstract interface class EmailRemoteDatasource {
   /// Permanently deletes a server draft by [draftId].
   Future<void> deleteServerDraft({required String draftId});
 }
+
+/// A folder page that says how many items the server *listed* — messages on
+/// Graph and IMAP, threads on Gmail — as distinct from how many rows it parsed
+/// to (the cross-folder expansion adds rows; a thread whose every message is in
+/// Trash parses to none).
+///
+/// Only the listed count can say a page was short, i.e. that the folder ends
+/// inside it. Guessing that from the rows got it wrong in the dangerous
+/// direction: a short-looking page is taken as the bottom of the folder, and
+/// every cached row older than it is dropped.
+class ListedPage extends ListBase<EmailModel> {
+  ListedPage(this._rows, {required this.listedCount});
+
+  final List<EmailModel> _rows;
+  final int listedCount;
+
+  @override
+  int get length => _rows.length;
+
+  @override
+  set length(int value) => _rows.length = value;
+
+  @override
+  EmailModel operator [](int index) => _rows[index];
+
+  @override
+  void operator []=(int index, EmailModel value) => _rows[index] = value;
+
+  @override
+  void add(EmailModel element) => _rows.add(element);
+}
+
+/// The server's listed count for [page], when the datasource reported one.
+int? listedCountOf(List<Object?> page) =>
+    page is ListedPage ? page.listedCount : null;

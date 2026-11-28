@@ -25,6 +25,30 @@ class AppSettings {
 
   static const String _chatSortByNameFile = 'chat_sort_by_name';
 
+  static const bool defaultKeepFoldersOffline = false;
+  static const String _keepFoldersOfflineFile = 'keep_folders_offline';
+
+  /// Settings > General > "Keep opened folders offline": the backfill that
+  /// downloads every message of each folder the user has opened, so the list
+  /// scrolls to the end from the cache. Off by default — on Gmail it spends
+  /// real quota (see `FolderBackfillService`).
+  Future<bool> loadKeepFoldersOffline() async {
+    try {
+      final file = await _file(_keepFoldersOfflineFile);
+      if (await file.exists()) {
+        return (await file.readAsString()).trim() == 'true';
+      }
+    } catch (_) {}
+    return defaultKeepFoldersOffline;
+  }
+
+  Future<void> saveKeepFoldersOffline(bool value) async {
+    try {
+      final file = await _file(_keepFoldersOfflineFile);
+      await file.writeAsString('$value');
+    } catch (_) {}
+  }
+
   /// The chat window's list A–Z rather than newest first.
   Future<bool> loadChatSortByName() async {
     try {

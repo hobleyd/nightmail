@@ -5,17 +5,72 @@ import 'package:fpdart/fpdart.dart';
 import '../../core/error/failures.dart';
 import '../entities/email.dart';
 import '../entities/email_folder.dart';
+import '../entities/folder_listing.dart';
 import '../entities/email_attachment.dart';
 import '../entities/local_attachment.dart';
 
 abstract interface class EmailRepository {
   /// Fetches a page of emails from [folderId] (defaults to inbox).
+  ///
+  /// With [olderThan] the page continues the folder below that instant, [skip]
+  /// into that listing — see `EmailRemoteDatasource.getEmails`. A page with
+  /// [windowEnd] (the start of the page above it, or the coverage's edge)
+  /// replaces the cached rows of the stretch it answers for; the folder's top
+  /// page (no [skip], no [olderThan]) always does. Either way the write has
+  /// landed by the time this returns, so the folder's cache can be read
+  /// straight back.
   Future<Either<Failure, List<Email>>> getEmails({
     String? folderId,
     int top = 25,
     int skip = 0,
     String? filter,
     String orderBy = 'receivedDateTime desc',
+    DateTime? olderThan,
+    DateTime? windowEnd,
+  });
+
+  /// [getEmails] for any account, not just the active one, and always
+  /// written to the cache under [accountId] — the offline backfill's page.
+  Future<Either<Failure, SyncedPage>> syncFolderPage({
+    required String accountId,
+    required String folderId,
+    required int top,
+    int skip = 0,
+    DateTime? olderThan,
+    DateTime? windowEnd,
+  });
+
+  /// One window of [folderId]'s cache, a thread at a time — see
+  /// `EmailLocalDatasource.getCachedWindow`.
+  Future<Either<Failure, CachedWindow>> getCachedWindow({
+    required String accountId,
+    required String folderId,
+    DateTime? from,
+    CacheCursor? after,
+    int? limitThreads,
+  });
+
+  /// How much of [folderId] the cache vouches for.
+  Future<Either<Failure, FolderCoverage>> getFolderCoverage({
+    required String accountId,
+    required String folderId,
+  });
+
+  /// The folders of [accountId] the cache keeps a coverage for.
+  Future<Either<Failure, List<String>>> getCoveredFolderIds(String accountId);
+
+  /// The offline backfill's walk of [folderId], if one is under way.
+  Future<Either<Failure, FolderWalk?>> getFolderWalk({
+    required String accountId,
+    required String folderId,
+  });
+
+  /// Records, or with a null [walk] ends, the backfill's walk of [folderId].
+  Future<Either<Failure, Unit>> saveFolderWalk({
+    required String accountId,
+    required String folderId,
+    FolderWalk? walk,
+    DateTime? finishedFullPass,
   });
 
   /// Fetches a single email by [id] with full body content.
@@ -161,17 +216,18 @@ abstract interface class EmailRepository {
 
   /// Writes [emails] to the local cache for [accountId]/[folderId].
   ///
-  /// Pass [replaceFolder] when [emails] is a complete page that should become
-  /// the folder's contents, so a message removed remotely stops being listed.
-  /// Prefer it over [clearCacheForFolder] followed by a plain write: the clear
-  /// runs inside the same transaction and *after* the cache's body-preservation
-  /// lookups, which the two-call sequence defeated. An empty [emails] list is a
-  /// no-op either way.
+  /// Pass [window] when [emails] is a listed page, so the cached rows of the
+  /// stretch it answers for are replaced by it and a message removed remotely
+  /// stops being listed — see [ListingWindow]. Prefer it over
+  /// [clearCacheForFolder] followed by a plain write: the replace runs inside
+  /// the same transaction and *after* the cache's body-preservation lookups,
+  /// which the two-call sequence defeated. An empty [emails] list is a no-op
+  /// either way.
   Future<Either<Failure, Unit>> cacheEmails({
     required String accountId,
     required String folderId,
     required List<Email> emails,
-    bool replaceFolder = false,
+    ListingWindow? window,
   });
 
   /// Forgets [emailIds] locally — drops their cached rows and suppresses them

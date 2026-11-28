@@ -23,6 +23,7 @@ import '../../infrastructure/notifications/notification_service.dart';
 import '../../infrastructure/notifications/reminder_reconcile_channel.dart';
 import '../../infrastructure/notifications/task_reminder_service.dart';
 import '../../infrastructure/share/share_intent_service.dart';
+import '../../infrastructure/sync/folder_backfill_service.dart';
 import '../../injection_container.dart';
 import '../blocs/account/account_cubit.dart';
 import '../blocs/calendar/calendar_bloc.dart';
@@ -92,6 +93,10 @@ class HomePage extends StatelessWidget {
     // session — main window only, same reasoning as the sync services above
     // (it needs a working, main-isolate get_it graph for token refresh).
     unawaited(sl<AccountMigrationService>().resumeAll());
+    // Settings > General > "Keep opened folders offline". Main window only,
+    // like the services above; start() reads the setting and is a no-op when
+    // it is off or the walk is already running.
+    unawaited(sl<FolderBackfillService>().start());
     // Sub-windows cannot reach the OS scheduler themselves, so they nudge the
     // main window to reconcile as soon as they change a reminder instead of
     // leaving it to the next 15-minute cycle. Re-registering only swaps the

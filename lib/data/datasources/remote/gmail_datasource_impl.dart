@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:math';
 
 import 'package:dio/dio.dart';
 import 'package:enough_mail/enough_mail.dart';
@@ -396,8 +397,17 @@ class GmailDatasourceImpl
     int skip = 0,
     String? filter,
     String orderBy = 'receivedDateTime desc',
+    DateTime? olderThan,
   }) async {
     try {
+      if (olderThan != null) {
+        return await _getEmailsOlderThan(
+          folderId: folderId,
+          top: top,
+          skip: skip,
+          olderThan: olderThan,
+        );
+      }
       // Use the Threads API so that cross-folder messages are included.
       // labelIds filters *which threads* to show (threads that have at least
       // one message with that label), but every message in each thread is
@@ -449,13 +459,91 @@ class GmailDatasourceImpl
       final threadIds = [
         for (final t in threads) (t as Map<String, dynamic>)['id'] as String,
       ];
-      return await _fetchThreads(
-        threadIds,
-        excludeLabels: _excludedWhenListing(folderId),
+      return ListedPage(
+        await _fetchThreads(
+          threadIds,
+          excludeLabels: _excludedWhenListing(folderId),
+        ),
+        listedCount: threadIds.length,
       );
     } on DioException catch (e) {
       throw _mapException(e);
     }
+  }
+
+  /// Page tokens of the "older than" listings, keyed by folder and cutoff,
+  /// with the page each one continues from. Kept apart from [_pageTokens]:
+  /// the list on screen and the offline backfill can page the same folder at
+  /// once, each below a cutoff of its own.
+  final Map<String, ({int skip, String token})> _olderThanTokens = {};
+
+  /// [getEmails] with an `olderThan`: the folder's threads holding a message
+  /// at or before the cutoff (`before:` is exclusive and in whole seconds,
+  /// hence the second added), [skip] pages in.
+  ///
+  /// Gmail pages by token, not offset. A token left by the previous page of
+  /// the same listing is used when it continues from [skip]; otherwise —
+  /// after a restart, or a page re-asked — the listing is fast-forwarded by
+  /// thread ids alone, 10 quota units per 500 threads, rather than by
+  /// fetching every page in between at 1,010 apiece.
+  Future<List<EmailModel>> _getEmailsOlderThan({
+    required String? folderId,
+    required int top,
+    required int skip,
+    required DateTime olderThan,
+  }) async {
+    final seconds = olderThan.millisecondsSinceEpoch ~/ 1000 + 1;
+    final key = '${folderId ?? ''}|$seconds';
+    Future<Map<String, dynamic>> list(int maxResults, String? token) async {
+      final resp = await _dio.get<String>(
+        '/users/me/threads',
+        queryParameters: <String, dynamic>{
+          'maxResults': maxResults,
+          'labelIds': ?folderId,
+          'q': 'before:$seconds',
+          'pageToken': ?token,
+        },
+        options: Options(responseType: ResponseType.plain),
+      );
+      final raw = resp.data;
+      if (raw == null || raw.isEmpty) return const {};
+      return jsonDecode(raw) as Map<String, dynamic>;
+    }
+
+    String? token;
+    final stored = _olderThanTokens[key];
+    if (skip > 0 && stored != null && stored.skip == skip) {
+      token = stored.token;
+    } else if (skip > 0) {
+      var passed = 0;
+      while (passed < skip) {
+        final data = await list(min(500, skip - passed), token);
+        final threads = data['threads'] as List<dynamic>? ?? const [];
+        passed += threads.length;
+        token = data['nextPageToken'] as String?;
+        if (token == null || threads.isEmpty) {
+          _olderThanTokens.remove(key);
+          return [];
+        }
+      }
+    }
+
+    final data = await list(top, token);
+    final next = data['nextPageToken'] as String?;
+    if (next != null) {
+      _olderThanTokens[key] = (skip: skip + top, token: next);
+    } else {
+      _olderThanTokens.remove(key);
+    }
+    final threads = data['threads'] as List<dynamic>? ?? const [];
+    if (threads.isEmpty) return [];
+    return ListedPage(
+      await _fetchThreads(
+        [for (final t in threads) (t as Map<String, dynamic>)['id'] as String],
+        excludeLabels: _excludedWhenListing(folderId),
+      ),
+      listedCount: threads.length,
+    );
   }
 
   /// Labels whose messages must not be re-cached under [folderId] — see

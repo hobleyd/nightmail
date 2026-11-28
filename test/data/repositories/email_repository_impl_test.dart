@@ -17,6 +17,7 @@ import 'package:nightmail/data/models/email_model.dart';
 import 'package:nightmail/data/repositories/email_repository_impl.dart';
 import 'package:nightmail/domain/entities/graph_endpoints.dart';
 import 'package:nightmail/domain/entities/email.dart';
+import 'package:nightmail/domain/entities/folder_listing.dart';
 import 'package:nightmail/domain/entities/email_attachment.dart';
 import 'package:nightmail/domain/entities/email_folder.dart';
 import 'package:nightmail/domain/entities/inline_attachment.dart';
@@ -220,7 +221,7 @@ void main() {
         accountId: anyNamed('accountId'),
         folderId: anyNamed('folderId'),
         emails: anyNamed('emails'),
-        replaceFolder: anyNamed('replaceFolder'),
+        window: anyNamed('window'),
       )).thenAnswer((_) async {});
       when(mockAccountManager.activeAccount).thenReturn(tAccount);
 
@@ -231,8 +232,100 @@ void main() {
         accountId: 'account-1',
         folderId: 'folder-1',
         emails: anyNamed('emails'),
-        replaceFolder: true,
+        window: argThat(isNotNull, named: 'window'),
       )).called(1);
+    });
+
+    // The window is the server's page: judged on what reconciliation hands
+    // back, a moved message put back into a page that lacks it (it can be
+    // years old) stretched the window over everything since, and the page's
+    // listed count is the only safe answer to "did the folder end here".
+    test('a top page\'s window comes from the server\'s page and listed count',
+        () async {
+      final page = [
+        for (var i = 0; i < 25; i++)
+          EmailModel(
+            id: 'm$i',
+            subject: 's',
+            from: const EmailAddressModel(address: 'a@b.com'),
+            toRecipients: const [],
+            ccRecipients: const [],
+            bodyPreview: '',
+            body: '',
+            bodyType: EmailBodyType.text,
+            isRead: true,
+            receivedDateTime: DateTime(2026, 6, 1).subtract(Duration(hours: i)),
+            importance: EmailImportance.normal,
+            parentFolderId: 'folder-1',
+          ),
+      ];
+      when(mockRemoteDatasource.getEmails(
+        folderId: anyNamed('folderId'),
+        top: anyNamed('top'),
+        skip: anyNamed('skip'),
+        filter: anyNamed('filter'),
+        orderBy: anyNamed('orderBy'),
+        olderThan: anyNamed('olderThan'),
+      )).thenAnswer((_) async => ListedPage(page, listedCount: 25));
+      when(mockLocalDatasource.cacheEmails(
+        accountId: anyNamed('accountId'),
+        folderId: anyNamed('folderId'),
+        emails: anyNamed('emails'),
+        window: anyNamed('window'),
+      )).thenAnswer((_) async {});
+      when(mockAccountManager.activeAccount).thenReturn(tAccount);
+
+      await repository.getEmails(folderId: 'folder-1');
+
+      final window = verify(mockLocalDatasource.cacheEmails(
+        accountId: 'account-1',
+        folderId: 'folder-1',
+        emails: anyNamed('emails'),
+        window: captureAnyNamed('window'),
+      )).captured.single as ListingWindow;
+      expect(window.isTop, isTrue);
+      expect(window.from, page.last.receivedDateTime);
+      expect(window.listedIds, hasLength(25));
+    });
+
+    test('a continuation page with a windowEnd is written over its window',
+        () async {
+      final cutoff = DateTime(2026, 5, 1);
+      when(mockRemoteDatasource.getEmails(
+        folderId: anyNamed('folderId'),
+        top: anyNamed('top'),
+        skip: anyNamed('skip'),
+        filter: anyNamed('filter'),
+        orderBy: anyNamed('orderBy'),
+        olderThan: anyNamed('olderThan'),
+      )).thenAnswer((_) async => ListedPage([tEmailModel], listedCount: 1));
+      when(mockLocalDatasource.cacheEmails(
+        accountId: anyNamed('accountId'),
+        folderId: anyNamed('folderId'),
+        emails: anyNamed('emails'),
+        window: anyNamed('window'),
+      )).thenAnswer((_) async {});
+      when(mockAccountManager.activeAccount).thenReturn(tAccount);
+
+      await repository.getEmails(
+          folderId: 'folder-1', olderThan: cutoff, windowEnd: cutoff);
+
+      verify(mockRemoteDatasource.getEmails(
+        folderId: 'folder-1',
+        top: anyNamed('top'),
+        skip: 0,
+        filter: anyNamed('filter'),
+        orderBy: anyNamed('orderBy'),
+        olderThan: cutoff,
+      )).called(1);
+      final window = verify(mockLocalDatasource.cacheEmails(
+        accountId: 'account-1',
+        folderId: 'folder-1',
+        emails: anyNamed('emails'),
+        window: captureAnyNamed('window'),
+      )).captured.single as ListingWindow;
+      expect(window.to, cutoff);
+      expect(window.from, isNull, reason: 'one listed: the folder ends here');
     });
 
     test('does not replace the folder cache on subsequent pages (skip>0)',
@@ -248,7 +341,7 @@ void main() {
         accountId: anyNamed('accountId'),
         folderId: anyNamed('folderId'),
         emails: anyNamed('emails'),
-        replaceFolder: anyNamed('replaceFolder'),
+        window: anyNamed('window'),
       )).thenAnswer((_) async {});
       when(mockAccountManager.activeAccount).thenReturn(tAccount);
 
@@ -261,7 +354,7 @@ void main() {
         accountId: 'account-1',
         folderId: 'folder-1',
         emails: anyNamed('emails'),
-        replaceFolder: false,
+        window: null,
       )).called(1);
     });
 
@@ -281,7 +374,7 @@ void main() {
         accountId: anyNamed('accountId'),
         folderId: anyNamed('folderId'),
         emails: anyNamed('emails'),
-        replaceFolder: anyNamed('replaceFolder'),
+        window: anyNamed('window'),
       )).thenAnswer((_) async {});
       when(mockAccountManager.activeAccount).thenReturn(tAccount);
 
@@ -296,7 +389,7 @@ void main() {
         accountId: 'account-1',
         folderId: 'folder-1',
         emails: anyNamed('emails'),
-        replaceFolder: false,
+        window: null,
       )).called(1);
     });
 
@@ -368,7 +461,7 @@ void main() {
         accountId: anyNamed('accountId'),
         folderId: anyNamed('folderId'),
         emails: anyNamed('emails'),
-        replaceFolder: anyNamed('replaceFolder'),
+        window: anyNamed('window'),
       )).thenAnswer((_) async {});
       when(mockAccountManager.activeAccount).thenReturn(tAccount);
       recentMutations.recordRemoval('account-1', 'old-id');
@@ -409,7 +502,7 @@ void main() {
           accountId: anyNamed('accountId'),
           folderId: anyNamed('folderId'),
           emails: anyNamed('emails'),
-          replaceFolder: anyNamed('replaceFolder'),
+          window: anyNamed('window'),
         )).thenAnswer((_) async {});
         when(mockAccountManager.activeAccount).thenReturn(tAccount);
       }
@@ -472,7 +565,7 @@ void main() {
           accountId: 'account-1',
           folderId: 'archive',
           emails: captureAnyNamed('emails'),
-          replaceFolder: true,
+          window: argThat(isNotNull, named: 'window'),
         )).captured.single as List<Email>;
         expect(written.map((e) => e.id), contains('moved'));
       });
@@ -521,7 +614,7 @@ void main() {
         accountId: anyNamed('accountId'),
         folderId: anyNamed('folderId'),
         emails: anyNamed('emails'),
-        replaceFolder: anyNamed('replaceFolder'),
+        window: anyNamed('window'),
       )).thenAnswer((_) async {});
 
       final result = await repository.getEmails(folderId: 'folder-1');
@@ -533,7 +626,7 @@ void main() {
         accountId: 'account-1',
         folderId: 'folder-1',
         emails: captureAnyNamed('emails'),
-        replaceFolder: anyNamed('replaceFolder'),
+        window: anyNamed('window'),
       )).captured.single as List<Email>;
       expect(written.single.isRead, isTrue);
     });

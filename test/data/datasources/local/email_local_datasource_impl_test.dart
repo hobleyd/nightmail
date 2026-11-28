@@ -12,6 +12,7 @@ import 'package:nightmail/data/models/email_address_model.dart';
 import 'package:nightmail/data/models/email_model.dart';
 import 'package:nightmail/domain/entities/calendar_recurrence.dart';
 import 'package:nightmail/domain/entities/email.dart';
+import 'package:nightmail/domain/entities/folder_listing.dart';
 import 'package:nightmail/domain/entities/email_attachment.dart';
 import 'package:nightmail/domain/entities/inline_attachment.dart';
 import 'package:nightmail/domain/entities/meeting_invite.dart';
@@ -129,7 +130,7 @@ void main() {
         accountId: 'acct-1',
         folderId: 'folder-1',
         emails: [_email('email-1', body: '')], // isRead: false
-        replaceFolder: true,
+        window: const ListingWindow.top(),
       );
 
       final listed = await datasource.getCachedEmails(
@@ -162,7 +163,7 @@ void main() {
         accountId: 'acct-1',
         folderId: 'folder-1',
         emails: [_email('email-1', body: '').copyWith(isRead: true)],
-        replaceFolder: true,
+        window: const ListingWindow.top(),
       );
 
       final listed = await datasource.getCachedEmails(
@@ -259,7 +260,7 @@ void main() {
         accountId: 'acct-1',
         folderId: 'archive',
         emails: [_email('email-3', body: ''), _email('email-1', body: '')],
-        replaceFolder: true,
+        window: const ListingWindow.top(),
       );
 
       expect(
@@ -822,7 +823,7 @@ void main() {
   // same transaction.
   // ---------------------------------------------------------------------------
 
-  group('cacheEmails(replaceFolder: true)', () {
+  group('cacheEmails(window: const ListingWindow.top())', () {
     test('drops rows the fresh page no longer lists', () async {
       await datasource.cacheEmails(
         accountId: 'acct-1',
@@ -837,7 +838,7 @@ void main() {
         accountId: 'acct-1',
         folderId: 'folder-1',
         emails: [_email('stays', body: '')],
-        replaceFolder: true,
+        window: const ListingWindow.top(),
       );
 
       final rows = await datasource.getCachedEmails(
@@ -860,7 +861,7 @@ void main() {
         accountId: 'acct-1',
         folderId: 'folder-1',
         emails: [_email('email-1', body: '')],
-        replaceFolder: true,
+        window: const ListingWindow.top(),
       );
 
       final cached = await datasource.getCachedEmailById(
@@ -885,7 +886,7 @@ void main() {
         accountId: 'acct-1',
         folderId: 'folder-1',
         emails: const [],
-        replaceFolder: true,
+        window: const ListingWindow.top(),
       );
 
       final rows = await datasource.getCachedEmails(
@@ -916,7 +917,7 @@ void main() {
         accountId: 'acct-1',
         folderId: 'folder-1',
         emails: [_email('a2', body: '', folderId: 'folder-1')],
-        replaceFolder: true,
+        window: const ListingWindow.top(),
       );
 
       expect(
@@ -1676,7 +1677,7 @@ void main() {
         accountId: 'acct-1',
         folderId: 'inbox',
         emails: [_email('email-2', body: '')],
-        replaceFolder: true,
+        window: const ListingWindow.top(),
       );
 
       expect(await db.select(db.cachedEmailDetails).get(), isEmpty);

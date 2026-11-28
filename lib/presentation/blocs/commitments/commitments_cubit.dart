@@ -448,10 +448,15 @@ class CommitmentsCubit extends Cubit<CommitmentsState> {
 
     Future<List<Email>> recent(String? folderId) async {
       if (folderId == null) return const [];
-      final emails = (await _emails.getCachedEmails(
+      // The newest threads only: the folder's cache can hold its whole
+      // history (the offline backfill), and every row read is decrypted. The
+      // newest N messages lie in at most the newest N threads.
+      final emails = (await _emails.getCachedWindow(
         accountId: accountId,
         folderId: folderId,
+        limitThreads: recentMailWindow,
       ))
+          .map((window) => window.emails)
           .getOrElse((_) => const []);
       // The cache is ordered newest first already; make sure of it.
       final sorted = List<Email>.of(emails)

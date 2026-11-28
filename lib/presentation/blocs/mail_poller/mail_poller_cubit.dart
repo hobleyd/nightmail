@@ -15,12 +15,14 @@ import '../../../data/datasources/local/folder_local_datasource.dart';
 import '../../../data/datasources/local/pending_operations_datasource.dart';
 import '../../../data/datasources/remote/email_remote_datasource.dart';
 import '../../../data/datasources/remote/imap_datasource_impl.dart';
+import '../../../data/datasources/remote/listing_threads.dart';
 import '../../../data/datasources/remote/mail_delta_datasource.dart';
 import '../../../data/datasources/remote/spam_db_sync_datasource.dart';
 import '../../../data/datasources/remote/thread_index_datasource.dart';
 import '../../../data/models/mail_delta_result.dart';
 import '../../../domain/entities/email.dart';
 import '../../../domain/entities/email_folder.dart';
+import '../../../domain/entities/folder_listing.dart';
 import '../../../domain/usecases/get_cached_folders.dart';
 import '../../../infrastructure/accounts/account.dart';
 import '../../../infrastructure/accounts/account_manager.dart';
@@ -869,7 +871,17 @@ class MailPollerCubit extends Cubit<MailPollerState> with WidgetsBindingObserver
                   accountId: account.id,
                   folderId: inboxes.first.id,
                   emails: reconciled,
-                  replaceFolder: true,
+                  // The stretch this page answers for, judged on the
+                  // server's page rather than the reconciled one — see
+                  // ListingWindow. Replacing the whole folder threw away
+                  // every older row the user had scrolled to, every cycle.
+                  window: ListingWindow.topOf(
+                    freshEmails,
+                    folderId: inboxes.first.id,
+                    pageSize: _watchedPageSize,
+                    listedCount: listedCountOf(freshEmails),
+                    dateOrdered: listingIsDateOrdered(ds),
+                  ),
                 );
                 if (account.id == activeId) {
                   // Only now that the write has landed: this is what tells the
@@ -1260,13 +1272,22 @@ class MailPollerCubit extends Cubit<MailPollerState> with WidgetsBindingObserver
             })>
         prefetchJobs,
   }) async {
-    final cached = await _emailLocalDatasource.getCachedEmails(
+    // The top of the folder's cache only, a thread at a time: the folder can
+    // hold its whole history (the listing replaces a window, not the folder,
+    // and the offline backfill fills the rest), and reading all of it here
+    // decrypted every row of it on the UI isolate every cycle. Twice the page
+    // in threads, so a thread the server's order puts on the page and the
+    // cache's dating puts just below it is still in hand.
+    final cached = (await _emailLocalDatasource.getCachedWindow(
       accountId: account.id,
       folderId: folderId,
-    );
+      limitThreads: _watchedPageSize * 2,
+    ))
+        .emails;
 
     final key = _folderKey(account.id, folderId);
     List<Email> fresh;
+    int? listedCount;
     List<ThreadIndexEntry>? index;
     if (ds is ThreadIndexDatasource) {
       final page = await _watchedPageFromIndex(
@@ -1280,8 +1301,10 @@ class MailPollerCubit extends Cubit<MailPollerState> with WidgetsBindingObserver
       if (page == null) return false;
       fresh = page.emails;
       index = page.index;
+      listedCount = page.index.length;
     } else {
       fresh = await ds.getEmails(folderId: folderId, top: _watchedPageSize);
+      listedCount = listedCountOf(fresh);
     }
     final reconciled = await _reconcileAgainstPendingOps(
       account.id,
@@ -1301,7 +1324,13 @@ class MailPollerCubit extends Cubit<MailPollerState> with WidgetsBindingObserver
       accountId: account.id,
       folderId: folderId,
       emails: reconciled,
-      replaceFolder: true,
+      window: ListingWindow.topOf(
+        fresh,
+        folderId: folderId,
+        pageSize: _watchedPageSize,
+        listedCount: listedCount,
+        dateOrdered: listingIsDateOrdered(ds),
+      ),
     );
     // Only now that the write has landed. The index is a receipt for the cache
     // it describes, exactly as a delta cursor is: remembered before the write,
@@ -1410,14 +1439,24 @@ class MailPollerCubit extends Cubit<MailPollerState> with WidgetsBindingObserver
   /// projection carries none, so full equality also disagreed for ever — on
   /// precisely the messages the user reads most.
   static bool _samePage(List<Email> cached, List<Email> fresh) {
-    if (cached.length < fresh.length) return false;
     final cachedRows = {for (final email in cached) email.id: _rowState(email)};
     for (final email in fresh) {
       if (cachedRows[email.id] != _rowState(email)) return false;
     }
-    // The fetch is a full page but the cache holds fewer rows than a page —
-    // nothing was dropped, so this is the same folder seen twice.
-    return cached.length == fresh.length || fresh.length == _watchedPageSize;
+    // Every row the page answers for that the cache held must still be on it,
+    // or something left the folder. `cached` is the top of a folder cache that
+    // can hold far more than one page, so only the rows dated inside the
+    // page's own stretch (its threads, by their newest row) are held to it.
+    if (fresh.isEmpty) return cached.isEmpty;
+    final keys = threadKeys(fresh);
+    final oldest = keys.values.reduce((a, b) => a.isBefore(b) ? a : b);
+    final freshIds = {for (final email in fresh) email.id};
+    final cachedKeys = threadKeys(cached);
+    for (final email in cached) {
+      final key = cachedKeys[email.conversationId ?? email.id]!;
+      if (!key.isBefore(oldest) && !freshIds.contains(email.id)) return false;
+    }
+    return true;
   }
 
   /// Everything about a message a folder row draws, and nothing a list fetch

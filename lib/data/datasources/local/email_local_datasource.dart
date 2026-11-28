@@ -1,4 +1,5 @@
 import '../../../domain/entities/email.dart';
+import '../../../domain/entities/folder_listing.dart';
 
 abstract interface class EmailLocalDatasource {
   /// Returns cached emails for [accountId]/[folderId], ordered by
@@ -19,20 +20,63 @@ abstract interface class EmailLocalDatasource {
   /// A thin row (empty body) never clobbers a full body already cached for the
   /// same message — see the impl's preservation lookup.
   ///
-  /// Pass [replaceFolder] when [emails] is a complete page that should *become*
-  /// the folder's contents, so a message removed remotely stops being listed.
-  /// The rows are dropped inside the same transaction as the inserts and
-  /// *after* the body-preservation lookups — which is why this replaces
-  /// [clearCacheForFolder] followed by a plain cacheEmails, a sequence that
-  /// silently discarded every cached body in the folder.
+  /// Pass [window] when [emails] is a listed page: the rows the cache holds
+  /// inside the stretch of the folder it answers for are *replaced* by it, so a
+  /// message removed remotely stops being listed, and the rows outside it are
+  /// left alone. The window also moves the folder's [FolderCoverage] — see
+  /// [ListingWindow]. The rows are dropped inside the same transaction as the
+  /// inserts and *after* the body-preservation lookups — which is why this
+  /// replaces [clearCacheForFolder] followed by a plain cacheEmails, a sequence
+  /// that silently discarded every cached body in the folder.
   ///
-  /// An empty [emails] list is always a no-op, including with [replaceFolder]:
-  /// an empty fetch is far more likely transient than a genuinely empty folder.
+  /// An empty [emails] list is always a no-op, including with a [window]: an
+  /// empty fetch is far more likely transient than a genuinely empty folder.
   Future<void> cacheEmails({
     required String accountId,
     required String folderId,
     required List<Email> emails,
-    bool replaceFolder,
+    ListingWindow? window,
+  });
+
+  /// One window of [folderId]'s cache, a thread at a time: the rows of up to
+  /// [limitThreads] threads (all, when null), newest thread first, dated by
+  /// their newest row. Only threads dated at or after [from] are read, and
+  /// only those after [after] in that order. Unlike [getCachedEmails], which
+  /// decrypts the whole folder, this is what a folder that holds thousands of
+  /// messages can be painted from.
+  Future<CachedWindow> getCachedWindow({
+    required String accountId,
+    required String folderId,
+    DateTime? from,
+    CacheCursor? after,
+    int? limitThreads,
+  });
+
+  /// How much of [folderId] the cache vouches for; an empty coverage when no
+  /// listing has said.
+  Future<FolderCoverage> getFolderCoverage({
+    required String accountId,
+    required String folderId,
+  });
+
+  /// The folders of [accountId] that some listing has written a coverage for —
+  /// the folders the user has opened, plus the Inbox the poller keeps.
+  Future<List<String>> getCoveredFolderIds(String accountId);
+
+  /// The offline backfill's walk of [folderId], or null when none is under way.
+  Future<FolderWalk?> getFolderWalk({
+    required String accountId,
+    required String folderId,
+  });
+
+  /// Records (or, with null, ends) the backfill's walk of [folderId]. Ending a
+  /// walk that reached the bottom with [finishedFullPass] stamps the coverage's
+  /// [FolderCoverage.lastFullPassAt].
+  Future<void> saveFolderWalk({
+    required String accountId,
+    required String folderId,
+    FolderWalk? walk,
+    DateTime? finishedFullPass,
   });
 
   /// Returns the cached email with [emailId] for [accountId], regardless of

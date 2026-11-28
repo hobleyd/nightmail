@@ -175,10 +175,17 @@ class GraphApiDatasourceImpl
     int skip = 0,
     String? filter,
     String orderBy = 'receivedDateTime desc',
+    DateTime? olderThan,
   }) async {
     final path = folderId != null
         ? '$_base/mailFolders/$folderId/messages'
         : '$_base/messages';
+    // First in the filter: Graph wants a property it orders by to lead the
+    // filter when both are given.
+    final before = olderThan == null
+        ? null
+        : 'receivedDateTime le ${olderThan.toUtc().toIso8601String()}';
+    final effectiveFilter = [?before, ?filter].join(' and ');
 
     try {
       final response = await _dio.get<String>(
@@ -188,7 +195,7 @@ class GraphApiDatasourceImpl
           '\$skip': skip,
           '\$select': _emailListSelect,
           '\$orderby': orderBy,
-          '\$filter': ?filter,
+          if (effectiveFilter.isNotEmpty) '\$filter': effectiveFilter,
         },
         options: Options(responseType: ResponseType.plain),
       );
@@ -209,7 +216,9 @@ class GraphApiDatasourceImpl
           .whereType<String>()
           .toSet();
 
-      if (conversationIds.isEmpty) return folderEmails;
+      if (conversationIds.isEmpty) {
+        return ListedPage(folderEmails, listedCount: folderEmails.length);
+      }
 
       // The expansion must not drag a *deleted* or junked copy back into the
       // folder being listed. deleteEmail/reportJunk move the message to Deleted
@@ -245,7 +254,9 @@ class GraphApiDatasourceImpl
       // next listing retries the lookup. A refresh during a 429 burst shows
       // a thread without its Sent reply for a cycle; the alternative showed
       // the mail the user had just deleted.
-      if (excludedFolderIds == null) return folderEmails;
+      if (excludedFolderIds == null) {
+        return ListedPage(folderEmails, listedCount: folderEmails.length);
+      }
 
       // Ask for the whole page's threads in as few requests as possible, then
       // decode the lot in one background isolate rather than one per
@@ -267,7 +278,8 @@ class GraphApiDatasourceImpl
         if (excludedFolderIds.contains(e.parentFolderId)) continue;
         byId.putIfAbsent(e.id, () => e);
       }
-      return byId.values.toList();
+      return ListedPage(byId.values.toList(),
+          listedCount: folderEmails.length);
     } on DioException catch (e) {
       throw _mapDioException(e);
     }

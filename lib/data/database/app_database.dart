@@ -454,7 +454,39 @@ class CachedChatMessages extends Table {
   Set<Column> get primaryKey => {accountId, conversationKey};
 }
 
-@DriftDatabase(tables: [CachedEmails, CachedEmailDetails, KnownSenders, SenderAliases, CachedContacts, ContactSyncStates, DeltaSyncTokens, CachedFolders, LocalDrafts, CatalogCache, AiConfig, CapabilityRouting, ScheduledReminders, ScheduledTaskReminders, PendingOperations, CachedCalendarEvents, PendingCalendarOperations, MigrationJobs, MigrationMessageLedger, Commitments, CommitmentScans, CachedChatLists, CachedChatMessages])
+/// How much of each folder the mail cache can vouch for, and where the offline
+/// backfill is in walking it — see `FolderCoverage` and
+/// `lib/presentation/blocs/email_list/CLAUDE.md`, "A Folder's Cache Is
+/// Replaced a Window at a Time". Plaintext: dates and counts only.
+@DataClassName('FolderCoverageRow')
+class FolderCoverages extends Table {
+  TextColumn get accountId => text()();
+  TextColumn get folderId => text()();
+
+  /// Every message dated from here to now is cached. Null with [complete]
+  /// false means nothing is vouched for beyond whatever was last listed.
+  IntColumn get coveredFromMs => integer().nullable()();
+  BoolColumn get complete => boolean().withDefault(const Constant(false))();
+
+  /// When the backfill last finished a walk of the whole folder.
+  IntColumn get lastFullPassMs => integer().nullable()();
+
+  /// The backfill's walk in progress: the fixed cursor its listing continues
+  /// below, how many pages of that listing it has taken, and the start of the
+  /// last page it wrote. Null [walkBeforeMs] means no walk is under way.
+  IntColumn get walkBeforeMs => integer().nullable()();
+  IntColumn get walkOffset => integer().withDefault(const Constant(0))();
+  IntColumn get walkWindowEndMs => integer().nullable()();
+
+  /// The walk in progress is a full re-check from the top, not a backfill of
+  /// the stretch below the coverage.
+  BoolColumn get walkFull => boolean().withDefault(const Constant(false))();
+
+  @override
+  Set<Column> get primaryKey => {accountId, folderId};
+}
+
+@DriftDatabase(tables: [CachedEmails, CachedEmailDetails, KnownSenders, SenderAliases, CachedContacts, ContactSyncStates, DeltaSyncTokens, CachedFolders, LocalDrafts, CatalogCache, AiConfig, CapabilityRouting, ScheduledReminders, ScheduledTaskReminders, PendingOperations, CachedCalendarEvents, PendingCalendarOperations, MigrationJobs, MigrationMessageLedger, Commitments, CommitmentScans, CachedChatLists, CachedChatMessages, FolderCoverages])
 class AppDatabase extends _$AppDatabase
     implements
         DeltaTokenDatasource,
@@ -473,7 +505,7 @@ class AppDatabase extends _$AppDatabase
   AppDatabase.forTesting(super.executor);
 
   @override
-  int get schemaVersion => 22;
+  int get schemaVersion => 23;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -628,6 +660,9 @@ class AppDatabase extends _$AppDatabase
             await m.createTable(cachedChatLists);
             await m.createTable(cachedChatMessages);
           }
+          if (from < 23 && !await _tableExists(folderCoverages)) {
+            await m.createTable(folderCoverages);
+          }
         },
       );
 
@@ -651,6 +686,16 @@ class AppDatabase extends _$AppDatabase
       return;
     }
     await m.addColumn(table, column);
+  }
+
+  /// Whether [table] is already in the file — so a step that creates it is
+  /// safe to run twice (see `lib/data/database/CLAUDE.md`).
+  Future<bool> _tableExists(TableInfo table) async {
+    final rows = await customSelect(
+      "SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?",
+      variables: [Variable<String>(table.actualTableName)],
+    ).get();
+    return rows.isNotEmpty;
   }
 
   Future<void> _createCommitmentIndexes() async {

@@ -2,6 +2,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:fpdart/fpdart.dart';
 import 'package:nightmail/core/error/failures.dart';
 import 'package:nightmail/domain/entities/email.dart';
+import 'package:nightmail/domain/entities/folder_listing.dart';
 import 'package:nightmail/domain/entities/email_address.dart';
 import 'package:nightmail/domain/entities/meeting_invite.dart';
 import 'package:nightmail/domain/repositories/email_repository.dart';
@@ -67,14 +68,17 @@ class _FakeEmailRepository implements EmailRepository {
   final List<(String, String)> cacheReads = [];
 
   @override
-  Future<Either<Failure, List<Email>>> getCachedEmails({
+  Future<Either<Failure, CachedWindow>> getCachedWindow({
     required String accountId,
     required String folderId,
+    DateTime? from,
+    CacheCursor? after,
+    int? limitThreads,
   }) async {
     cacheReads.add((accountId, folderId));
     final failure = listFailure;
     if (failure != null) return Left(failure);
-    return Right(listRows);
+    return Right(CachedWindow(emails: listRows, next: null));
   }
 
   @override

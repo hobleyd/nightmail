@@ -39,6 +39,10 @@ What NightMail's paths cost under that table:
 | History delta re-fetch at its 250-message budget | 5,000 |
 | Body prefetch batch (20 × `messages.get`) | 400 |
 | Unread-body warm after a folder listing (≤ 20 × `messages.get`, unread rows only) | ≤ 400 |
+| Load More from the cache (the folder's cached threads below the ones on screen) | 0 |
+| Load More past the cache with no page token (a fast-forward by thread ids, per 500 threads skipped) | +10 |
+| Offline backfill, per page (the same 1,010, at most one every 30 s) | ~2,000/min |
+| Offline backfill of a 5,000-thread folder, first time and at each monthly re-check | ~200,000 over ~1 h 40 min |
 
 ## The Error
 
@@ -72,5 +76,13 @@ cycles inside one minute, when the poll re-paged the folder on screen every
   otherwise have spent 5,600 before the poller had its turn. The poller's own
   warms are bounded by what a sync wrote. See
   [`lib/presentation/blocs/mail_poller/CLAUDE.md`](../../lib/presentation/blocs/mail_poller/CLAUDE.md).
+- **Page the offline backfill slowly, and never by re-fetching pages in
+  between.** Settings > General > *Keep opened folders offline*
+  (`FolderBackfillService`) walks a folder one page every 30 s — a third of
+  the minute's quota, leaving the rest to the poller and the user. A page
+  continues an "older than" listing on its saved token; with no token (after
+  a restart) the listing is fast-forwarded by thread ids at 10 units per 500,
+  never by fetching the pages in between at 1,010 apiece. See
+  [`lib/presentation/blocs/email_list/CLAUDE.md`](../../lib/presentation/blocs/email_list/CLAUDE.md).
 - **Cost a change in units before shipping it**: a new per-row or per-poll
   request is multiplied by 25 rows and by two cycles a minute.

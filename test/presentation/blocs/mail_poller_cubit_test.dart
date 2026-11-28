@@ -23,6 +23,7 @@ import 'package:nightmail/data/datasources/remote/thread_index_datasource.dart';
 import 'package:nightmail/core/error/failures.dart';
 import 'package:nightmail/data/models/email_folder_model.dart';
 import 'package:nightmail/domain/entities/email.dart';
+import 'package:nightmail/domain/entities/folder_listing.dart';
 import 'package:nightmail/domain/entities/email_folder.dart';
 import 'package:nightmail/domain/usecases/get_cached_folders.dart';
 import 'package:nightmail/data/models/email_model.dart';
@@ -216,12 +217,28 @@ void main() {
       accountId: anyNamed('accountId'),
       folderId: anyNamed('folderId'),
       emails: anyNamed('emails'),
-      replaceFolder: anyNamed('replaceFolder'),
+      window: anyNamed('window'),
     )).thenAnswer((_) async {});
     when(mockEmailLocalDatasource.getCachedEmails(
       accountId: anyNamed('accountId'),
       folderId: anyNamed('folderId'),
     )).thenAnswer((_) async => const []);
+    // The watched-folder sync reads the top of the folder as a window; each
+    // test says what the folder holds through getCachedEmails, so the window
+    // answers with that.
+    when(mockEmailLocalDatasource.getCachedWindow(
+      accountId: anyNamed('accountId'),
+      folderId: anyNamed('folderId'),
+      from: anyNamed('from'),
+      after: anyNamed('after'),
+      limitThreads: anyNamed('limitThreads'),
+    )).thenAnswer((inv) async => CachedWindow(
+          emails: await mockEmailLocalDatasource.getCachedEmails(
+            accountId: inv.namedArguments[#accountId] as String,
+            folderId: inv.namedArguments[#folderId] as String,
+          ),
+          next: null,
+        ));
     when(mockFolderLocalDatasource.cacheFolders(
       accountId: anyNamed('accountId'),
       folders: anyNamed('folders'),
@@ -1096,7 +1113,7 @@ void main() {
         accountId: _gmailAccount.id,
         folderId: 'inbox-id',
         emails: anyNamed('emails'),
-        replaceFolder: true,
+        window: argThat(isNotNull, named: 'window'),
       )).called(greaterThanOrEqualTo(1));
       // Not the active account, so nothing tells the UI to repaint from it.
       expect(cubit.state.syncedFolderIds, isEmpty);
@@ -1331,7 +1348,7 @@ void main() {
         accountId: _gmailAccount.id,
         folderId: 'inbox-id',
         emails: anyNamed('emails'),
-        replaceFolder: true,
+        window: argThat(isNotNull, named: 'window'),
       )).called(1);
     });
 
@@ -1428,7 +1445,7 @@ void main() {
         accountId: _gmailAccount.id,
         folderId: 'inbox-id',
         emails: anyNamed('emails'),
-        replaceFolder: true,
+        window: argThat(isNotNull, named: 'window'),
       )).called(1);
     });
 
@@ -1726,7 +1743,7 @@ void main() {
         accountId: anyNamed('accountId'),
         folderId: anyNamed('folderId'),
         emails: anyNamed('emails'),
-        replaceFolder: anyNamed('replaceFolder'),
+        window: anyNamed('window'),
       )).thenThrow(Exception('disk full'));
 
       final cubit = makeCubit();
@@ -2273,7 +2290,7 @@ void main() {
         accountId: _gmailAccount.id,
         folderId: 'archive-id',
         emails: anyNamed('emails'),
-        replaceFolder: true,
+        window: argThat(isNotNull, named: 'window'),
       )).called(1);
       expect(cubit.state.syncedFolderIds, contains('archive-id'));
     });
@@ -2300,7 +2317,7 @@ void main() {
         accountId: anyNamed('accountId'),
         folderId: 'archive-id',
         emails: anyNamed('emails'),
-        replaceFolder: true,
+        window: argThat(isNotNull, named: 'window'),
       )).thenAnswer((inv) async {
         written.add(inv.namedArguments[#emails] as List<Email>);
       });
@@ -2384,7 +2401,7 @@ void main() {
         accountId: anyNamed('accountId'),
         folderId: 'archive-id',
         emails: anyNamed('emails'),
-        replaceFolder: true,
+        window: argThat(isNotNull, named: 'window'),
       )).thenAnswer((inv) async {
         written.add(inv.namedArguments[#emails] as List<Email>);
       });
@@ -2596,7 +2613,7 @@ void main() {
         accountId: _gmailAccount.id,
         folderId: 'archive-id',
         emails: captureAnyNamed('emails'),
-        replaceFolder: true,
+        window: argThat(isNotNull, named: 'window'),
       )).captured.single as List<Email>;
       expect(cached.map((e) => e.id), ['kept']);
     });
@@ -2644,7 +2661,7 @@ void main() {
         accountId: _gmailAccount.id,
         folderId: 'archive-id',
         emails: captureAnyNamed('emails'),
-        replaceFolder: true,
+        window: argThat(isNotNull, named: 'window'),
       )).captured.single as List<Email>;
       expect(cached.map((e) => e.id).toSet(),
           {'listed', 'same-id', 'not-listed-yet'});

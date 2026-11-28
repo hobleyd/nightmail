@@ -63,6 +63,8 @@ The app provides a desktop based three-pane layout (folders, message list, readi
 - Empty folder (with permanent delete option), on every provider — emptying a Gmail trash asks Google for permission to delete mail the first time
 - Incremental sync with delta tokens (Microsoft 365)
 - Incremental sync for Gmail (history API) and IMAP (UID-based) accounts too
+- A folder you have scrolled stays cached: reopening it or refreshing shows everything already fetched, and Load More reads the cache before going to the server (Microsoft 365, Gmail)
+- Settings > General > Keep opened folders offline downloads every message in the folders you open in the background, so they scroll to the end without waiting, and rechecks each one monthly for mail removed elsewhere
 - Drag folders in the list to reparent them: drop onto a folder to nest inside it, or on the line under a folder to make it a sibling, including at the top level
 - Dragging an email near the top/bottom edge of the folder list auto-scrolls it, and dwelling over a collapsed folder auto-expands it as a drop target
 

@@ -1,0 +1,605 @@
+{
+  "schemaVersion": 1,
+  "format": "desktop_updater.release_notes.v1",
+  "version": "2.4.0",
+  "sections": [
+    {
+      "type": "features",
+      "title": "New features",
+      "items": [
+        {
+          "body": "folders keep their whole cache and can be kept fully offline",
+          "title": "mail"
+        }
+      ]
+    }
+  ],
+  "previous": [
+    {
+      "schemaVersion": 1,
+      "format": "desktop_updater.release_notes.v1",
+      "version": "2.3.0",
+      "sections": [
+        {
+          "type": "features",
+          "title": "New features",
+          "items": [
+            {
+              "body": "drop a file on a conversation to send it at once",
+              "title": "chat"
+            },
+            {
+              "body": "a chat read in the pane lingers 45 s below the unread ones",
+              "title": "chat"
+            },
+            {
+              "body": "run a saved rule on the current folder from Settings > Rules",
+              "title": "rules"
+            }
+          ]
+        },
+        {
+          "type": "fixes",
+          "title": "Fixes",
+          "items": [
+            {
+              "body": "dropped files survive slow uploads and are named when skipped",
+              "title": "chat"
+            },
+            {
+              "body": "show Slack table blocks instead of the 'interactive elements' fallback",
+              "title": "chat"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "schemaVersion": 1,
+      "format": "desktop_updater.release_notes.v1",
+      "version": "2.2.1",
+      "sections": [
+        {
+          "type": "fixes",
+          "title": "Fixes",
+          "items": [
+            {
+              "body": "Add Account offers Microsoft 365 and Gmail again",
+              "title": "web"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "schemaVersion": 1,
+      "format": "desktop_updater.release_notes.v1",
+      "version": "2.2.0",
+      "sections": [
+        {
+          "type": "features",
+          "title": "New features",
+          "items": [
+            {
+              "body": "a starting-now reminder offers Join",
+              "title": "reminders"
+            },
+            {
+              "body": "opening a channel lit by a thread reply opens that thread",
+              "title": "chat"
+            },
+            {
+              "body": "the pane's conversation name is a scrolling label, not a dropdown",
+              "title": "chat"
+            },
+            {
+              "body": "open on the Nightware sign-in, not the provider chooser",
+              "title": "web"
+            }
+          ]
+        },
+        {
+          "type": "fixes",
+          "title": "Fixes",
+          "items": [
+            {
+              "body": "a moved meeting's update email re-reads the calendars at once",
+              "title": "reminders"
+            },
+            {
+              "body": "fetch the manifest with the sign-in cookie",
+              "title": "web"
+            },
+            {
+              "body": "a colleague's one-on-one stays a chat in the pane's search",
+              "title": "chat"
+            },
+            {
+              "body": "the sign-in page can't strand a visitor behind a spinner",
+              "title": "web"
+            },
+            {
+              "body": "a Slack huddle opens in the Slack app, not the browser too",
+              "title": "chat"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "schemaVersion": 1,
+      "format": "desktop_updater.release_notes.v1",
+      "version": "2.1.0",
+      "sections": [
+        {
+          "type": "features",
+          "title": "New features",
+          "items": [
+            {
+              "body": "call someone from their avatar in a chat",
+              "title": "chat"
+            }
+          ]
+        },
+        {
+          "type": "fixes",
+          "title": "Fixes",
+          "items": [
+            {
+              "body": "a chat read in the pane leaves the unread list at once",
+              "title": "chat"
+            },
+            {
+              "body": "spelling and grammar are checked while typing on macOS",
+              "title": "compose"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "schemaVersion": 1,
+      "format": "desktop_updater.release_notes.v1",
+      "version": "2.0.0",
+      "sections": [
+        {
+          "type": "features",
+          "title": "New features",
+          "items": [
+            {
+              "body": "link hover, link clicks and image pop-out in message bodies",
+              "title": "web"
+            },
+            {
+              "body": "an unsent message stays with its conversation",
+              "title": "chat"
+            }
+          ]
+        },
+        {
+          "type": "fixes",
+          "title": "Fixes",
+          "items": [
+            {
+              "body": "run the HTML editor in html_view's iframe",
+              "title": "web"
+            },
+            {
+              "body": "render message bodies in html_view's iframe",
+              "title": "web"
+            },
+            {
+              "body": "skip the dart:io connectivity probe in the browser",
+              "title": "web"
+            },
+            {
+              "body": "Email Attendees and other prefilled messages get the signature",
+              "title": "compose"
+            },
+            {
+              "body": "reading a Slack thread reply in the pane clears its channel",
+              "title": "chat"
+            },
+            {
+              "body": "a message read after coming back to the app is marked read",
+              "title": "chat"
+            },
+            {
+              "body": "build and start in a browser again",
+              "title": "web"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "schemaVersion": 1,
+      "format": "desktop_updater.release_notes.v1",
+      "version": "1.64.2",
+      "sections": [
+        {
+          "type": "features",
+          "title": "New features",
+          "items": [
+            {
+              "body": "older messages show their date beside the time",
+              "title": "chat"
+            }
+          ]
+        },
+        {
+          "type": "fixes",
+          "title": "Fixes",
+          "items": [
+            {
+              "body": "the pane reopens on the chat it had open",
+              "title": "chat"
+            },
+            {
+              "body": "a reply in a thread lights its channel unread",
+              "title": "slack"
+            },
+            {
+              "body": "never overwrite the workspace list from a locked Keychain",
+              "title": "slack"
+            },
+            {
+              "body": "stop Slack's Rovo DM coming back unread",
+              "title": "chat"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "schemaVersion": 1,
+      "format": "desktop_updater.release_notes.v1",
+      "version": "1.64.1",
+      "sections": [
+        {
+          "type": "features",
+          "title": "New features",
+          "items": [
+            {
+              "body": "Reply puts the caret in the thread's box",
+              "title": "chat"
+            },
+            {
+              "body": "tag people with @ in the composer",
+              "title": "chat"
+            },
+            {
+              "body": "find a chat or channel from the pane's unread list",
+              "title": "chat"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "schemaVersion": 1,
+      "format": "desktop_updater.release_notes.v1",
+      "version": "1.64.0",
+      "sections": [
+        {
+          "type": "features",
+          "title": "New features",
+          "items": [
+            {
+              "body": "drag the divider between the pane's unread list and thread",
+              "title": "chat"
+            }
+          ]
+        },
+        {
+          "type": "fixes",
+          "title": "Fixes",
+          "items": [
+            {
+              "body": "show GIFs from Slack, Google Chat and Teams",
+              "title": "chat"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "schemaVersion": 1,
+      "format": "desktop_updater.release_notes.v1",
+      "version": "1.63.1",
+      "sections": [
+        {
+          "type": "features",
+          "title": "New features",
+          "items": [
+            {
+              "body": "pick the chat service in the pane, unread chats on top",
+              "title": "chat"
+            }
+          ]
+        },
+        {
+          "type": "fixes",
+          "title": "Fixes",
+          "items": [
+            {
+              "body": "keep a DM's known name while Slack has not looked it up",
+              "title": "chat"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "schemaVersion": 1,
+      "format": "desktop_updater.release_notes.v1",
+      "version": "1.63.0",
+      "sections": [
+        {
+          "type": "features",
+          "title": "New features",
+          "items": [
+            {
+              "body": "paste a picture into a chat message",
+              "title": "chat"
+            },
+            {
+              "body": "tap your own reaction to take it off",
+              "title": "chat"
+            }
+          ]
+        },
+        {
+          "type": "fixes",
+          "title": "Fixes",
+          "items": [
+            {
+              "body": "only drop Accept on a series whose own rule has ended",
+              "title": "calendar"
+            },
+            {
+              "body": "say a series has ended instead of offering Accept on it",
+              "title": "calendar"
+            },
+            {
+              "body": "format painter copies at the caret; paste drops unset source styles",
+              "title": "compose"
+            },
+            {
+              "body": "show a Slack shortcode glued to a word as its emoji",
+              "title": "chat"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "schemaVersion": 1,
+      "format": "desktop_updater.release_notes.v1",
+      "version": "1.62.0",
+      "sections": [
+        {
+          "type": "features",
+          "title": "New features",
+          "items": [
+            {
+              "body": "reply in a thread from Slack DMs, as in channels",
+              "title": "chat"
+            },
+            {
+              "body": "rename group chats and channels on Teams, NightMail Server and Slack",
+              "title": "chat"
+            },
+            {
+              "body": "react to any message on Teams, NightMail Server, Google Chat and Slack",
+              "title": "chat"
+            }
+          ]
+        },
+        {
+          "type": "fixes",
+          "title": "Fixes",
+          "items": [
+            {
+              "body": "a chat read in the pane un-bolds in the chat window at once",
+              "title": "chat"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "schemaVersion": 1,
+      "format": "desktop_updater.release_notes.v1",
+      "version": "1.61.1",
+      "sections": [
+        {
+          "type": "fixes",
+          "title": "Fixes",
+          "items": [
+            {
+              "body": "hide never-used and not-yet-known conversations too",
+              "title": "chat"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "schemaVersion": 1,
+      "format": "desktop_updater.release_notes.v1",
+      "version": "1.61.0",
+      "sections": [
+        {
+          "type": "features",
+          "title": "New features",
+          "items": [
+            {
+              "body": "edit your own messages on Teams, NightMail Server, Google Chat and Slack",
+              "title": "chat"
+            },
+            {
+              "body": "open the chat window on the pane's conversation",
+              "title": "chat"
+            },
+            {
+              "body": "a NightMail Server's change stream refreshes the unread dot",
+              "title": "chat"
+            }
+          ]
+        },
+        {
+          "type": "fixes",
+          "title": "Fixes",
+          "items": [
+            {
+              "body": "save an edit only from the composer that holds it",
+              "title": "chat"
+            },
+            {
+              "body": "count every unread Slack channel and light the dot for them",
+              "title": "chat"
+            },
+            {
+              "body": "show a Slack app message's blocks and attachments",
+              "title": "chat"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "schemaVersion": 1,
+      "format": "desktop_updater.release_notes.v1",
+      "version": "1.59.0",
+      "sections": [
+        {
+          "type": "features",
+          "title": "New features",
+          "items": [
+            {
+              "body": "tuck week-quiet conversations away, one line per deleted message",
+              "title": "chat"
+            }
+          ]
+        },
+        {
+          "type": "fixes",
+          "title": "Fixes",
+          "items": [
+            {
+              "body": "show pictures uploaded to Google Chat",
+              "title": "chat"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "schemaVersion": 1,
+      "format": "desktop_updater.release_notes.v1",
+      "version": "1.58.1",
+      "sections": [
+        {
+          "type": "fixes",
+          "title": "Fixes",
+          "items": [
+            {
+              "body": "bold unread Slack channels and mark them read",
+              "title": "chat"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "schemaVersion": 1,
+      "format": "desktop_updater.release_notes.v1",
+      "version": "1.58.0",
+      "sections": [
+        {
+          "type": "features",
+          "title": "New features",
+          "items": [
+            {
+              "body": "find any person, chat or channel from the pane's dropdown",
+              "title": "chat"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "schemaVersion": 1,
+      "format": "desktop_updater.release_notes.v1",
+      "version": "1.57.0",
+      "sections": [
+        {
+          "type": "features",
+          "title": "New features",
+          "items": [
+            {
+              "body": "encrypted chat cache with deltas, Slack custom emoji, unread chats in the pane",
+              "title": "chat"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "schemaVersion": 1,
+      "format": "desktop_updater.release_notes.v1",
+      "version": "1.56.1",
+      "sections": [
+        {
+          "type": "fixes",
+          "title": "Fixes",
+          "items": [
+            {
+              "body": "the meeting-reminders window no longer activates the app on macOS",
+              "title": "reminders"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "schemaVersion": 1,
+      "format": "desktop_updater.release_notes.v1",
+      "version": "1.56.0",
+      "sections": [
+        {
+          "type": "features",
+          "title": "New features",
+          "items": [
+            {
+              "body": "Slack as a second chat system behind the Chat button",
+              "title": "chat"
+            },
+            {
+              "body": "highlight the current or next meeting in Today",
+              "title": "commitments"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "schemaVersion": 1,
+      "format": "desktop_updater.release_notes.v1",
+      "version": "1.55.3",
+      "sections": [
+        {
+          "type": "features",
+          "title": "New features",
+          "items": [
+            {
+              "body": "unread dot on the Chat button, moved right of Tasks",
+              "title": "chat"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

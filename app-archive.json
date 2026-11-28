@@ -1,0 +1,91 @@
+{
+  "schemaVersion": 3,
+  "appName": "nightmail",
+  "items": [
+    {
+      "version": "2.1.0",
+      "buildNumber": 301,
+      "platform": "macos",
+      "channel": "stable",
+      "mandatory": false,
+      "release": "https://hobleyd.github.io/nightmail/releases/2.1.0+301-macos/release.json"
+    },
+    {
+      "version": "2.2.0",
+      "buildNumber": 302,
+      "platform": "macos",
+      "channel": "stable",
+      "mandatory": false,
+      "release": "https://hobleyd.github.io/nightmail/releases/2.2.0+302-macos/release.json"
+    },
+    {
+      "version": "2.2.1",
+      "buildNumber": 303,
+      "platform": "macos",
+      "channel": "stable",
+      "mandatory": false,
+      "release": "https://hobleyd.github.io/nightmail/releases/2.2.1+303-macos/release.json"
+    },
+    {
+      "version": "2.3.0",
+      "buildNumber": 304,
+      "platform": "macos",
+      "channel": "stable",
+      "mandatory": false,
+      "release": "https://hobleyd.github.io/nightmail/releases/2.3.0+304-macos/release.json"
+    },
+    {
+      "version": "2.4.0",
+      "buildNumber": 305,
+      "platform": "macos",
+      "channel": "stable",
+      "mandatory": false,
+      "release": "https://hobleyd.github.io/nightmail/releases/2.4.0+305-macos/release.json"
+    },
+    {
+      "version": "2.1.0",
+      "buildNumber": 301,
+      "platform": "windows",
+      "channel": "stable",
+      "mandatory": false,
+      "release": "https://hobleyd.github.io/nightmail/releases/2.1.0+301-windows/release.json"
+    },
+    {
+      "version": "2.2.0",
+      "buildNumber": 302,
+      "platform": "windows",
+      "channel": "stable",
+      "mandatory": false,
+      "release": "https://hobleyd.github.io/nightmail/releases/2.2.0+302-windows/release.json"
+    },
+    {
+      "version": "2.2.1",
+      "buildNumber": 303,
+      "platform": "windows",
+      "channel": "stable",
+      "mandatory": false,
+      "release": "https://hobleyd.github.io/nightmail/releases/2.2.1+303-windows/release.json"
+    },
+    {
+      "version": "2.3.0",
+      "buildNumber": 304,
+      "platform": "windows",
+      "channel": "stable",
+      "mandatory": false,
+      "release": "https://hobleyd.github.io/nightmail/releases/2.3.0+304-windows/release.json"
+    },
+    {
+      "version": "2.4.0",
+      "buildNumber": 305,
+      "platform": "windows",
+      "channel": "stable",
+      "mandatory": false,
+      "release": "https://hobleyd.github.io/nightmail/releases/2.4.0+305-windows/release.json"
+    }
+  ],
+  "signature": {
+    "algorithm": "ed25519",
+    "publicKeyId": "release-b53948b0e36b895fa047a8f4",
+    "value": "MAdhkhfrC4X9hERCD78T4SDth01ZUgHW2vW4RSNORxUifqmJas6Myyc8aO43SET8U3TtxjL4ZYZ6KE4XzRyoCA=="
+  }
+}
